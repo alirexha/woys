@@ -4,9 +4,9 @@ Live tracking of phase status. Updated continuously during autonomous execution.
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| Setup | Workspace scaffold, git, gh repo | in progress |
-| 0 | Recon — clone + map upstream | pending |
-| 1 | Lean Core — RVC-only ONNX server | pending |
+| Setup | Workspace scaffold, git, gh repo | ✅ done |
+| 0 | Recon — clone + map upstream | ✅ done |
+| 1 | Lean Core — RVC-only ONNX server | in progress |
 | 2 | PipeWire integration + persistent vcclient-mic | pending |
 | 3 | TUI + D-Bus toggle | pending |
 | 4 | PKGBUILD + install/uninstall | pending |
