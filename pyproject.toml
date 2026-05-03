@@ -1,0 +1,75 @@
+[project]
+name = "vcclient-cachy"
+version = "0.1.0"
+description = "Linux-native, CachyOS-optimized real-time voice changer. RVC-only on ONNX Runtime CUDA, PipeWire-native, terminal-controlled."
+authors = [{ name = "Alireza Hamayeli", email = "alireza.hmyl@gmail.com" }]
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+keywords = ["voice-changer", "rvc", "onnx", "pipewire", "linux", "cachyos"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+# Runtime dependencies are pinned in Phase 1 via `uv pip compile` into requirements.lock.
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "py-spy>=0.3.14",
+]
+
+[project.scripts]
+vcclient-cachy = "vcclient_cachy.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vcclient_cachy", "src/server", "src/audio", "src/tui"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "pkg/", "docs/", "tests/", "README.md", "LICENSE", "CHANGELOG.md"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["upstream", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF", "SIM", "C4"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_reexport = true
+disallow_any_unimported = false
+exclude = ["upstream/", ".venv/", "build/"]
+
+[[tool.mypy.overrides]]
+module = ["soundfile", "sounddevice", "evdev", "textual.*", "rich.*", "onnxruntime", "onnxruntime.*", "librosa.*", "numpy.*", "scipy.*", "torch.*", "huggingface_hub.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
+markers = [
+    "gpu: requires CUDA-capable GPU",
+    "pipewire: requires PipeWire daemon",
+    "audio_loopback: requires acoustic loopback rig",
+    "slow: takes >5s",
+]
