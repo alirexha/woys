@@ -147,6 +147,7 @@ class VCClientApp(App[int]):
                 sola_crossfade_ms=self.cfg.sola_crossfade_ms,
                 sola_search_ms=self.cfg.sola_search_ms,
                 sola_context_ms=self.cfg.sola_context_ms,
+                input_gain_db=self.cfg.input_gain_db,
             )
         )
         self.no_pw_setup = no_pw_setup
@@ -388,6 +389,10 @@ class VCClientApp(App[int]):
         self.engine.cfg.f0_up_key = self.cfg.f0_up_key
         self.engine.cfg.sid = self.cfg.sid
         self.engine.cfg.monitor = self.cfg.monitor
+        # v0.5.1: input_gain_db is read by the audio worker every chunk,
+        # so updating in place takes effect on the next mic chunk without
+        # an engine restart.
+        self.engine.cfg.input_gain_db = self.cfg.input_gain_db
         self.pitch = self.cfg.f0_up_key
         # The actual model swap — this is the v0.4.1 fix.
         new_model = (

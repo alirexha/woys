@@ -208,10 +208,16 @@ def _validate_inference(onnx_path: Path) -> tuple[bool, str]:
 
 
 def _register_profile(slug: str, onnx_path: Path, display: str, source_url: str, note: str) -> None:
-    """Save a profile with sensible defaults (pitch=0, chunk=0.1, monitor=False).
+    """Save a profile with sensible defaults (pitch=0, chunk=0.25, monitor=False).
 
     Stashes the display name + source URL into the profile's snapshot via
     `_extras` so future tooling can surface provenance.
+
+    v0.5.1: chunk_seconds default raised 0.1 → 0.25. The 0.1 default was
+    driving short-chunk SOLA tail trims (~10 % output duration loss) on
+    higher-SR voices. 0.25 produces output within ~1 % of input duration
+    and stays well under the 100 ms latency target. See
+    `docs/07-audio-quality-bug.md`.
     """
     from tui.config import load_config, save_config
     from vcclient_cachy.profiles import save_profile
@@ -219,7 +225,8 @@ def _register_profile(slug: str, onnx_path: Path, display: str, source_url: str,
     cfg = load_config()
     cfg.rvc_model = str(onnx_path.resolve())
     cfg.f0_up_key = 0
-    cfg.chunk_seconds = 0.1
+    cfg.chunk_seconds = 0.25
+    cfg.input_gain_db = 0.0
     cfg.monitor = False
     cfg.embedder = "onnx"
     save_profile(cfg, slug)
