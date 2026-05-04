@@ -21,6 +21,7 @@ certifi==2026.4.22
 cffi==2.0.0
     # via
     #   cryptography
+    #   sounddevice
     #   soundfile
 charset-normalizer==3.4.7
     # via requests
@@ -32,6 +33,8 @@ coloredlogs==15.0.1
     # via onnxruntime-gpu
 cryptography==47.0.0
     # via pyopenssl
+dasbus==1.7
+    # via vcclient-cachy (pyproject.toml)
 dataclasses-json==0.6.7
     # via vcclient-cachy (pyproject.toml)
 decorator==5.2.1
@@ -94,16 +97,23 @@ librosa==0.11.0
     # via
     #   vcclient-cachy (pyproject.toml)
     #   torchcrepe
+linkify-it-py==2.1.0
+    # via markdown-it-py
 llvmlite==0.47.0
     # via numba
 local-attention==1.11.2
     # via torchfcpe
 markdown-it-py==4.0.0
-    # via rich
+    # via
+    #   mdit-py-plugins
+    #   rich
+    #   textual
 markupsafe==3.0.3
     # via jinja2
 marshmallow==3.26.2
     # via dataclasses-json
+mdit-py-plugins==0.5.0
+    # via textual
 mdurl==0.1.2
     # via markdown-it-py
 ml-dtypes==0.5.4
@@ -182,7 +192,9 @@ packaging==26.2
     #   onnxruntime-gpu
     #   pooch
 platformdirs==4.9.6
-    # via pooch
+    # via
+    #   pooch
+    #   textual
 pooch==1.9.0
     # via librosa
 protobuf==7.34.1
@@ -198,7 +210,9 @@ pydantic==2.13.3
 pydantic-core==2.46.3
     # via pydantic
 pygments==2.20.0
-    # via rich
+    # via
+    #   rich
+    #   textual
 pyopenssl==26.1.0
     # via vcclient-cachy (pyproject.toml)
 python-dotenv==1.2.2
@@ -221,7 +235,9 @@ resampy==0.4.3
     #   torchcrepe
 rich==15.0.0
     # via
+    #   vcclient-cachy (pyproject.toml)
     #   onnxsim
+    #   textual
     #   typer
 scikit-learn==1.8.0
     # via librosa
@@ -235,6 +251,8 @@ shellingham==1.5.4
     # via typer
 simple-websocket==1.1.0
     # via python-engineio
+sounddevice==0.5.5
+    # via vcclient-cachy (pyproject.toml)
 soundfile==0.13.1
     # via
     #   vcclient-cachy (pyproject.toml)
@@ -247,8 +265,12 @@ sympy==1.13.1
     # via
     #   onnxruntime-gpu
     #   torch
+textual==8.2.5
+    # via vcclient-cachy (pyproject.toml)
 threadpoolctl==3.6.0
     # via scikit-learn
+tomli-w==1.2.0
+    # via vcclient-cachy (pyproject.toml)
 torch==2.5.1
     # via
     #   vcclient-cachy (pyproject.toml)
@@ -288,6 +310,7 @@ typing-extensions==4.15.0
     #   pydantic
     #   pydantic-core
     #   pyopenssl
+    #   textual
     #   torch
     #   typing-inspect
     #   typing-inspection
@@ -295,6 +318,8 @@ typing-inspect==0.9.0
     # via dataclasses-json
 typing-inspection==0.4.2
     # via pydantic
+uc-micro-py==2.0.0
+    # via linkify-it-py
 urllib3==2.6.3
     # via requests
 uvicorn==0.46.0

@@ -11,6 +11,16 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - `tests/test_environment.py` (4/4 passing on host).
 - `docs/00-recon.md` — 813-line reconnaissance of upstream `w-okada/voice-changer`. Identified hot path (9 files), 8 non-RVC engines for removal, ~22k LOC reduction target, and proposed `src/server/` layout for Phase 1.
 
+### Phase 3 — TUI + control surface
+- `src/audio/engine.py` — `RealtimeEngine` wraps the proven Phase 1 inference path in a sounddevice mic→infer→sink worker thread. ORT sessions lazy-load on first start; `process_chunk_16k` returns a `(N,) float32` audio buffer. Live verified: starts, processes chunks, stops cleanly with no errors.
+- `src/tui/app.py` — Textual TUI: toggle (`t`), pitch +/- (`+`/`-`/`0`), save (`s`), quit (`q`). Status + latency panels + input level meter, polled every 250 ms.
+- `src/tui/config.py` — `~/.config/vcclient-cachy/config.toml` round-trip with extras pass-through (unknown keys preserved on save).
+- **Pragmatic IPC pivot**: replaced D-Bus with a Unix-socket control channel at `$XDG_RUNTIME_DIR/vcclient-cachy/control.sock`. dasbus needs a GLib mainloop alongside Textual's asyncio loop — non-trivial integration. Unix sockets give the same UX (KDE/GNOME shortcut → `vcclient-cachy toggle`) with zero loop conflicts. **D-Bus moved to Phase 5 polish.**
+- New CLI subcommands: `vcclient-cachy {run, toggle, status, pitch ±N}`.
+- `src/tui/hotkey.py` — opt-in evdev global hotkey (per Q7: VAC-safe by default, enable explicitly via `enable_evdev_hotkey=true` + `pip install -e .[evdev]`). Stub structure ready; full input-group/udev docs pending Phase 6.
+- `pkg/vcclient-cachy-mic.service` updated path is unchanged; no impact.
+- 7 new tests (config × 4, control × 3). All gates green: pytest 14/14 fast + 1/1 GPU (37.55 ± 10.18 ms still under target), ruff clean, mypy strict clean (10 source files).
+
 ### Phase 2 — PipeWire integration
 - `src/audio/pipewire.py` — `VirtualMic` shells out to `pactl` to load `module-null-sink` (`VCClientCachySink`) and `module-remap-source` (`vcclient-mic`) so apps see the mic as a normal input.
 - Idempotent `ensure()`/`teardown()`. `ensure_pipewire()` hard-fails with a clear paru hint if the host is on PulseAudio instead of PipeWire.
