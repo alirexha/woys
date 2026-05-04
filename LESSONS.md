@@ -261,7 +261,82 @@ reduction) with no regression in v0.1.1's routing fix.
    "engine overhead" — Python loop, sounddevice .read() blocking time,
    numpy conversions. Likely halvable.
 
-## 8. The brief's "FORBIDDEN list" was load-bearing
+## 8. v0.3.0 retrospective (UX + library)
+
+Five-phase release: perf-push (partial), models library, profiles, TUI
+polish, AUR bundle. Headline: **VRAM 1.35 GiB → 1.09 GiB** via fp16 rmvpe
+auto-pick; e2e stays at 30 ms (already under target).
+
+### What worked
+- **fp16 rmvpe was zero-quality-cost.** Pitch detection within 0.1 Hz of
+  fp32 baseline. Confirmed on a 220 Hz sustained voiced test. The
+  conversion needed `op_block_list=['Cast']` because the converter under
+  `keep_io_types=False` chokes on the original fp32 Cast nodes.
+- **Profile system via `_extras` was elegant.** AppConfig already had the
+  `_extras` dict for unknown TOML keys to round-trip through; storing
+  `[profiles.<name>]` there meant zero schema change. `cycle_profile()`
+  for the TUI hotkey is 6 lines.
+- **Models library was 80% just list+filter+probe.** No clever indexing,
+  no metadata DB — just walk the dir, filter foundation names, optionally
+  probe ONNX I/O. Foundation-name set is a frozenset, easy to extend.
+- **TUI toast surface via `self.notify()`.** Already in Textual. Hooking
+  it to `engine.stats.last_error` change-detection elevated silent text
+  updates into in-your-face notifications.
+
+### What surprised
+- **fp16 contentvec cosine ~0.75 vs fp32.** I expected fp16 inference noise
+  to be small in absolute terms; it's not. RVC v2's contentvec weights
+  span enough magnitude that fp16 rounding shifts the feature space
+  meaningfully. The conversion *works* (file loads, engine runs), but
+  voice quality through the RVC model degrades audibly. Decision: do
+  not auto-promote contentvec to fp16; expose only via the `convert`
+  subcommand for users who want to A/B it themselves.
+- **CPU stays at ~32% even with chunk_seconds=0.1.** v0.2.0's findings
+  carry over. The Python loop overhead (sounddevice .read() blocking
+  + numpy reshape/cast/copy on every chunk) is the dominant factor, not
+  the model inference. ORT IO-binding would help but is a bigger refactor.
+- **The AUR submission ceiling is repo-visibility, not packaging readiness.**
+  The PKGBUILD has been valid since v0.1.x; what blocks publication is
+  that the source URL points at a private GitHub repo. Documented as
+  "submission-ready, awaiting de-privatisation" instead of pretending
+  to ship it.
+- **`sed -i 's/f0_up_key = 0/.../'` matched in two places** during my
+  manual profile test (top-level + inside `[profiles.default]`),
+  confusing the test output. Lesson: when verifying a CLI that touches
+  config.toml, use Python to mutate fields, not sed.
+
+### Mistakes
+- **Misplaced `@staticmethod`.** Adding `_auto_pick_fp16` as a static
+  method INSIDE `_ensure_sessions()` orphaned the embedder-resolve block
+  (mypy: "name 'self' is not defined" ×6 lines that were now dead code
+  after the static return). Moved the staticmethod to class scope.
+- **First v0.3.0 perf measurement claimed contentvec auto-loaded fp16**
+  because both rmvpe paths I passed in had the fp16 sibling auto-picked
+  by `_auto_pick_fp16(allow=True)`. Untrue; the helper was working
+  correctly, my A/B test was just blind to the override. Lesson: when
+  you add an auto-detection helper, also expose an `allow=False` knob
+  for explicit testing.
+
+### Recommendations for v0.4.0+
+1. **ORT IO-binding** for the cv→rmvpe→rvc handoff. Tensors stay on the
+   GPU between sessions — this is the documented path to the brief's
+   <15% CPU target.
+2. **fp16 contentvec via quality-validation harness.** Build a test that
+   runs end-to-end RVC inference on a held-out clip and asserts mel-
+   spectrogram MSE / cosine sim above a threshold. If a tuned fp16
+   contentvec passes, ship it; if not, document the trade-off.
+3. **Settings panel in the TUI.** Brief asked for it in Phase 4; I
+   shipped profile cycling + toasts but not the runtime-config editor.
+   `chunk_seconds` / `output_latency_ms` / `embedder` could be edited in
+   place via a Textual Modal screen.
+4. **Browser extension scaffold (v0.4.0 user request).** Manifest v3
+   skeleton; no API integration yet.
+5. **`.vcprofile` shareable presets (v0.4.0 user request).** TOML +
+   model hash, no model bundling.
+6. **Optional system-tray icon** via libappindicator. Keep TUI primary;
+   tray is for users who don't want a terminal open.
+
+## 9. The brief's "FORBIDDEN list" was load-bearing
 
 Section 12 of `PROJECT_BRIEF.md` says: do not rewrite RVC in C++/Rust, do
 not write custom CUDA kernels, do not replace ONNX Runtime, do not distill
