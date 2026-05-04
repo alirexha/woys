@@ -110,6 +110,16 @@ def build_parser() -> argparse.ArgumentParser:
     prof_sub.add_parser("list", help="show saved profiles")
     p_del = prof_sub.add_parser("delete", help="remove a saved profile")
     p_del.add_argument("name")
+    p_exp = prof_sub.add_parser("export", help="write a profile to a shareable .vcprofile file")
+    p_exp.add_argument("name")
+    p_exp.add_argument("-o", "--output", required=True, help="output .vcprofile path")
+    p_imp = prof_sub.add_parser("import", help="load a .vcprofile into config.toml")
+    p_imp.add_argument("path", help="path to a .vcprofile file")
+    p_imp.add_argument(
+        "--name",
+        default=None,
+        help="rename the imported profile (default: use the name embedded in the file)",
+    )
 
     return parser
 
@@ -248,6 +258,14 @@ def main(argv: list[str] | None = None) -> int:
             return cli_profile_list()
         if args.profile_cmd == "delete":
             return cli_profile_delete(args.name)
+        if args.profile_cmd == "export":
+            from vcclient_cachy.vcprofile import cli_profile_export
+
+            return cli_profile_export(args.name, args.output)
+        if args.profile_cmd == "import":
+            from vcclient_cachy.vcprofile import cli_profile_import
+
+            return cli_profile_import(args.path, args.name)
     if args.cmd in ("toggle", "status", "pitch"):
         from tui.control import send_command
 
