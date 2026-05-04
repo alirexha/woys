@@ -60,6 +60,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pitch_p.add_argument("delta", help="signed integer or `0` to reset")
 
+    convert_p = sub.add_parser(
+        "convert",
+        help="(stub) convert a .pth RVC checkpoint to .onnx — see docs/MODELS.md",
+    )
+    convert_p.add_argument("pth", help="path to a .pth RVC checkpoint")
+    convert_p.add_argument(
+        "-o", "--output", default=None, help="output .onnx path (defaults next to input)"
+    )
+
     return parser
 
 
@@ -152,6 +161,16 @@ def main(argv: list[str] | None = None) -> int:
         from tui.app import run_tui
 
         return run_tui(no_pw_setup=args.no_pw_setup, autostart=args.autostart)
+    if args.cmd == "convert":
+        print(
+            "vcclient-cachy convert: coming in a follow-up release. For now,\n"
+            "convert .pth -> .onnx via upstream voice-changer's web UI:\n"
+            "  1. Run upstream: docker run --gpus all -p 18888:18888 wokad/voice-changer\n"
+            "  2. Open http://localhost:18888 → 'Edit' on a slot → 'Export ONNX'\n"
+            "Or, see docs/MODELS.md for the manual torch.onnx.export recipe.",
+            file=sys.stderr,
+        )
+        return 2
     if args.cmd in ("toggle", "status", "pitch"):
         from tui.control import send_command
 
