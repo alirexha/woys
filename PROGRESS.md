@@ -6,8 +6,8 @@ Live tracking of phase status. Updated continuously during autonomous execution.
 |-------|-------------|--------|
 | Setup | Workspace scaffold, git, gh repo | ✅ done |
 | 0 | Recon — clone + map upstream | ✅ done |
-| 1 | Lean Core — RVC-only ONNX server | in progress |
-| 2 | PipeWire integration + persistent vcclient-mic | pending |
+| 1 | Lean Core — RVC-only ONNX server | ✅ done — 36.65 ms mean GPU e2e (target <80) |
+| 2 | PipeWire integration + persistent vcclient-mic | in progress |
 | 3 | TUI + D-Bus toggle | pending |
 | 4 | PKGBUILD + install/uninstall | pending |
 | 5 | Performance tuning | pending |
