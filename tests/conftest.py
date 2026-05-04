@@ -1,15 +1,23 @@
 """Shared pytest fixtures for vcclient-cachy."""
+
 from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SERVER_ROOT = PROJECT_ROOT / "src" / "server"
 MODELS_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
 FIXTURES_DIR = PROJECT_ROOT / "tests" / "fixtures"
+
+# upstream uses unprefixed imports (from voice_changer.X import Y); inject the
+# server dir on sys.path before any test collection so those imports resolve.
+if str(SERVER_ROOT) not in sys.path:
+    sys.path.insert(0, str(SERVER_ROOT))
 
 
 @pytest.fixture(scope="session")
@@ -31,9 +39,7 @@ def fixtures_dir() -> Path:
 
 def _has_gpu() -> bool:
     try:
-        out = subprocess.run(
-            ["nvidia-smi", "-L"], capture_output=True, text=True, timeout=3
-        )
+        out = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=3)
         return out.returncode == 0 and "GPU" in out.stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
@@ -43,9 +49,7 @@ def _has_pipewire() -> bool:
     if not shutil.which("pactl"):
         return False
     try:
-        out = subprocess.run(
-            ["pactl", "info"], capture_output=True, text=True, timeout=3
-        )
+        out = subprocess.run(["pactl", "info"], capture_output=True, text=True, timeout=3)
         return out.returncode == 0 and "PipeWire" in out.stdout
     except subprocess.TimeoutExpired:
         return False

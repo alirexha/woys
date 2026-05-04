@@ -14,7 +14,35 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
-# Runtime dependencies are pinned in Phase 1 via `uv pip compile` into requirements.lock.
+dependencies = [
+    # ML / inference
+    "numpy>=1.26,<2.2",
+    "scipy>=1.13",
+    "torch>=2.4,<2.6",
+    "torchaudio>=2.4,<2.6",
+    "onnxruntime-gpu>=1.20,<1.23",
+    "onnxsim>=0.4.36",
+    # RVC pieces
+    "librosa>=0.10",
+    "resampy>=0.4.3",
+    "torchcrepe>=0.0.22",
+    "torchfcpe>=0.0.4",
+    "faiss-cpu>=1.8",
+    "einops>=0.8",
+    "soundfile>=0.12",
+    # Server framework
+    "fastapi>=0.110,<0.116",
+    "uvicorn[standard]>=0.30",
+    "python-socketio>=5.11",
+    "python-multipart>=0.0.9",
+    "websockets>=12",
+    "pyOpenSSL>=24.0",
+    # Utilities
+    "huggingface_hub>=0.25",
+    "dataclasses-json>=0.6",
+    "tqdm>=4.66",
+    "psutil>=6",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -24,6 +52,14 @@ dev = [
     "mypy>=1.13",
     "py-spy>=0.3.14",
 ]
+# fairseq is needed for the PyTorch hubert/contentvec embedder (recon §9).
+# It's notoriously brittle on modern Python; isolate as an extra so the rest
+# of the install can succeed even if fairseq fails. Try `pip install fairseq`
+# only if needed for embedder fallback.
+fairseq = ["fairseq>=0.12"]
+# pyworld is only needed for harvest/dio f0 detectors (RMVPE/Crepe/Fcpe don't
+# need it). Optional — installs C extensions, sometimes painful.
+worldpitch = ["pyworld>=0.3.4"]
 
 [project.scripts]
 vcclient-cachy = "vcclient_cachy.cli:main"
@@ -41,7 +77,9 @@ include = ["src/", "pkg/", "docs/", "tests/", "README.md", "LICENSE", "CHANGELOG
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = ["upstream", ".venv"]
+# src/server/ is vendored upstream code (Phase 0 recon → Phase 1 trim). We don't
+# enforce ruff/mypy on it yet — incremental cleanup happens in later phases.
+extend-exclude = ["upstream", ".venv", "src/server", "tests/fixtures"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "RUF", "SIM", "C4"]
@@ -57,7 +95,8 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_reexport = true
 disallow_any_unimported = false
-exclude = ["upstream/", ".venv/", "build/"]
+# src/server/ is vendored upstream code awaiting incremental cleanup.
+exclude = ["upstream/", ".venv/", "build/", "src/server/"]
 
 [[tool.mypy.overrides]]
 module = ["soundfile", "sounddevice", "evdev", "textual.*", "rich.*", "onnxruntime", "onnxruntime.*", "librosa.*", "numpy.*", "scipy.*", "torch.*", "huggingface_hub.*"]

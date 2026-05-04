@@ -1,4 +1,5 @@
 """Sanity checks for the host environment. These run first and gate everything else."""
+
 from __future__ import annotations
 
 import shutil

@@ -1,10 +1,17 @@
 """Entry point. The real subcommands are wired in Phase 1+ as each module lands."""
+
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from vcclient_cachy import __version__
+
+# Upstream-style imports (from voice_changer.X) require src/server/ on sys.path.
+_SERVER_ROOT = Path(__file__).resolve().parent.parent / "server"
+if _SERVER_ROOT.is_dir() and str(_SERVER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SERVER_ROOT))
 
 
 def build_parser() -> argparse.ArgumentParser:
