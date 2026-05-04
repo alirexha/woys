@@ -121,6 +121,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="rename the imported profile (default: use the name embedded in the file)",
     )
 
+    sub.add_parser(
+        "tray",
+        help="launch the optional system-tray icon (requires the [tray] extra)",
+    )
+
     return parser
 
 
@@ -266,6 +271,10 @@ def main(argv: list[str] | None = None) -> int:
             from vcclient_cachy.vcprofile import cli_profile_import
 
             return cli_profile_import(args.path, args.name)
+    if args.cmd == "tray":
+        from vcclient_cachy.tray import cli_tray
+
+        return cli_tray()
     if args.cmd in ("toggle", "status", "pitch"):
         from tui.control import send_command
 
