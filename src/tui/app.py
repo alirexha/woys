@@ -106,6 +106,10 @@ class VCClientApp(App[int]):
                 monitor=self.cfg.monitor,
                 output_latency_ms=self.cfg.output_latency_ms,
                 embedder=self.cfg.embedder,
+                sola_enabled=self.cfg.sola_enabled,
+                sola_crossfade_ms=self.cfg.sola_crossfade_ms,
+                sola_search_ms=self.cfg.sola_search_ms,
+                sola_context_ms=self.cfg.sola_context_ms,
             )
         )
         self.no_pw_setup = no_pw_setup

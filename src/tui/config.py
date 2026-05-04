@@ -23,13 +23,20 @@ class AppConfig:
     rvc_model: str = ""  # absolute path, "" = use engine default
     f0_up_key: int = 0
     sid: int = 0
-    chunk_seconds: float = 0.5
+    # v0.2.0 default dropped from 0.5 → 0.1 thanks to SOLA crossfade. Existing
+    # config.toml files keep their saved value (TOML round-trip preserves it).
+    chunk_seconds: float = 0.1
     mic_rate: int = 48_000
     sink_rate: int = 48_000
     sink_name: str = "VCClientCachySink"  # explicit target — must match systemd unit
     monitor: bool = False  # play transformed audio to default output too (self-monitor)
     output_latency_ms: int = 30  # pacat playback latency request
     embedder: str = "onnx"  # "onnx" (default, no torch) or "fairseq" (heavy fallback)
+    # SOLA streaming params (Phase B — see src/audio/sola.py).
+    sola_enabled: bool = True
+    sola_crossfade_ms: float = 50.0
+    sola_search_ms: float = 4.0
+    sola_context_ms: float = 100.0
     autostart_engine: bool = False
     enable_dbus: bool = True  # reserved for future D-Bus wiring (currently unused)
     enable_evdev_hotkey: bool = False
