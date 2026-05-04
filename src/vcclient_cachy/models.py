@@ -136,7 +136,8 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
 
     api = HfApi()
     info = api.repo_info(repo)
-    entries = [s.rfilename for s in info.siblings if s.rfilename.endswith((".onnx", ".index"))]
+    siblings = getattr(info, "siblings", None) or []
+    entries = [s.rfilename for s in siblings if s.rfilename.endswith((".onnx", ".index"))]
     if not entries:
         raise RuntimeError(f"no .onnx / .index files found in {repo}")
 
@@ -190,7 +191,7 @@ def _read_active_model() -> Path | None:
         # Tests / standalone runs may not have src/tui on path.
         repo_root = Path(__file__).resolve().parent.parent
         sys.path.insert(0, str(repo_root))
-        from tui.config import load_config  # type: ignore[import-not-found]
+        from tui.config import load_config
     cfg = load_config()
     if cfg.rvc_model:
         p = Path(cfg.rvc_model)
@@ -218,7 +219,7 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
 
     repo_root = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(repo_root))
-    from tui.config import load_config, save_config  # type: ignore[import-not-found]
+    from tui.config import load_config, save_config
 
     cfg = load_config()
     cfg.rvc_model = str(path.resolve())
