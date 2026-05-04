@@ -235,6 +235,8 @@ class RealtimeEngine:
         self._rmvpe: ort.InferenceSession | None = None
         self._rvc: ort.InferenceSession | None = None
         self._is_half: bool = False
+        self._cv_input_dtype: str = "tensor(float)"
+        self._rmvpe_input_dtype: str = "tensor(float)"
 
         # Active embedder mode after _ensure_sessions(). Either "onnx" or
         # "fairseq" — falls back from "fairseq" to "onnx" automatically if
@@ -265,10 +267,19 @@ class RealtimeEngine:
     # ---- model loading ------------------------------------------------------
 
     def _ensure_sessions(self) -> None:
+        # v0.3.0: prefer fp16 variants if present next to the fp32 file. fp16
+        # rmvpe halves its VRAM footprint with no measurable pitch-detection
+        # quality loss (validated v0.2.0). fp16 contentvec, by contrast, has
+        # cosine sim 0.75 vs fp32 — only auto-promoted if explicitly requested.
+        cv_path = self._auto_pick_fp16(self.cfg.contentvec_model, allow=False)
+        rmvpe_path = self._auto_pick_fp16(self.cfg.rmvpe_model, allow=True)
+
         if self._cv is None:
-            self._cv = _make_session(self.cfg.contentvec_model)
+            self._cv = _make_session(cv_path)
+            self._cv_input_dtype = self._cv.get_inputs()[0].type
         if self._rmvpe is None:
-            self._rmvpe = _make_session(self.cfg.rmvpe_model)
+            self._rmvpe = _make_session(rmvpe_path)
+            self._rmvpe_input_dtype = self._rmvpe.get_inputs()[0].type
         if self._rvc is None:
             self._rvc = _make_session(self.cfg.rvc_model)
             self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
@@ -297,6 +308,14 @@ class RealtimeEngine:
         else:
             self.active_embedder = "onnx"
 
+    @staticmethod
+    def _auto_pick_fp16(fp32_path: Path, *, allow: bool) -> Path:
+        """If a `<name>-fp16.onnx` sibling exists and `allow=True`, use it."""
+        if not allow:
+            return fp32_path
+        cand = fp32_path.with_name(fp32_path.stem + "-fp16" + fp32_path.suffix)
+        return cand if cand.exists() else fp32_path
+
     def reload_rvc(self, path: Path) -> None:
         """Hot-swap the RVC voice model."""
         self.cfg.rvc_model = path
@@ -310,9 +329,12 @@ class RealtimeEngine:
         if self.active_embedder == "fairseq" and self._fairseq is not None:
             return self._fairseq.extract(audio16k.astype(np.float32, copy=False))
         assert self._cv is not None
-        feats: NDArrayF32 = self._cv.run(
-            ["unit12"], {"audio": audio16k.reshape(1, -1).astype(np.float32)}
-        )[0]
+        # Cast input to whatever dtype this contentvec ONNX expects (fp16 or fp32).
+        in_dtype = np.float16 if "float16" in self._cv_input_dtype else np.float32
+        audio_in: np.ndarray = audio16k.reshape(1, -1).astype(in_dtype)  # type: ignore[type-arg]
+        feats_raw = self._cv.run(["unit12"], {"audio": audio_in})[0]
+        # Always return float32 to the rest of the pipeline.
+        feats: NDArrayF32 = feats_raw.astype(np.float32, copy=False)
         return feats
 
     def process_chunk_16k(self, audio16k: NDArrayF32) -> NDArrayF32:
@@ -329,13 +351,15 @@ class RealtimeEngine:
         assert self._cv is not None and self._rmvpe is not None and self._rvc is not None
 
         feats = self._extract_feats(audio16k)
-        pitchf = self._rmvpe.run(
+        rm_dtype = np.float16 if "float16" in self._rmvpe_input_dtype else np.float32
+        pitchf_raw = self._rmvpe.run(
             ["pitchf"],
             {
-                "waveform": audio16k.reshape(1, -1).astype(np.float32),
-                "threshold": np.array([self.cfg.threshold], dtype=np.float32),
+                "waveform": audio16k.reshape(1, -1).astype(rm_dtype),
+                "threshold": np.array([self.cfg.threshold], dtype=rm_dtype),
             },
-        )[0].squeeze()
+        )[0]
+        pitchf = pitchf_raw.astype(np.float32).squeeze()
 
         feats_2x = np.repeat(feats, 2, axis=1)
         pitch_coarse, pitchf_aligned = _to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
