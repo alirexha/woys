@@ -49,3 +49,6 @@ upstream/
 
 # uv lock cache
 .uv-cache/
+
+# the tooling per-machine permission overrides (do NOT track)
+./settings.local.json
