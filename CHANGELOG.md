@@ -4,6 +4,18 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-05-04 — Optimization release
+
+Headline: **e2e latency 280 ms → 30 ms** (88% reduction). Full numbers in `docs/05-perf.md`.
+
+| Brief target | v0.1.1 | v0.2.0 | Verdict |
+|---|---:|---:|---|
+| e2e < 120 ms (was 280 ms baseline) | ~280 ms | **30.5 ms** | HIT |
+| VRAM < 700 MiB | 1.36 GiB | 1.35 GiB | MISS — needs fp16 model exports (deferred to v0.3.0) |
+| CPU active < 18 % | ~26 % | ~32 % | MISS — needs ORT IO binding (v0.3.0) |
+| `convert` subcommand functional | stub | functional | HIT |
+| All v0.1.1 tests green | green | green | HIT — no routing regression |
+
 ### Phase A (v0.2.0) — OnnxContentvec real impl + embedder selector
 - `src/server/voice_changer/RVC/embedder/OnnxContentvec.py`: filled the upstream stub. Real ORT inference on `contentvec-f.onnx`. Routes layer/projection arguments to the right ONNX output (`units9` for v1 256-dim path, `unit12` for v2 768-dim path). Handles `(1, T)` and `(1, 1, T)` input shapes from upstream's pipeline. (MIT modification — file remains under upstream's license.)
 - `EngineConfig.embedder` / `AppConfig.embedder` config flag: `"onnx"` default (direct ORT, no torch), `"fairseq"` opt-in fallback. Misconfiguration / missing fairseq → graceful fallback to ONNX with a clear log line and `EngineStats.last_error` populated. Engine never crashes on this path.

@@ -2,14 +2,18 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
-## v0.2.0 — Optimization release (in progress, 2026-05-04)
+## v0.2.0 — Optimization release ✅ shipped 2026-05-04
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| A | OnnxContentvec real impl + embedder config flag | ✅ done — graceful fairseq fallback |
-| B | SOLA crossfade for low-latency chunks | in progress |
-| C | Real `convert` subcommand (.pth → .onnx) | pending |
-| D | Perf verification + docs + tag v0.2.0 | pending |
+| A | OnnxContentvec real impl + embedder config flag | ✅ done |
+| B | SOLA crossfade for low-latency chunks | ✅ done — 30.5 ms warm (target <120) |
+| C | Real `convert` subcommand (.pth → .onnx) | ✅ done — verified on amitaro v2 |
+| D | Perf verification + docs + tag v0.2.0 | ✅ done |
+
+Headline numbers vs v0.1.1: e2e 280 ms → **30.5 ms** (-88%); VRAM unchanged;
+CPU slightly up (more chunks/sec at chunk=0.1). VRAM + CPU misses are scoped
+into v0.3.0.
 
 ## v0.1.1 — P0 routing fix (2026-05-04)
 

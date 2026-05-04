@@ -197,7 +197,71 @@ If a follow-up session is scoped, prioritized by impact:
    a known WAV through the full chain and compares output spectrograms
    would catch regressions.
 
-## 7. The brief's "FORBIDDEN list" was load-bearing
+## 7. v0.2.0 retrospective (post-v0.1.1)
+
+Three-phase optimization release. Headline: **e2e 280 ms → 30 ms** (88%
+reduction) with no regression in v0.1.1's routing fix.
+
+### What worked
+- **SOLA at chunk=0.1 was the single biggest unlock.** Five lines of cross-
+  correlation + Hann crossfade in `src/audio/sola.py` got us from 280 ms to
+  30 ms. The hard part wasn't the algorithm — it was the input-context
+  bookkeeping in `_process_streaming_16k`. Expect future regressions here:
+  any change to chunk sizes / context sizes / model output ratio breaks the
+  trim math.
+- **Filling upstream's `OnnxContentvec` stub was 30 lines.** The expensive
+  part was figuring out which output name (`unit12` vs `units9`) the
+  upstream pipeline expected; once that mapped to embOutputLayer / useFinalProj,
+  it dropped in.
+- **`convert` subcommand worked first try** because upstream's `_export2onnx`
+  function was already there — we just needed a metadata probe + an
+  ORT-load validation step around it. The opset pin via monkey-patching
+  `torch.onnx.export` is ugly but works.
+
+### What surprised
+- **The brief expected fairseq+torch on the embedder hot path.** Reality:
+  v0.1.1 was already direct ORT — fairseq was never loaded. The "drops 700 MB"
+  claim in Phase A's why-it-matters section didn't materialize, because there
+  was nothing to drop. Documented honestly in Phase A CHANGELOG.
+- **fp16 conversion of contentvec degraded quality measurably**
+  (cosine sim 0.75 vs fp32). Used `onnxconverter-common.float16.convert_float_to_float16`
+  with `keep_io_types=False`. RMVPE fp16 was fine (pitch detection within 0.1 Hz);
+  contentvec wasn't. Decision: don't ship fp16 by default in v0.2.0 — surface as
+  opt-in via the `convert --fp16` flag for users who want to experiment.
+- **The torch.onnx.export tracer prints a wall of TracerWarning messages**
+  during convert. Harmless (the variable parts are bookkeeping bools), but
+  noisy. Filtered in test output, not silenced in CLI.
+- **chunk_seconds=0.1 doubled CPU usage** (26% → 32%). The engine is doing
+  3.3 chunks/sec instead of 4 — more Python overhead per second of audio.
+  ORT IO binding would help; deferred to v0.3.0.
+
+### Mistakes
+- **First SOLA test was conceptually wrong.** Tested "feed sine wave through
+  SOLA, expect identity output". But SOLA assumes consecutive model outputs
+  *overlap in time* — that only happens when the engine feeds overlapping
+  input. My non-overlapping test reported the SOLA path "lost 22% of audio";
+  scrapped it for a real integration test that runs voiced harmonics through
+  `_process_streaming_16k` and asserts HF-energy ratio doesn't increase vs
+  SOLA-off. Lesson: write the integration test before the unit test when
+  the unit's preconditions depend on integration semantics.
+
+### Recommendations for v0.3.0+
+1. **ORT IOBinding** to keep tensors GPU-resident between contentvec → rmvpe
+   → rvc. Probably 10-20 ms savings + lower CPU.
+2. **fp16 contentvec with quality validation harness.** Build a pipeline that
+   converts to fp16 then runs end-to-end RVC inference and asserts MOS-style
+   quality metrics on a held-out clip. If the metric stays above a threshold,
+   ship fp16 default.
+3. **Separate the "Phase B SOLA bookkeeping" from `_process_streaming_16k`.**
+   Right now the trim math (line 388) is intertwined with model-shape
+   assumptions. Refactor into a `StreamingContext` class so test setup is
+   cleaner.
+4. **Profile the engine warm loop with py-spy.** The 32 ms `avg_total` minus
+   the standalone smoke test's ~22 ms inference floor leaves ~10 ms of
+   "engine overhead" — Python loop, sounddevice .read() blocking time,
+   numpy conversions. Likely halvable.
+
+## 8. The brief's "FORBIDDEN list" was load-bearing
 
 Section 12 of `PROJECT_BRIEF.md` says: do not rewrite RVC in C++/Rust, do
 not write custom CUDA kernels, do not replace ONNX Runtime, do not distill
