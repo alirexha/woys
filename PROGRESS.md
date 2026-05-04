@@ -2,6 +2,29 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## v0.5.1 — Audio quality bugfix (2026-05-04)
+
+The scratchy-audio bug, fixed. Linear-interp resampler (`_resample_linear`,
+in place since Phase 3 v0.1.0) had no anti-aliasing low-pass; frequencies
+above destination Nyquist folded back as audible high-frequency noise.
+Round-trip RMSE 30x worse than soxr HQ. Replaced at all 4 call sites with
+`soxr.resample(quality='HQ')` — no new deps (soxr came in via librosa).
+
+Plus: `EngineConfig.input_gain_db` (default 0 dB; negative trims hot mics
+before resample), default `chunk_seconds` 0.1 → 0.25 (the SOLA tail-hold
+at 100 ms was eating ~10 % of output duration), per-voice profile auto-
+default updated to 0.25 too. Existing config.toml profiles untouched.
+
+Real-audio harness extended with 3 artifact-detection tests covering all
+9 voices: aliasing rejection -79 to -112 dB (vs failure threshold -30),
+worst chunk-boundary impulse +3.6 dB (vs threshold +12), silent-vs-active
+SNR 8.8 to 45.4 dB (RVC-prior dependent; gross-failure floor 6 dB).
+
+Stopgap delivered before code change: brief's `sed s/0.1/0.25/g` bumped
+all 11 chunk_seconds entries in the user's config so they could test in
+Telegram during the fix work. See `docs/07-audio-quality-bug.md` for the
+pre-fix hypothesis trace.
+
 ## v0.5.0 — Voice quality + fast swap (2026-05-04)
 
 The chipmunk bug, fixed. v0.4.x treated every voice's output as 16 kHz; the

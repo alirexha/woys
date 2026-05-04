@@ -23,9 +23,10 @@ class AppConfig:
     rvc_model: str = ""  # absolute path, "" = use engine default
     f0_up_key: int = 0
     sid: int = 0
-    # v0.2.0 default dropped from 0.5 → 0.1 thanks to SOLA crossfade. Existing
-    # config.toml files keep their saved value (TOML round-trip preserves it).
-    chunk_seconds: float = 0.1
+    # v0.5.1 raised default 0.1 → 0.25; SOLA tail-hold at 0.1 was trimming
+    # ~10 % of output duration on continuous speech. Existing config.toml
+    # files keep their saved value (TOML round-trip preserves it).
+    chunk_seconds: float = 0.25
     mic_rate: int = 48_000
     sink_rate: int = 48_000
     sink_name: str = "VCClientCachySink"  # explicit target — must match systemd unit
@@ -37,6 +38,9 @@ class AppConfig:
     sola_crossfade_ms: float = 50.0
     sola_search_ms: float = 4.0
     sola_context_ms: float = 100.0
+    # v0.5.1: software input pre-attenuation in dB. 0.0 = passthrough.
+    # Negative values trim hot mics so RVC doesn't amplify clipping.
+    input_gain_db: float = 0.0
     autostart_engine: bool = False
     enable_dbus: bool = True  # reserved for future D-Bus wiring (currently unused)
     enable_evdev_hotkey: bool = False

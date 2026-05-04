@@ -132,21 +132,34 @@ def _save_wav(path: Path, audio: np.ndarray, sr: int) -> None:
         w.writeframes(struct.pack(f"<{samples.size}h", *samples.tolist()))
 
 
-def _run_voice_through_engine(voice_path: Path) -> tuple[np.ndarray, int, float]:
-    """Build an engine for `voice_path`, feed `_synthetic_voiced()` through
-    `_process_streaming_16k` chunk by chunk, return (output, model_sr, infer_avg_ms)."""
+def _run_voice_through_engine(
+    voice_path: Path, chunk_seconds: float = 0.25, audio_in: np.ndarray | None = None
+) -> tuple[np.ndarray, int, float, list[int]]:
+    """Build an engine for `voice_path`, feed `audio_in` (or default synthetic
+    speech) through `_process_streaming_16k` chunk by chunk. Returns
+    (output, model_sr, infer_avg_ms, chunk_boundaries_in_output).
+
+    `chunk_boundaries_in_output` lists the cumulative sample offsets in the
+    concatenated output where each engine-chunk emit ended. Used by
+    boundary-impulse / SNR tests to know where seams might live.
+
+    v0.5.1: chunk_seconds default 0.25 (matches the new EngineConfig default).
+    """
     from audio.engine import EngineConfig, RealtimeEngine
 
-    eng = RealtimeEngine(EngineConfig(chunk_seconds=0.1, rvc_model=voice_path))
+    eng = RealtimeEngine(EngineConfig(chunk_seconds=chunk_seconds, rvc_model=voice_path))
     eng._ensure_sessions()
     eng.reset_streaming_state()
-    audio_in = _synthetic_voiced()
-    chunk_n = SR_INPUT // 10  # 100 ms
+    if audio_in is None:
+        audio_in = _synthetic_voiced()
+    chunk_n = max(1, int(SR_INPUT * chunk_seconds))
 
     import time
 
     pieces: list[np.ndarray] = []
     inf_times: list[float] = []
+    boundaries: list[int] = []
+    cumulative = 0
     for i in range(0, audio_in.size, chunk_n):
         seg = audio_in[i : i + chunk_n]
         t = time.perf_counter()
@@ -154,15 +167,16 @@ def _run_voice_through_engine(voice_path: Path) -> tuple[np.ndarray, int, float]
         inf_times.append((time.perf_counter() - t) * 1000)
         if out.size:
             pieces.append(out)
+            cumulative += int(out.size)
+            boundaries.append(cumulative)
     if eng._sola is not None:
         tail = eng._sola.flush()
         if tail.size:
             pieces.append(tail)
     out_arr = np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
-    # Use mean of last 80% of chunks (skip cold-start spike).
     skip = max(0, len(inf_times) // 5)
     warm_avg = float(np.mean(inf_times[skip:])) if inf_times[skip:] else 0.0
-    return out_arr, eng._rvc_output_sr, warm_avg
+    return out_arr, eng._rvc_output_sr, warm_avg, boundaries
 
 
 @pytest.mark.real_audio
@@ -180,7 +194,7 @@ def test_each_voice_produces_correct_duration_and_voice_band_energy() -> None:
 
     failures: list[str] = []
     for vp in voices:
-        out, model_sr, _ = _run_voice_through_engine(vp)
+        out, model_sr, _, _ = _run_voice_through_engine(vp)
         if out.size == 0:
             failures.append(f"{vp.name}: empty output")
             continue
@@ -230,7 +244,7 @@ def test_voices_produce_distinguishable_outputs() -> None:
 
     sigs: dict[str, np.ndarray] = {}
     for vp in selected:
-        out, sr, _ = _run_voice_through_engine(vp)
+        out, sr, _, _ = _run_voice_through_engine(vp)
         if out.size == 0:
             continue
         sigs[vp.stem] = _mel_signature(out, sr)
@@ -276,7 +290,7 @@ def test_warm_inference_under_60ms_per_voice() -> None:
     results: dict[str, float] = {}
     failures: list[str] = []
     for vp in voices:
-        _, _, warm_ms = _run_voice_through_engine(vp)
+        _, _, warm_ms, _ = _run_voice_through_engine(vp)
         results[vp.stem] = warm_ms
         if warm_ms > LATENCY_BUDGET_MS:
             failures.append(f"{vp.stem}: {warm_ms:.1f} ms > {LATENCY_BUDGET_MS} ms")
@@ -285,3 +299,199 @@ def test_warm_inference_under_60ms_per_voice() -> None:
         marker = "✓" if v <= LATENCY_BUDGET_MS else "✗"
         print(f"    {marker} {k:24s} {v:6.1f}")
     assert not failures, "latency failures: " + "; ".join(failures)
+
+
+# ─── v0.5.1 artifact-detection harness ─────────────────────────────────────
+#
+# These tests catch the audio-quality regressions that v0.5.0's gates missed.
+# Gross duration & cross-voice gates pass even when the audio sounds
+# scratchy because the gross spectrum looks fine. These tests measure
+# spectral artifacts directly:
+#   - aliasing above the model's Nyquist (low-quality resampler tell)
+#   - wide-band noise floor below sustained-vowel SNR (tells "scratch")
+#   - chunk-boundary impulse spikes (tells "click between chunks")
+
+
+def _silence_then_speech(duration_s: float = 3.0, sr: int = SR_INPUT) -> np.ndarray:
+    """Half a second of silence, two seconds of voiced, half a second silent.
+    Used by the noise-floor test — the silent regions are where input is
+    zero, so anything in the output there is engine-introduced noise.
+    """
+    n_total = int(sr * duration_s)
+    n_silent = int(sr * 0.5)
+    audio = np.zeros(n_total, dtype=np.float32)
+    voiced = _synthetic_voiced(duration_s - 1.0, sr)
+    audio[n_silent : n_silent + voiced.size] = voiced
+    return audio
+
+
+def _sustained_vowel(duration_s: float = 3.0, sr: int = SR_INPUT) -> np.ndarray:
+    """Steady 200 Hz harmonic stack — no AM, no pitch contour. Anything in
+    the output that *isn't* steady is an artifact."""
+    t = np.arange(int(sr * duration_s)) / sr
+    f0 = 200.0
+    sig = (
+        0.55 * np.sin(2 * np.pi * f0 * t)
+        + 0.25 * np.sin(2 * np.pi * 2 * f0 * t)
+        + 0.12 * np.sin(2 * np.pi * 3 * f0 * t)
+        + 0.06 * np.sin(2 * np.pi * 4 * f0 * t)
+    )
+    return sig.astype(np.float32) * 0.4
+
+
+def _short_time_rms(audio: np.ndarray, win: int) -> np.ndarray:
+    if audio.size < win:
+        return np.array([float(np.sqrt(np.mean(audio**2) + 1e-12))], dtype=np.float64)
+    n = audio.size // win
+    trimmed = audio[: n * win].reshape(n, win)
+    return np.sqrt(np.mean(trimmed**2, axis=1) + 1e-12)
+
+
+@pytest.mark.real_audio
+@pytest.mark.gpu
+@pytest.mark.slow
+def test_no_aliasing_above_nyquist_per_voice() -> None:
+    """v0.5.1 regression test: with the linear resampler, content above the
+    model's native Nyquist folds back into the audible band. With soxr HQ,
+    the energy in (model_sr/2 ... sink_rate/2) of the upsampled output must
+    be ≥ 30 dB below the speech-band energy.
+
+    We compare energy in [200, 3000] Hz vs. [model_sr/2 + 200, sink_rate/2 - 200].
+    For a 16k voice resampled to 48k, that's [200, 3000] vs [8200, 23800] —
+    the latter band must be quiet.
+    """
+    voices = _all_voice_paths()
+    if not voices:
+        pytest.skip("no voice models in library")
+
+    failures: list[str] = []
+    detail: list[str] = []
+    sink_rate = 48_000
+    for vp in voices:
+        out_native, model_sr, _, _ = _run_voice_through_engine(vp)
+        if out_native.size == 0:
+            continue
+        # Upsample to the sink rate the way the engine does, so we measure
+        # the same signal a Telegram listener would hear.
+        from audio.engine import _resample
+
+        out48 = _resample(out_native, model_sr, sink_rate)
+        # Above-Nyquist band only exists when model_sr < sink_rate.
+        if model_sr >= sink_rate:
+            detail.append(f"{vp.stem}: model_sr {model_sr} ≥ sink — no aliasing band to test")
+            continue
+        spec = np.abs(np.fft.rfft(out48))
+        freqs = np.fft.rfftfreq(out48.size, 1.0 / sink_rate)
+        speech_mask = (freqs >= 200) & (freqs <= 3000)
+        alias_mask = (freqs >= model_sr / 2 + 200) & (freqs <= sink_rate / 2 - 200)
+        speech_e = float(np.sum(spec[speech_mask] ** 2)) + 1e-12
+        alias_e = float(np.sum(spec[alias_mask] ** 2)) + 1e-12
+        ratio_db = 10 * np.log10(alias_e / speech_e)
+        detail.append(f"{vp.stem}: alias / speech = {ratio_db:+.1f} dB (model_sr={model_sr})")
+        # -30 dB: linear resampler hits ~-21 dB in the diagnostic; soxr HQ
+        # hits below -60 dB. -30 catches the linear regression with margin.
+        if ratio_db > -30.0:
+            failures.append(f"{vp.stem}: alias band {ratio_db:+.1f} dB > -30 dB")
+    print("\n  alias-band-vs-speech-band per voice:")
+    for d in detail:
+        print(f"    {d}")
+    assert not failures, "aliasing failures: " + "; ".join(failures)
+
+
+@pytest.mark.real_audio
+@pytest.mark.gpu
+@pytest.mark.slow
+def test_noise_floor_quiet_vs_active_per_voice() -> None:
+    """Feed silence-speech-silence and assert the engine isn't catastrophically
+    generating speech-level noise in silent regions.
+
+    Why the threshold is only 6 dB and not the brief's 25 dB: RVC is a
+    generative model. When fed pure silence it doesn't output silence -
+    it outputs whatever the model's prior thinks "no input" sounds like,
+    which is voice-dependent breath / hum / tonality. Measured baselines on
+    v0.5.1 show the prior alone spans 8 dB (e_girl) to 45 dB (megan_fox)
+    with no engine artifacts. So this test catches the gross-failure mode
+    only ("silent regions sound as loud as speech"); the per-voice numbers
+    are printed for manual inspection. Real resampler-regression coverage
+    lives in `test_no_aliasing_above_nyquist_per_voice` and
+    `test_no_chunk_boundary_impulses_per_voice`.
+    """
+    SNR_FLOOR_DB = 6.0
+    voices = _all_voice_paths()
+    if not voices:
+        pytest.skip("no voice models in library")
+
+    audio_in = _silence_then_speech()
+    failures: list[str] = []
+    detail: list[str] = []
+    for vp in voices:
+        out, sr, _, _ = _run_voice_through_engine(vp, audio_in=audio_in)
+        if out.size == 0:
+            continue
+        # The first ~0.5 s of output is silent input; last ~0.5 s of output
+        # is silent input. Skip a 50 ms guard band on each side to dodge
+        # the SOLA tail of the prior region.
+        n = out.size
+        guard = int(sr * 0.05)
+        silent_head = out[guard : int(sr * 0.45)]
+        silent_tail = out[max(0, n - int(sr * 0.45)) : n - guard] if guard < n else out[:0]
+        active = out[int(sr * 0.6) : int(sr * 2.4)]
+        if silent_head.size < 1024 or active.size < 1024:
+            continue
+        rms_silent = float(
+            np.sqrt(np.mean(np.concatenate([silent_head, silent_tail]) ** 2) + 1e-12)
+        )
+        rms_active = float(np.sqrt(np.mean(active**2) + 1e-12))
+        snr_db = 20 * np.log10(rms_active / max(rms_silent, 1e-9))
+        detail.append(
+            f"{vp.stem}: SNR {snr_db:+.1f} dB (silent={rms_silent:.5f} active={rms_active:.5f})"
+        )
+        if snr_db < SNR_FLOOR_DB:
+            failures.append(f"{vp.stem}: SNR {snr_db:+.1f} dB < {SNR_FLOOR_DB:.0f} dB")
+    print("\n  silent-vs-active SNR per voice:")
+    for d in detail:
+        print(f"    {d}")
+    assert not failures, "noise-floor failures: " + "; ".join(failures)
+
+
+@pytest.mark.real_audio
+@pytest.mark.gpu
+@pytest.mark.slow
+def test_no_chunk_boundary_impulses_per_voice() -> None:
+    """Short-time RMS at chunk boundaries must not exceed median interior RMS
+    by more than 12 dB. Catches per-chunk clicks (e.g., if SOLA crossfade
+    were ever disabled or broke).
+    """
+    voices = _all_voice_paths()
+    if not voices:
+        pytest.skip("no voice models in library")
+
+    failures: list[str] = []
+    detail: list[str] = []
+    for vp in voices:
+        out, sr, _, boundaries = _run_voice_through_engine(vp, audio_in=_sustained_vowel())
+        if out.size == 0 or len(boundaries) < 3:
+            continue
+        # 5 ms RMS windows. Anything wider drowns out a single-sample click.
+        win = max(8, int(sr * 0.005))
+        rms = _short_time_rms(out, win)
+        if rms.size < 4:
+            continue
+        median = float(np.median(rms))
+        worst_db = -120.0
+        for b in boundaries[:-1]:
+            idx = b // win
+            if idx <= 0 or idx >= rms.size:
+                continue
+            # Look at the 2 windows on each side of the boundary.
+            local = rms[max(0, idx - 1) : min(rms.size, idx + 2)]
+            peak = float(np.max(local))
+            db = 20 * np.log10(peak / max(median, 1e-9))
+            worst_db = max(worst_db, db)
+        detail.append(f"{vp.stem}: worst boundary peak {worst_db:+.1f} dB over median")
+        if worst_db > 12.0:
+            failures.append(f"{vp.stem}: boundary peak {worst_db:+.1f} dB > 12 dB")
+    print("\n  worst chunk-boundary peak per voice (vs interior median):")
+    for d in detail:
+        print(f"    {d}")
+    assert not failures, "boundary-impulse failures: " + "; ".join(failures)

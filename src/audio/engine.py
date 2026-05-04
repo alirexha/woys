@@ -77,10 +77,14 @@ class EngineConfig:
     # Audio I/O
     mic_rate: int = 48_000
     sink_rate: int = 48_000
-    # v0.2.0 dropped the default to 100 ms thanks to SOLA crossfade; consecutive
-    # chunks share `sola_crossfade_ms` of overlap, so seams stay inaudible at
-    # this size on continuous speech.
-    chunk_seconds: float = 0.1
+    # v0.2.0 dropped this to 100 ms thanks to SOLA crossfade. v0.5.1 raised
+    # back to 250 ms because at 100 ms the SOLA tail-hold trims ~10 % of
+    # the output duration on continuous speech (per docs/07-audio-quality-bug.md).
+    # Latency at 250 ms is ~30 ms infer + 250 ms chunk wait + ~30 ms pacat
+    # = ~310 ms wall, well under any conversational threshold but above the
+    # original 80 ms target. Keep 100 ms as a tunable for users who care
+    # about absolute latency over output completeness.
+    chunk_seconds: float = 0.25
     channels: int = 1
 
     # SOLA crossfade (Phase B). Disable at your peril — without it, audible
@@ -114,6 +118,13 @@ class EngineConfig:
     # Output latency in ms requested from pacat. Lower = tighter latency,
     # higher = more buffer headroom against scheduler jitter.
     output_latency_ms: int = 30
+
+    # v0.5.1: software input pre-attenuation, in dB. Default 0.0 (passthrough).
+    # Hot mics (HyperX QuadCast at high volume etc.) clip the signal which
+    # RVC amplifies as harsh distortion downstream. Setting a small
+    # negative value (-3 to -6 dB) trims headroom without quieting much.
+    # Applied per chunk before resample → embedder.
+    input_gain_db: float = 0.0
 
     # v0.5.0 session-pool tuning.
     # Cap on simultaneous cached RVC sessions (each ~150 MiB VRAM).
@@ -180,10 +191,12 @@ def _to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, N
 
 
 def _resample_linear(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArrayF32:
-    """Cheap linear-interp resampler.
+    """Cheap linear-interp resampler — kept as a known-bad reference baseline
+    for v0.5.1 tests. Production path uses `_resample` (soxr).
 
-    Adequate for Phase 3 — Phase 5 can swap in scipy.signal.resample_poly for
-    quality if the difference is audible at the sink.
+    Linear interpolation has no anti-aliasing low-pass: frequencies above
+    `dst_rate / 2` fold back as audible high-frequency noise. RMSE on a
+    1 kHz sine round-trip 48k→40k→48k is ~30x worse than soxr HQ.
     """
     if src_rate == dst_rate:
         return audio.astype(np.float32, copy=False)
@@ -197,6 +210,26 @@ def _resample_linear(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArray
     frac = (src_idx - floor).astype(np.float32)
     out: NDArrayF32 = ((1 - frac) * audio[floor] + frac * audio[ceil]).astype(np.float32)
     return out
+
+
+def _resample(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArrayF32:
+    """High-quality resampler using soxr. Production path for v0.5.1+.
+
+    Cost: ~0.5 ms for a 100 ms chunk on this CPU. Worth it: linear interp
+    introduces ~-21 dB of high-frequency noise on a 48 k -> 40 k -> 48 k
+    round-trip; soxr HQ stays below the noise floor (~-87 dB RMSE).
+
+    See `docs/07-audio-quality-bug.md` for the measurement that motivated
+    this swap.
+    """
+    if src_rate == dst_rate:
+        return audio.astype(np.float32, copy=False)
+    if audio.size == 0:
+        return audio.astype(np.float32, copy=False)
+    import soxr  # type: ignore[import-untyped]
+
+    out = soxr.resample(audio, src_rate, dst_rate, quality="HQ")
+    return np.asarray(out, dtype=np.float32)
 
 
 class _FairseqEmbedder:
@@ -604,7 +637,7 @@ class RealtimeEngine:
             with contextlib.suppress(Exception):
                 tail = self._sola.flush()
                 if tail.size > 0 and self._pacat_proc.stdin is not None:
-                    tail48 = _resample_linear(tail, self._rvc_output_sr, self.cfg.sink_rate)
+                    tail48 = _resample(tail, self._rvc_output_sr, self.cfg.sink_rate)
                     self._pacat_proc.stdin.write(tail48.tobytes())
                     self._pacat_proc.stdin.flush()
         # Replace the session. Existing _cv (contentvec) and _rmvpe stay
@@ -816,11 +849,20 @@ class RealtimeEngine:
                     self._maybe_swap_model()
                     data, _ = in_stream.read(chunk_mic)
                     audio = data.reshape(-1).astype(np.float32, copy=False)
+
+                    # v0.5.1: software input pre-attenuation. Default 0 dB
+                    # is a no-op (skip the multiply). Negative values trim
+                    # hot mics so RVC doesn't amplify clipping as harsh
+                    # distortion. RMS is measured AFTER the gain so the
+                    # stat reflects what the model actually sees.
+                    if self.cfg.input_gain_db != 0.0:
+                        audio = audio * np.float32(10.0 ** (self.cfg.input_gain_db / 20.0))
+
                     rms = float(np.sqrt(np.mean(audio**2)))
                     self.stats.last_input_rms = rms
 
                     t_total = time.perf_counter()
-                    audio16 = _resample_linear(audio, self.cfg.mic_rate, 16_000)
+                    audio16 = _resample(audio, self.cfg.mic_rate, 16_000)
 
                     t_inf = time.perf_counter()
                     # Streaming path uses SOLA + input history (Phase B). When
@@ -838,7 +880,7 @@ class RealtimeEngine:
                     # rate (16k for amitaro, 40k for most v2 voices, etc.).
                     # Resample from THAT rate to the sink rate. v0.4.x bug
                     # was treating every voice as 16 kHz output.
-                    out48 = _resample_linear(out_native, self._rvc_output_sr, self.cfg.sink_rate)
+                    out48 = _resample(out_native, self._rvc_output_sr, self.cfg.sink_rate)
 
                     # Primary output → VCClientCachySink via pacat.
                     if pacat_proc.poll() is not None:
@@ -877,7 +919,7 @@ class RealtimeEngine:
                 with contextlib.suppress(Exception):
                     tail = self._sola.flush()
                     if tail.size > 0 and pacat_proc.stdin is not None:
-                        tail48 = _resample_linear(tail, self._rvc_output_sr, self.cfg.sink_rate)
+                        tail48 = _resample(tail, self._rvc_output_sr, self.cfg.sink_rate)
                         pacat_proc.stdin.write(tail48.tobytes())
                         pacat_proc.stdin.flush()
             if monitor_stream is not None:

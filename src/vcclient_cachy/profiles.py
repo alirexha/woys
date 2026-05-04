@@ -38,6 +38,7 @@ _PROFILE_FIELDS = (
     "sola_crossfade_ms",
     "sola_search_ms",
     "sola_context_ms",
+    "input_gain_db",
 )
 
 

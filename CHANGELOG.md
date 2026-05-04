@@ -4,6 +4,98 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-05-04 — Audio quality bugfix (resampler + chunk default)
+
+### The scratchy audio bug
+
+User reported micro-noises and scratches throughout playback in Telegram on
+all 9 character voices after v0.5.0; only the original Amitaro baseline was
+clean. v0.5.0's QA harness asserted *output duration* and *cross-voice
+distinguishability* — both passed even though the audio was scratchy,
+because the gross spectrum looked fine.
+
+Root cause: the resampler was a 2-tap linear interpolator (`_resample_linear`)
+that has no anti-aliasing low-pass. Frequencies above the destination
+Nyquist folded back into the audible band as audible high-frequency noise.
+Round-trip RMSE on a 1 kHz sine 48k → 40k → 48k:
+
+| Resampler | RMSE | Above-Nyquist energy ratio |
+|---|---:|---:|
+| `_resample_linear` | 0.001330 | -21 dB rel speech |
+| `soxr` quality=HQ | 0.000044 | -79 to -112 dB rel speech (per voice, post-fix) |
+
+30x worse RMSE on linear, ~50 dB more high-frequency content in the error
+signal. And the engine resampled twice per chunk (mic → 16k → infer →
+sink rate → 48k), so the artifacts compounded.
+
+### The fix
+
+- New `_resample()` using `soxr` quality="HQ" at all four call sites in the
+  audio pipeline. soxr was already in the dep tree via librosa; no new deps.
+  Cost ~0.5 ms per resample on this CPU; no measurable latency hit.
+- `_resample_linear()` kept for tests as a known-bad reference baseline.
+
+### Default `chunk_seconds` 0.1 → 0.25
+
+Diagnostic showed output duration shortfall: 100 ms chunks produced 2.70 s
+output for 3 s input (10 % loss to SOLA tail-hold). 250 ms chunks produced
+2.98 s (1 % loss). Default raised. 100 ms remains a tunable for users
+optimizing for absolute latency.
+
+### Input gain control
+
+New `EngineConfig.input_gain_db` (default 0.0). Software pre-attenuation
+applied per chunk before resampling. Negative values trim hot mics so RVC
+doesn't amplify clipping. Plumbed through `AppConfig` + per-profile
+snapshot. Live-tunable — picked up on the next mic chunk without an engine
+restart.
+
+### Verification — all 9 voices, real audio
+
+`tests/test_voice_quality.py` extended with three artifact-detection tests:
+
+- `test_no_aliasing_above_nyquist_per_voice` — content above the model's
+  Nyquist, after upsample to sink rate, must be -30 dB or quieter relative
+  to the speech band. **Result**: -79 to -112 dB across all 9 voices.
+- `test_no_chunk_boundary_impulses_per_voice` — short-time RMS at chunk
+  seams must not exceed median interior RMS by more than 12 dB. **Result**:
+  worst boundary +3.6 dB across all 9 voices.
+- `test_noise_floor_quiet_vs_active_per_voice` — generative-RVC-aware
+  gross-failure floor (RVC's own prior emits voice-dependent breath / hum
+  on silence input, which is *not* an engine bug; per-voice numbers are
+  printed for manual inspection). **Result**: all 9 voices clear the 6 dB
+  floor; range +8.8 dB (e_girl prior) to +45.4 dB (megan_fox prior).
+
+Plus the existing v0.5.0 gates still pass: per-voice duration within ±15 %
+of input, cross-voice mel cosine < 0.999, warm inference < 60 ms.
+
+### Stopgap delivered before the fix
+
+The brief specified an immediate stopgap so the user could test in Telegram
+while the real fix was in progress. Run at the start of work:
+
+```
+sed -i 's/chunk_seconds = 0.1/chunk_seconds = 0.25/g' ~/.config/vcclient-cachy/config.toml
+```
+
+Bumped 11 entries (top-level + 10 profiles).
+
+### Why v0.5.0 missed it
+
+Duration-and-band-energy gates pass even when the audio sounds scratchy,
+because the gross energy distribution looks fine. The new spectral-quality
+assertions (aliasing, boundary, SNR) measure the user-visible artifact
+directly. See `docs/07-audio-quality-bug.md` for the full pre-fix
+investigation trace.
+
+### What did NOT change
+
+- SOLA math — works correctly per the chunk-size sweep in `docs/07`.
+- f0 detector — already feeds RMVPE 250 ms of input history per chunk.
+- pacat invocation — no underrun signs in any voice's output.
+- Voice-library import / convert subcommand — out of scope for v0.5.1.
+- Routing fix (pacat → VCClientCachySink) and v0.4.1 hot-swap — preserved.
+
 ## [0.5.0] — 2026-05-04 — Voice quality + fast swap
 
 ### The chipmunk bug
