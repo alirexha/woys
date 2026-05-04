@@ -4,6 +4,50 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-04 — UX + library + opt-in fp16
+
+| Brief target (v0.3.0) | v0.2.0 | v0.3.0 | Verdict |
+|---|---:|---:|---|
+| e2e < 80 ms (original brief target) | 30 ms | **32 ms** | HIT |
+| VRAM < 500 MiB | 1.35 GiB | **1.09 GiB** | MISS — fp16 rmvpe saved 252 MiB; need IO-binding + fp16 contentvec for 500 |
+| CPU < 15 % | 32 % | **32 %** | MISS — Python loop / numpy conversions; needs IO-binding |
+| `convert` subcommand | functional | functional | HIT |
+| Models library UX | n/a | **shipped** | HIT |
+| Profiles | n/a | **shipped** | HIT |
+| TUI polish | n/a | profile cycle + toasts + cold-start hint | HIT |
+| AUR | AUR-ready | submission-ready (gated on repo de-privatisation) | partial |
+
+### Phase 1 — Perf push (partial)
+- Engine now auto-picks fp16 rmvpe when a `<name>-fp16.onnx` sibling exists. **VRAM 1356 → 1094 MiB (−262 MiB / −19%)**. fp16 rmvpe pitch detection is within 0.1 Hz of fp32 — safe default.
+- contentvec stays fp32. Validated cosine sim of fp16 contentvec is ~0.75 vs fp32; not safe to ship as a quality-preserving default.
+- New `vcclient-cachy fp16-convert [--include-contentvec] [--force]` subcommand wraps `onnxconverter_common.float16.convert_float_to_float16`. rmvpe needs `op_block_list=['Cast']` to dodge the type-error during conversion.
+- Engine is dtype-aware on input — both rmvpe and contentvec sessions cast their input to whatever the loaded model expects (`tensor(float)` vs `tensor(float16)`). Outputs are cast back to fp32 before downstream consumers (SOLA, RVC).
+- IO-binding deferred: the contentvec → rmvpe → rvc handoff still goes through CPU. Probably 5-10 ms more savings + some CPU drop. Logged to v0.4.0+.
+
+### Phase 2 — Models library
+- `src/vcclient_cachy/models.py`: `discover_models()` walks the cache dir, filters out foundation files (rmvpe / contentvec / hubert), probes ONNX I/O for sample-rate and v1-vs-v2 + f0 hints. `find_by_name()` resolves stem / filename / absolute path.
+- `download_repo(repo)` uses `huggingface_hub.snapshot`-style fetching of all `.onnx` and `.index` siblings; hardlinks from HF cache when same fs.
+- CLI: `vcclient-cachy models {list, download <hf-repo>, use <name>}` with `*` marker on the active model.
+- 7 new tests in `tests/test_models_library.py`.
+
+### Phase 3 — Profiles
+- `src/vcclient_cachy/profiles.py`: snapshot/apply/list/delete/cycle. Stored under `[profiles.<name>]` in `config.toml` via `AppConfig._extras` so the existing TOML round-trip preserves them — no AppConfig schema change.
+- Profile fields = `{rvc_model, f0_up_key, sid, chunk_seconds, monitor, embedder, output_latency_ms, sola_*}`. The "global" remainder (mic_rate, sink_rate, sink_name, autostart, evdev) stays unchanged across profile switches.
+- CLI: `vcclient-cachy profile {save <name>, use <name>, list, delete <name>}`.
+- 7 new tests in `tests/test_profiles.py`.
+
+### Phase 4 — TUI polish
+- New `p` binding cycles through saved profiles. Toast on switch with the new profile name + pitch.
+- StatusPanel grew a `profile:` line + a `warming up…` cold-start state visible while `chunks_processed < 10`.
+- Generic error-toast surface: any change to `engine.stats.last_error` fires `notify(severity="error")` so users can't miss issues.
+- Engine start/stop emit short toasts with the cudnn-warmup-2s expectation.
+- PipeWire setup failures at mount time fire a long-timeout error toast (was a silent text update only).
+
+### Phase 5 — AUR submission bundle
+- `pkg/.SRCINFO` generated from PKGBUILD via `makepkg --printsrcinfo`.
+- `pkg/README-AUR.md`: full submission walkthrough — pre-flight (public-repo requirement, AUR account, SSH key), `git push origin master` to `ssh://aur@aur.archlinux.org/vcclient-cachy.git`, update workflow, local-build smoke-test recipe.
+- Honest miss: cannot actually publish from this session. The repo's PRIVATE visibility flips this from "published" to "submission-ready, awaiting user action". README updated accordingly.
+
 ## [0.2.0] — 2026-05-04 — Optimization release
 
 Headline: **e2e latency 280 ms → 30 ms** (88% reduction). Full numbers in `docs/05-perf.md`.

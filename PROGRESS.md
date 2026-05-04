@@ -2,6 +2,17 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## v0.3.0 — UX + library release ✅ shipped 2026-05-04
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Perf push (fp16 rmvpe + IO-binding deferred) | ✅ partial — VRAM 1.35→1.09 GiB, e2e <80ms HIT |
+| 2 | Models library (list / download / use) | ✅ done |
+| 3 | Profiles (save / use / list / delete / cycle) | ✅ done |
+| 4 | TUI polish (cycle key, toasts, cold-start) | ✅ done |
+| 5 | AUR submission bundle (gated on repo de-privatisation) | ✅ partial |
+| 6 | Tag v0.3.0 + retro | ✅ done |
+
 ## v0.2.0 — Optimization release ✅ shipped 2026-05-04
 
 | Phase | Description | Status |
