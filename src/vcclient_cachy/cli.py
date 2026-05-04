@@ -101,6 +101,16 @@ def build_parser() -> argparse.ArgumentParser:
     use_p = models_sub.add_parser("use", help="set the active RVC model in config.toml")
     use_p.add_argument("name", help="model name (file stem) or absolute path to a .onnx")
 
+    prof_p = sub.add_parser("profile", help="named state snapshots — model + pitch + chunk + ...")
+    prof_sub = prof_p.add_subparsers(dest="profile_cmd", required=True, metavar="ACTION")
+    p_save = prof_sub.add_parser("save", help="snapshot the current config under a name")
+    p_save.add_argument("name")
+    p_use = prof_sub.add_parser("use", help="apply a saved profile to the active config")
+    p_use.add_argument("name")
+    prof_sub.add_parser("list", help="show saved profiles")
+    p_del = prof_sub.add_parser("delete", help="remove a saved profile")
+    p_del.add_argument("name")
+
     return parser
 
 
@@ -222,6 +232,22 @@ def main(argv: list[str] | None = None) -> int:
             return cli_models_download(args.repo)
         if args.models_cmd == "use":
             return cli_models_use(args.name)
+    if args.cmd == "profile":
+        from vcclient_cachy.profiles import (
+            cli_profile_delete,
+            cli_profile_list,
+            cli_profile_save,
+            cli_profile_use,
+        )
+
+        if args.profile_cmd == "save":
+            return cli_profile_save(args.name)
+        if args.profile_cmd == "use":
+            return cli_profile_use(args.name)
+        if args.profile_cmd == "list":
+            return cli_profile_list()
+        if args.profile_cmd == "delete":
+            return cli_profile_delete(args.name)
     if args.cmd in ("toggle", "status", "pitch"):
         from tui.control import send_command
 
