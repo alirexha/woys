@@ -2,6 +2,18 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## v0.1.1 — P0 routing fix (2026-05-04)
+
+After v0.1.0 was tagged, the user reported that Discord/Telegram receive
+silence when set to `vcclient-mic`, and that they hear transformed audio from
+the laptop speakers. Diagnosis: the engine's output was going to the system
+default sink, not VCClientCachySink. Root cause: PortAudio on CachyOS only
+exposes the ALSA host API; `sd.OutputStream()` with no `device=` falls
+through to ALSA default. Fix: switched engine output to a `pacat
+--device=VCClientCachySink` subprocess (proven path; same as bench_loopback).
+Also gated the host-default monitor stream behind a `--monitor` opt-in flag.
+Two new regression tests in `tests/test_engine_routing.py`. Tag: **v0.1.1**.
+
 | Phase | Description | Status |
 |-------|-------------|--------|
 | Setup | Workspace scaffold, git, gh repo | ✅ done |
@@ -19,8 +31,8 @@ Live tracking of phase status. Updated continuously during autonomous execution.
 | DoD item | Status |
 |----------|--------|
 | 1. `./install.sh` on a fresh CachyOS works in under 5 minutes | ✅ verified (~3 min, mostly torch+ORT pip install) |
-| 2. Discord with `vcclient-mic` selected → real-time voice transformation, **measured** < 80 ms | **ready for user QA, pending live test** — see `docs/QA.md` Test 2. Note: Phase 5 measured 280 ms warm e2e; <80 ms target needs SOLA + IO binding (deferred). |
-| 3. CS2 with the same mic → same result | **ready for user QA, pending live test** — see `docs/QA.md` Test 3. |
+| 2. Discord with `vcclient-mic` selected → real-time voice transformation, **measured** < 80 ms | **ready for user QA, pending live test** (v0.1.1 routing fix verified — see `docs/QA.md` Test 2). Phase 5 measured 280 ms warm e2e; <80 ms target needs SOLA + IO binding (deferred). |
+| 3. CS2 with the same mic → same result | **ready for user QA, pending live test** (v0.1.1 routing fix verified — see `docs/QA.md` Test 3). |
 | 4. Full control from the TUI — no browser needed | ✅ `vcclient-cachy run` |
 | 5. All 5 user-facing docs in `docs/` | ✅ INSTALL, DISCORD-SETUP, CS2-SETUP, MODELS, TROUBLESHOOTING (+ QA + perf + recon) |
 | 6. PROGRESS shows every phase complete | ✅ this file |

@@ -51,6 +51,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="start the engine immediately on TUI launch",
     )
+    run.add_argument(
+        "--monitor",
+        action="store_true",
+        default=None,
+        help="also play transformed audio to your default output (self-monitor). "
+        "OFF by default — engine writes only to VCClientCachySink.",
+    )
 
     sub.add_parser("toggle", help="toggle a running TUI's engine on/off")
     sub.add_parser("status", help="ask a running TUI for its status")
@@ -160,7 +167,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "run":
         from tui.app import run_tui
 
-        return run_tui(no_pw_setup=args.no_pw_setup, autostart=args.autostart)
+        return run_tui(
+            no_pw_setup=args.no_pw_setup,
+            autostart=args.autostart,
+            monitor=args.monitor,
+        )
     if args.cmd == "convert":
         print(
             "vcclient-cachy convert: coming in a follow-up release. For now,\n"

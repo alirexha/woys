@@ -6,6 +6,7 @@ on-disk file pass through untouched.
 
 from __future__ import annotations
 
+import contextlib
 import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -25,8 +26,11 @@ class AppConfig:
     chunk_seconds: float = 0.5
     mic_rate: int = 48_000
     sink_rate: int = 48_000
+    sink_name: str = "VCClientCachySink"  # explicit target — must match systemd unit
+    monitor: bool = False  # play transformed audio to default output too (self-monitor)
+    output_latency_ms: int = 30  # pacat playback latency request
     autostart_engine: bool = False
-    enable_dbus: bool = True
+    enable_dbus: bool = True  # reserved for future D-Bus wiring (currently unused)
     enable_evdev_hotkey: bool = False
     evdev_hotkey: str = "ctrl+alt+v"  # only meaningful when enable_evdev_hotkey=True
 
@@ -35,8 +39,18 @@ class AppConfig:
 
 
 def load_config(path: Path = CONFIG_FILE) -> AppConfig:
+    """Load config from disk; on first run, write defaults to $path before returning.
+
+    Writing defaults on first run gives the user a discoverable place to twiddle
+    options (sink_name, monitor, chunk_seconds, etc.) without having to read the
+    source code first.
+    """
     if not path.exists():
-        return AppConfig()
+        cfg = AppConfig()
+        # Read-only home / unwritable XDG dir → fall back to in-memory defaults.
+        with contextlib.suppress(OSError):
+            save_config(cfg, path)
+        return cfg
     with open(path, "rb") as f:
         raw = tomllib.load(f)
     known = {f.name for f in AppConfig.__dataclass_fields__.values()} - {"_extras"}
