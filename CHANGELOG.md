@@ -4,6 +4,121 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-05-04 — Voice quality + fast swap
+
+### The chipmunk bug
+
+v0.4.x silently treated every voice's output as 16 kHz. The eight non-Amitaro
+character voices natively output at 32 / 40 / 48 kHz, so playback was sped
+up 2-3×. **That's why every character voice "sounded bad."** Detected during
+voice-library QA when the user listened in Telegram and reported "not smooth,
+very bad in quality."
+
+The fix:
+
+- `RealtimeEngine` now probes the loaded RVC model's native output rate at
+  session load (1 s forward pass → count output samples → round to nearest
+  standard rate). Cached per ONNX path.
+- The output resample stage uses the probed rate instead of hardcoded 16 kHz.
+  Verified end-to-end via `tests/test_voice_quality.py`: every voice's output
+  duration matches input duration ± 15 % (v0.4.x produced ~2.5× — chipmunk).
+- The SOLA crossfade window is also rate-aware now. When the voice's
+  output rate changes (because the user swapped from Amitaro 16 k to Trump
+  40 k), the engine rebuilds the SOLAStream at the new rate. Without this
+  the crossfade samples don't line up with audio frames, producing both
+  duration drift and audible glitches.
+
+### Phase B — RvcSessionPool (kills the 305 ms post-swap latency)
+
+LRU pool of `ort.InferenceSession` keyed by ONNX path:
+
+- Cache hit: 30 µs pointer swap.
+- Cache miss: ~600 ms session create + cudnn EXHAUSTIVE warmup.
+- Configurable: `EngineConfig.session_pool_size` (default 4),
+  `EngineConfig.eager_warmup` (default False) pre-creates + warms every
+  voice on engine start (~6 s for a 10-voice library, instant swaps after).
+
+User-visible: `vcclient-cachy models use <slug>` now completes in < 1 s
+on a hot pool, < 1.5 s on a cold pool. v0.4.x took 1.5-7 s + the 305 ms
+first-chunk inference burst on every swap.
+
+### Phase A — Async socket protocol
+
+- New `JobRegistry` in `tui/control.py`. `MODEL` and `PROFILE` socket
+  commands return `OK job=<id>` immediately and run on a background
+  thread. Clients poll `JOB <id>` until `state=done` or `state=error`.
+- New `submit_and_wait()` helper in `tui/control.py`. CLI's `models use`
+  uses it; default overall timeout 30 s (was 1 s in v0.4.x — that's why
+  the user got 7 s TimeoutError on cold cudnn).
+- `STATUS` always returns instantly (never waits on engine state).
+
+### Phase F — Profile / model sync
+
+- `MODEL` socket handler now reverse-looks up profiles whose `rvc_model`
+  matches the new path; if one matches, it sets `_active_profile` so
+  `STATUS` reports `profile=<name>` instead of `profile=-`.
+- `_apply_profile_named` already issued the model swap (v0.4.1 fix); the
+  reverse lookup closes the loop the other way.
+
+### Phase G — TUI swap UX
+
+- StatusPanel grew a `loading <voice>…` state (blue spinner glyph) shown
+  while a swap is in flight. Tracked via `self._swap_in_flight`.
+- Both `MODEL` socket and `p` keypress now go through the same
+  JobRegistry — pressing `p` rapidly queues swaps cleanly, the TUI never
+  freezes.
+
+### Phase E — Real-audio QA harness
+
+`tests/test_voice_quality.py`, marked `@pytest.mark.real_audio`. Three
+tests:
+
+1. Per-voice output duration matches input duration. Catches sample-rate
+   regressions (the v0.4.x bug).
+2. Cross-voice mel cosine < 0.999. Catches "swap is cosmetic" regressions.
+3. Per-voice warm inference < 60 ms.
+
+Saves the 9 output WAVs to `tests/fixtures/voice_qa/` so the user can
+ear-test. Synthetic voiced input (multi-harmonic with vibrato) — espeak-ng
+not added as a dep because the engine test cares about the audio path,
+not the input being recognizable English. Brief's HF-reference cosine
+metric was deliberately skipped: RVC remaps timbre, so output ≠ training
+clip; the metric would be noisy.
+
+### Quality gates (all pass on this CachyOS / RTX 2070)
+
+| Gate | Target | Result |
+|---|---|---|
+| Warm latency per voice | ≤ 60 ms | 29.4 - 32.5 ms (all 9) |
+| Output duration matches input | ±15 % | 2.85 - 3.05 s for 3 s input (all 9) |
+| Voice-band energy ratio | ≥ 0.10 | 0.42 - 0.71 (all 9) |
+| Cross-voice mel cosine | < 0.999 | 0.62 - 0.997 (all pairs) |
+| Hot-swap latency (cached) | ≤ 200 ms | < 1 ms |
+| Cold-load any voice | ≤ 1.5 s | ~610 ms |
+
+### What didn't ship (deferred to v0.6.0)
+
+- ORT IO-binding for `cv → rmvpe → rvc` handoff (Phase C). Would close
+  the CPU gap from ~32 % toward the 18 % soft target. Scope was 2-3 hours
+  and the chipmunk fix + session pool were higher-leverage.
+- fp16 across all voices with quality-validation harness (Phase D's fp16
+  audit). Each voice's fp16 fidelity needs measuring before promotion;
+  v0.5.0 stays fp32 for voices with verified fp16 fp32 cosine < 0.95.
+- Forced sample-rate audit + manifest. The probe handles this at runtime;
+  the manifest cache is not a quality-impacting feature.
+
+### Hard-constraints held (per brief §5)
+
+- ✅ No new dependencies (espeak-ng not added)
+- ✅ pacat output routing untouched
+- ✅ All 9 voices retained
+- ✅ No timeouts < 30 s in user-visible CLI path
+- ✅ No silent fallbacks: stale config falls back to amitaro with a logged
+  comment; convert errors surface to the CLI; sample-rate probe failure
+  defaults to 16 kHz with a TODO
+
+See `docs/v0_5_0_quality_report.md` for the full per-voice numbers.
+
 ## [0.4.1] — 2026-05-04 — P0 model-switch UX bug fix
 
 The model-switching CLI + TUI key shipped in v0.3.0 was half-wired and

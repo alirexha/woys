@@ -211,8 +211,13 @@ def cli_models_download(repo: str, models_dir: Path = MODELS_DIR) -> int:
 
 
 def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
-    """Set the active RVC model. v0.4.1: hot-swap if the engine is running,
-    otherwise write config and let the next start pick it up."""
+    """Set the active RVC model.
+
+    v0.5.0: uses the async JOB protocol — `MODEL` returns a job id, we
+    poll `JOB <id>` until the engine worker actually picked up the swap.
+    Default overall timeout 30 s (covers cold-cache cudnn-tune of any
+    voice; cached swaps complete in < 200 ms).
+    """
     path = find_by_name(name, models_dir)
     if path is None:
         print(f"[models] no such model: {name!r}", file=sys.stderr)
@@ -222,22 +227,35 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
     repo_root = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(repo_root))
     from tui.config import load_config, save_config
-    from tui.control import send_command
+    from tui.control import submit_and_wait
 
-    # 1. Try to hot-swap a running engine first. The TUI's MODEL handler
-    # also persists config, so on success we're fully done.
-    socket_reply = send_command(f"MODEL {path.stem}", timeout=2.0)
-    if socket_reply.startswith("OK"):
-        print(f"[models] hot-swapped → {path.name}")
-        print(f"         engine reply: {socket_reply}")
+    # Try the running engine first. submit_and_wait handles the JOB poll.
+    reply = submit_and_wait(f"MODEL {path.stem}", overall_timeout=30.0)
+    if reply.startswith("OK") and " state=done" in reply:
+        # Pull the elapsed_ms field for a friendlier print.
+        ms = "?"
+        for tok in reply.split():
+            if tok.startswith("elapsed_ms="):
+                ms = tok.split("=", 1)[1]
+                break
+        print(f"[models] hot-swapped → {path.name}  ({ms} ms)")
         return 0
-
-    # 2. Engine not running — write config so the next `vcclient-cachy run`
-    # picks it up. No more "restart the engine" messaging since the engine
-    # would, in fact, see this on the next boot.
-    cfg = load_config()
-    cfg.rvc_model = str(path.resolve())
-    save_config(cfg)
-    print(f"[models] config updated → {path.name}")
-    print("         (engine not running; the next `vcclient-cachy run` will load it)")
-    return 0
+    if reply.startswith("OK") and "state=error" in reply:
+        print(f"[models] swap failed: {reply}", file=sys.stderr)
+        return 1
+    if reply.startswith("OK") and "job=" not in reply:
+        # Old synchronous handler — shouldn't happen post-v0.5.0 but keep
+        # backward compat for the rare mixed-version scenario.
+        print(f"[models] hot-swapped → {path.name}")
+        return 0
+    if reply.startswith("ERR control socket not found"):
+        # Engine not running — write config so the next `vcclient-cachy run`
+        # picks it up.
+        cfg = load_config()
+        cfg.rvc_model = str(path.resolve())
+        save_config(cfg)
+        print(f"[models] config updated → {path.name}")
+        print("         (engine not running; the next `vcclient-cachy run` will load it)")
+        return 0
+    print(f"[models] swap reply: {reply}", file=sys.stderr)
+    return 1

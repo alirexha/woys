@@ -15,6 +15,7 @@ Keys
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import ClassVar
 
@@ -28,7 +29,7 @@ from audio import EngineConfig, RealtimeEngine
 from audio.engine import DEFAULT_RVC_MODEL
 from audio.pipewire import PipeWireError, VirtualMic
 from tui.config import AppConfig, load_config, save_config
-from tui.control import ControlServer
+from tui.control import ControlServer, JobRegistry
 from vcclient_cachy.profiles import apply_profile, cycle_profile, list_profiles
 
 
@@ -51,9 +52,13 @@ class StatusPanel(Static):
         pitch: int,
         profile: str | None,
         cold_start: bool,
+        swapping: str | None,
         error: str | None,
     ) -> str:
-        if running and cold_start:
+        if swapping:
+            light = "[bold blue]◴[/]"
+            state = f"loading {swapping}…"
+        elif running and cold_start:
             light = "[bold yellow]◐[/]"
             state = "warming up…"
         elif running:
@@ -147,8 +152,13 @@ class VCClientApp(App[int]):
         self.no_pw_setup = no_pw_setup
         self.pitch = self.cfg.f0_up_key
         self._control = ControlServer(self._handle_control)
+        # v0.5.0: async job table for slow socket commands (MODEL / PROFILE).
+        self._jobs = JobRegistry()
         # v0.3.0: track active profile so the status panel + cycle key know.
         self._active_profile: str | None = None
+        # v0.5.0: track the latest swap target so the TUI can show "loading X..."
+        # while the swap is in flight (~10 ms cached, ~600 ms cold).
+        self._swap_in_flight: str | None = None
 
     def on_mount(self) -> None:
         if not self.no_pw_setup:
@@ -206,21 +216,61 @@ class VCClientApp(App[int]):
             if new_path is None:
                 return f"ERR no such model: {arg!r} (try `models list`)"
 
-            def apply_model() -> None:
-                self.engine.request_model_swap(new_path)
-                self.cfg.rvc_model = str(new_path.resolve())
-                save_config(self.cfg)
+            # Async path: submit + return job id. The job body queues the
+            # swap and waits for the worker to apply it.
+            def do_swap() -> None:
+                self._swap_in_flight = new_path.name
 
-            self.call_from_thread(apply_model)
-            return f"OK model={new_path.name}"
+                def apply_main() -> None:
+                    self.engine.request_model_swap(new_path)
+                    self.cfg.rvc_model = str(new_path.resolve())
+                    # v0.5.0: model swap also updates the active profile name
+                    # if a profile saved that exact rvc_model exists. This
+                    # keeps STATUS's profile= field in sync with reality.
+                    matched = self._profile_for_model_path(new_path)
+                    if matched is not None:
+                        self._active_profile = matched
+                    save_config(self.cfg)
+
+                self.call_from_thread(apply_main)
+
+                # Wait for the engine worker to actually apply the swap.
+                deadline = time.time() + 10.0
+                while time.time() < deadline:
+                    if (
+                        self.engine._pending_model_swap is None
+                        and Path(str(self.engine.cfg.rvc_model)) == new_path.resolve()
+                    ):
+                        break
+                    time.sleep(0.02)
+                self._swap_in_flight = None
+
+            jid = self._jobs.submit(do_swap)
+            return f"OK job={jid} model={new_path.name}"
         if cmd.startswith("PROFILE "):
             target = cmd[len("PROFILE ") :].strip()
 
-            def apply_prof() -> None:
-                self._apply_profile_named(target)
+            def do_profile() -> None:
+                self._swap_in_flight = target
 
-            self.call_from_thread(apply_prof)
-            return f"OK profile={target}"
+                def apply_main() -> None:
+                    self._apply_profile_named(target)
+
+                self.call_from_thread(apply_main)
+                # Mirror the swap-complete poll above so the JOB reflects the
+                # *audio path's* swap, not just the config write.
+                deadline = time.time() + 10.0
+                while time.time() < deadline:
+                    if self.engine._pending_model_swap is None:
+                        break
+                    time.sleep(0.02)
+                self._swap_in_flight = None
+
+            jid = self._jobs.submit(do_profile)
+            return f"OK job={jid} profile={target}"
+        if cmd.startswith("JOB "):
+            jid = cmd[len("JOB ") :].strip()
+            return self._jobs.status_line(jid)
         if cmd == "QUIT":
             # action_quit is async; post a sync shim instead so call_from_thread
             # gets a non-coroutine callable (Textual typing requires it).
@@ -273,11 +323,12 @@ class VCClientApp(App[int]):
         self.cfg.f0_up_key = 0
 
     def action_cycle_profile(self) -> None:
-        """Phase 4 — cycle to the next saved profile (v0.3.0).
+        """Phase 4 — cycle to the next saved profile.
 
-        v0.4.1 fix: this now actually swaps the loaded RVC model in addition
-        to mirroring pitch / sid / monitor / etc. Previously the `model:`
-        line updated cosmetically but the audio pipeline kept the old voice.
+        v0.4.1 fix: this now actually swaps the loaded RVC model.
+        v0.5.0 polish: pressing `p` rapidly queues swaps via JobRegistry so
+        the TUI never freezes; each swap completes in order, and the
+        StatusPanel shows `loading X…` while one is in flight.
         """
         names = list_profiles(self.cfg)
         if not names:
@@ -290,7 +341,37 @@ class VCClientApp(App[int]):
         next_name = cycle_profile(self.cfg, self._active_profile)
         if next_name is None:
             return
-        self._apply_profile_named(next_name)
+
+        def _runner() -> None:
+            self._swap_in_flight = next_name
+
+            def apply_main() -> None:
+                self._apply_profile_named(next_name)
+
+            self.call_from_thread(apply_main)
+            deadline = time.time() + 10.0
+            while time.time() < deadline:
+                if self.engine._pending_model_swap is None:
+                    break
+                time.sleep(0.02)
+            self._swap_in_flight = None
+
+        self._jobs.submit(_runner)
+
+    def _profile_for_model_path(self, path: Path) -> str | None:
+        """v0.5.0: reverse-lookup a saved profile whose rvc_model matches `path`.
+
+        Used by the MODEL handler to keep `_active_profile` in sync when
+        the user invokes `models use <slug>` directly. Returns the first
+        matching profile name (alphabetical via `list_profiles`), or None.
+        """
+        target = str(path.resolve())
+        for name in list_profiles(self.cfg):
+            bag = self.cfg._extras.get("profiles", {})
+            snap = bag.get(name, {}) if isinstance(bag, dict) else {}
+            if isinstance(snap, dict) and snap.get("rvc_model") == target:
+                return name
+        return None
 
     def _apply_profile_named(self, name: str) -> None:
         """Apply a saved profile to both `self.cfg` and `self.engine`. The
@@ -356,6 +437,7 @@ class VCClientApp(App[int]):
                     pitch=int(self.pitch),
                     profile=self._active_profile,
                     cold_start=cold_start,
+                    swapping=self._swap_in_flight,
                     error=s.last_error,
                 )
             )

@@ -459,7 +459,98 @@ For this repo specifically: the `_handle_control` dispatch in
 command should ship with at least one `app._handle_control("X")` test
 that asserts the post-condition on `app.engine` or `app.cfg`.
 
-## 11. The brief's "FORBIDDEN list" was load-bearing
+## 11. v0.5.0 retrospective — the chipmunk bug
+
+> **Lesson, blunt:** I shipped 9 voices in v0.4.x that all sounded like
+> chipmunks because the engine assumed every model output 16 kHz. The
+> sample rate is metadata I had access to but ignored. The user spent
+> a session importing voices, took the time to test them in Telegram,
+> and only then heard "not smooth, very bad in quality." Three CC
+> sessions worth of feature work and not one of them caught it because
+> none of them did real-audio QA.
+
+### What went wrong
+
+v0.4.x's `_run_loop` did:
+
+```python
+out_native = self._process_streaming_16k(audio16)
+out48 = _resample_linear(out_native, 16_000, self.cfg.sink_rate)
+```
+
+The variable `out_native` was named `out16` originally — and the function
+returning it never said "16 kHz" anywhere. `_resample_linear` happily took
+40 kHz audio labeled as "16 kHz" and stretched it 3× to "48 kHz", with no
+error and no warning. Output sampled at 48 kHz playback contained 16 kHz of
+data x 3 = 48 kHz of speed-up garbage.
+
+The voice models' I/O signatures don't expose sample rate (the ONNX schema
+encodes batch and channel dims, not Hz). The rate lives in upstream's
+`custom_metadata_map["metadata"]` JSON blob — but the upstream exporter's
+metadata key naming is inconsistent across model variants. So even detection
+required a probe (run a known-length input, count output samples, round to
+the nearest standard rate).
+
+### Why it shipped
+
+- Unit tests (54 fast tests) all passed because they ran on `amitaro_v2_16k`
+  — the only voice where 16 kHz is correct.
+- The latency smoke test ran on the working voice too.
+- Voice-library import script validated each .onnx loads — but didn't
+  ear-test or measure output rate.
+- v0.4.1's `test_model_swap.py` asserted the ORT session got replaced;
+  it didn't assert what came out.
+- Manual QA on character voices was deferred to "user listening to it
+  in Telegram" — i.e., *after* tagging. By the time the user listened,
+  three releases had shipped with the bug.
+
+### The lesson
+
+**An audio engine that doesn't have a real-audio test is broken.** Doesn't
+matter how green the unit tests are. The test surface needs to include
+"feed audio in, capture audio out, assert properties of the output." That
+test caught this in 30 seconds in v0.5.0 — and nine voices ago, would have
+saved the user from spending real time on broken voices.
+
+`tests/test_voice_quality.py` is now the gate. Every audio-path change
+re-runs it. The 9 saved WAVs in `tests/fixtures/voice_qa/` are the user's
+ear-test material — the actual ground truth.
+
+### Other v0.5.0 lessons (small)
+
+- **Session-pool design pays off immediately.** The 305 ms post-swap
+  latency was a known v0.4.x miss; pool kills it 30000× over (600 ms
+  cold-create → 30 µs pointer swap). Worth the 100-line class.
+- **Async socket protocol via JOB ids was simpler than expected.** The
+  primary CLI helper (`submit_and_wait`) is 20 lines. The hard part was
+  remembering to bump `send_command`'s default timeout from 1 s → 30 s.
+- **SOLA-rate awareness was a hidden trap.** Even after fixing the
+  output resample, my QA harness reported each voice running 18-26 %
+  too long. The cause: `SOLAConfig(rate=16_000)` was used for the
+  output-side crossfade, even though the actual output samples were at
+  the model's native rate. Splitting `_sola_input_cfg` (16 k for input
+  history sizing) from `_sola` (rebuilt per-voice at model_sr) closed it.
+- **The brief's HF-cosine quality metric was the wrong tool.** RVC
+  intentionally remaps voice timbre, so the output won't match the
+  model's training-data clip. I documented why I skipped it instead of
+  forcing a noisy metric to "pass." Real verdict comes from listening.
+
+### v0.6.0 candidates
+
+1. **ORT IOBinding** for the `cv → rmvpe → rvc` handoff. Tensors stay on
+   the GPU between sessions. Probably 5-10 ms of CPU-time savings + the
+   ~32 % CPU usage drops toward the 18 % soft target.
+2. **fp16 audit per voice.** Phase D was deferred. Each voice's fp16
+   fidelity needs measuring before auto-promotion; per-voice mixed
+   precision in the manifest lets us hit < 700 MiB VRAM on the v2 voices
+   that handle fp16 cleanly.
+3. **Manifest caching** (`voice-library/manifest.toml`). Probe sample
+   rates, fp16 fidelity, model variant once at convert time, never again.
+4. **HF reference clips for cosine**, but with a more meaningful metric:
+   not raw mel cosine (RVC remaps timbre), but pitch-trajectory similarity
+   or content-feature similarity at the contentvec layer.
+
+## 12. The brief's "FORBIDDEN list" was load-bearing
 
 Section 12 of `PROJECT_BRIEF.md` says: do not rewrite RVC in C++/Rust, do
 not write custom CUDA kernels, do not replace ONNX Runtime, do not distill
