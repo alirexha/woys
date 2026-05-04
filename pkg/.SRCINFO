@@ -1,6 +1,6 @@
 pkgbase = vcclient-cachy
 	pkgdesc = Linux-native real-time voice changer (RVC + ONNX + PipeWire) — fork of w-okada/voice-changer
-	pkgver = 0.3.0
+	pkgver = 0.4.0
 	pkgrel = 1
 	url = https://github.com/alirexha/vcclient-cachy
 	arch = x86_64
@@ -19,7 +19,7 @@ pkgbase = vcclient-cachy
 	optdepends = evdev: opt-in global hotkey for engine toggle
 	optdepends = pavucontrol: GUI to wire the mic into Discord/CS2 manually
 	optdepends = qpwgraph: live PipeWire graph visualizer
-	source = vcclient-cachy-0.3.0::git+https://github.com/alirexha/vcclient-cachy.git#tag=v0.3.0
+	source = vcclient-cachy-0.4.0::git+https://github.com/alirexha/vcclient-cachy.git#tag=v0.4.0
 	sha256sums = SKIP
 
 pkgname = vcclient-cachy

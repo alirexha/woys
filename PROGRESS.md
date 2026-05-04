@@ -2,6 +2,18 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## v0.4.0 — Sharing + Browser + Tray ✅ shipped 2026-05-04
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | .vcprofile shareable presets | ✅ done |
+| 2 | Browser extension scaffold (Manifest v3) | ✅ done — skeleton, no engine bridge yet |
+| 3 | Optional tray icon (pystray) | ✅ done |
+| 4 | Tag v0.4.0 + retro | ✅ done |
+
+No engine changes; perf numbers identical to v0.3.0. Three deliverables
+on the file-format / UX / packaging axis.
+
 ## v0.3.0 — UX + library release ✅ shipped 2026-05-04
 
 | Phase | Description | Status |

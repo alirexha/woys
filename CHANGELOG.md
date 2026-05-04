@@ -4,6 +4,49 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-04 — Sharing, browser, tray
+
+Three skeleton/format deliverables (no engine changes — perf identical to
+v0.3.0).
+
+### Phase 1 — `.vcprofile` shareable presets
+- `src/vcclient_cachy/vcprofile.py`: TOML format v1 with `[meta]`,
+  `[profile]` (snapshot, no absolute path), `[model]` (filename + sha256
+  + size). Sender exports; receiver imports and binds the profile to the
+  local model with the matching sha256, or saves it with `rvc_model = ""`
+  + warns when no match.
+- CLI: `vcclient-cachy profile {export <name> -o file.vcprofile,
+  import <file.vcprofile> [--name <new_name>]}`.
+- 5 new tests cover round-trip, error paths, sha-rebinding across renames,
+  format-version rejection.
+
+### Phase 2 — Browser extension scaffold (Manifest v3)
+- `pkg/browser-extension/`: Manifest v3 skeleton with Firefox + Chromium
+  metadata. `popup.html` (320 px) + `popup.js` enumerates audio inputs,
+  flips a status pill green when `vcclient-mic` is detected. `background.js`
+  is a no-op service worker (placeholder for future engine bridge).
+- 1×1 transparent placeholder PNGs at icons/icon-{16,48,128}.png. Real
+  artwork pending before web-store submission.
+- README walks through Chromium / Firefox unpacked-load steps + lists
+  what's missing (engine WebSocket, content scripts, real icons, store
+  pipelines).
+
+### Phase 3 — Optional tray icon
+- `src/vcclient_cachy/tray.py` via pystray. Background poll of the TUI's
+  control socket every 1 s; icon flips green/grey when engine state
+  changes. Right-click menu: Toggle (default), Print status, Quit.
+- New `[tray]` optional extra: `pystray>=0.19`, `pillow>=10`.
+- CLI: `vcclient-cachy tray` (clear error message if [tray] not installed).
+- TUI stays primary; the tray is for users who don't want a terminal open.
+
+### What didn't ship in v0.4.0
+- Real engine ↔ extension bridge (WebSocket / native messaging) — that's
+  v0.5.0+.
+- Web-store submission. Manifest is store-ready; icons + signing are user
+  decisions.
+- Tray "start the engine" on click when none is running — the tray
+  currently expects a TUI to already be live.
+
 ## [0.3.0] — 2026-05-04 — UX + library + opt-in fp16
 
 | Brief target (v0.3.0) | v0.2.0 | v0.3.0 | Verdict |
