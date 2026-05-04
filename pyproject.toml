@@ -111,7 +111,7 @@ disallow_any_unimported = false
 exclude = ["upstream/", ".venv/", "build/", "src/server/"]
 
 [[tool.mypy.overrides]]
-module = ["soundfile", "sounddevice", "evdev", "textual.*", "rich.*", "onnxruntime", "onnxruntime.*", "librosa.*", "numpy.*", "scipy.*", "torch.*", "huggingface_hub.*"]
+module = ["soundfile", "sounddevice", "evdev", "textual.*", "rich.*", "onnxruntime", "onnxruntime.*", "librosa.*", "numpy.*", "scipy.*", "torch.*", "huggingface_hub.*", "onnxconverter_common", "onnxconverter_common.*", "onnx", "onnx.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

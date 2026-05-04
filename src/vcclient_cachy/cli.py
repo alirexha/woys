@@ -82,6 +82,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="export weights in fp16 — RVC v2 only, validate quality before shipping",
     )
 
+    fp16_p = sub.add_parser(
+        "fp16-convert",
+        help="produce fp16 ONNX siblings of the foundation models (saves VRAM)",
+    )
+    fp16_p.add_argument(
+        "--include-contentvec",
+        action="store_true",
+        help="also convert contentvec (lower quality — not auto-loaded)",
+    )
+    fp16_p.add_argument("--force", action="store_true", help="overwrite existing fp16 files")
+
     return parser
 
 
@@ -187,6 +198,13 @@ def main(argv: list[str] | None = None) -> int:
             opset=getattr(args, "opset", 17),
             fp16=getattr(args, "fp16", False),
         )
+    if args.cmd == "fp16-convert":
+        from vcclient_cachy.fp16_convert import cli_fp16_convert
+
+        targets = ["rmvpe"]
+        if args.include_contentvec:
+            targets.append("contentvec")
+        return cli_fp16_convert(targets, force=args.force)
     if args.cmd in ("toggle", "status", "pitch"):
         from tui.control import send_command
 
