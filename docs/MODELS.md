@@ -55,8 +55,26 @@ loads on engine start.
 
 ## Converting `.pth` → `.onnx`
 
-vcclient-cachy ships a `convert` subcommand placeholder; the real implementation
-is on the follow-up roadmap. Use one of these manual paths in the meantime:
+As of v0.2.0, `vcclient-cachy convert` is the one-liner path:
+
+```
+vcclient-cachy convert /path/to/your-voice.pth
+# → writes /path/to/your-voice.onnx (and your-voice_simple.onnx)
+# → validates the result loads in the engine before exiting
+```
+
+Flags:
+
+- `-o /custom/output.onnx` — pick the output path (default: alongside input)
+- `--opset 17` — ONNX opset (default 17, matches the engine)
+- `--fp16` — half-precision export. RVC v2 models only; v1 quality often degrades
+
+The subcommand probes the `.pth` automatically: detects v1 vs v2,
+embedding channels, sample rate, f0 vs nono variant. If the file isn't a
+recognized RVC checkpoint, you get a clear error (not a silent failure).
+
+If the auto-probe fails on an exotic checkpoint, the manual paths below
+are still available:
 
 ### Option A — upstream voice-changer's web UI
 
@@ -137,12 +155,7 @@ and change `feats` to `(1, 200, 256)`.
 For nono (no-f0) models, swap to `..._nono_ONNX` and drop the `pitch`/`pitchf`
 inputs.
 
-### Option C — wait for `vcclient-cachy convert`
-
-If hand-coding ONNX exports isn't your idea of a fun afternoon, the
-`vcclient-cachy convert <path.pth>` subcommand is the planned shortcut. It's
-currently a stub that prints these instructions; the real implementation lands
-in a follow-up release.
+### (v0.2.0+ has the convert subcommand — see top of this section.)
 
 ## Voice quality tips
 

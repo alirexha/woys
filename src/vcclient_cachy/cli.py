@@ -69,11 +69,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     convert_p = sub.add_parser(
         "convert",
-        help="(stub) convert a .pth RVC checkpoint to .onnx — see docs/MODELS.md",
+        help="convert a .pth RVC checkpoint to .onnx",
     )
     convert_p.add_argument("pth", help="path to a .pth RVC checkpoint")
     convert_p.add_argument(
         "-o", "--output", default=None, help="output .onnx path (defaults next to input)"
+    )
+    convert_p.add_argument("--opset", type=int, default=17, help="ONNX opset version")
+    convert_p.add_argument(
+        "--fp16",
+        action="store_true",
+        help="export weights in fp16 — RVC v2 only, validate quality before shipping",
     )
 
     return parser
@@ -173,15 +179,14 @@ def main(argv: list[str] | None = None) -> int:
             monitor=args.monitor,
         )
     if args.cmd == "convert":
-        print(
-            "vcclient-cachy convert: coming in a follow-up release. For now,\n"
-            "convert .pth -> .onnx via upstream voice-changer's web UI:\n"
-            "  1. Run upstream: docker run --gpus all -p 18888:18888 wokad/voice-changer\n"
-            "  2. Open http://localhost:18888 → 'Edit' on a slot → 'Export ONNX'\n"
-            "Or, see docs/MODELS.md for the manual torch.onnx.export recipe.",
-            file=sys.stderr,
+        from vcclient_cachy.convert import cli_convert
+
+        return cli_convert(
+            args.pth,
+            output=args.output,
+            opset=getattr(args, "opset", 17),
+            fp16=getattr(args, "fp16", False),
         )
-        return 2
     if args.cmd in ("toggle", "status", "pitch"):
         from tui.control import send_command
 
