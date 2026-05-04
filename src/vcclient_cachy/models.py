@@ -211,6 +211,8 @@ def cli_models_download(repo: str, models_dir: Path = MODELS_DIR) -> int:
 
 
 def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
+    """Set the active RVC model. v0.4.1: hot-swap if the engine is running,
+    otherwise write config and let the next start pick it up."""
     path = find_by_name(name, models_dir)
     if path is None:
         print(f"[models] no such model: {name!r}", file=sys.stderr)
@@ -220,10 +222,22 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
     repo_root = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(repo_root))
     from tui.config import load_config, save_config
+    from tui.control import send_command
 
+    # 1. Try to hot-swap a running engine first. The TUI's MODEL handler
+    # also persists config, so on success we're fully done.
+    socket_reply = send_command(f"MODEL {path.stem}", timeout=2.0)
+    if socket_reply.startswith("OK"):
+        print(f"[models] hot-swapped → {path.name}")
+        print(f"         engine reply: {socket_reply}")
+        return 0
+
+    # 2. Engine not running — write config so the next `vcclient-cachy run`
+    # picks it up. No more "restart the engine" messaging since the engine
+    # would, in fact, see this on the next boot.
     cfg = load_config()
     cfg.rvc_model = str(path.resolve())
     save_config(cfg)
-    print(f"[models] active rvc_model -> {path.name}")
-    print("  restart the engine for the change to take effect")
+    print(f"[models] config updated → {path.name}")
+    print("         (engine not running; the next `vcclient-cachy run` will load it)")
     return 0

@@ -14,7 +14,9 @@ short status line and closes. Commands:
   PITCH +N      — pitch shift +N semitones (relative)
   PITCH -N      — pitch shift -N semitones (relative)
   PITCH 0       — reset to 0
-  STATUS        — print one-line status
+  MODEL <slug>  — hot-swap the active RVC model (v0.4.1)
+  PROFILE <n>   — apply a saved profile by name (v0.4.1)
+  STATUS        — print one-line status (now includes model=...)
   QUIT          — instruct the TUI to exit
 
 Path: $XDG_RUNTIME_DIR/vcclient-cachy/control.sock (falls back to /tmp).

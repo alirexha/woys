@@ -4,6 +4,88 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-05-04 — P0 model-switch UX bug fix
+
+The model-switching CLI + TUI key shipped in v0.3.0 was half-wired and
+unusable. User caught it during voice library QA. Three concrete failures:
+
+1. `vcclient-cachy models use <slug>` wrote `cfg.rvc_model` to disk but the
+   running engine had no IPC channel to be told. **And** the TUI ignored
+   that field on next start: `__init__` constructed `EngineConfig` without
+   passing `rvc_model`, so the engine fell through to its hardcoded Amitaro
+   default regardless of config.toml.
+2. TUI `p`-key cycle changed the displayed `profile:` field but never
+   called `engine.reload_rvc()` — the audio output stayed on the originally-
+   loaded voice. The `reload_rvc` method existed but had zero callers in
+   the entire `src/` tree.
+3. `vcclient-cachy status` reported `running, pitch, profile, latency` but
+   no `model=` field. No way to verify the loaded voice without reading
+   the TUI display.
+
+### Root cause
+
+Investigation in `docs/06-model-switch-bug.md`. Three independent holes:
+
+- **TUI startup ignored `cfg.rvc_model`.** `src/tui/app.py:__init__` built
+  EngineConfig without that key. Default stuck.
+- **`action_cycle_profile` mirrored only 3 of ~5 profile fields onto the
+  engine** — `f0_up_key`, `sid`, `monitor`. Skipped `rvc_model`. No call
+  to `reload_rvc`.
+- **No `MODEL` command in the Unix-socket protocol.** `cli_models_use`
+  only wrote config; couldn't reach a running TUI to hot-swap.
+
+### Fix
+
+- `src/tui/app.py` now passes `rvc_model=Path(cfg.rvc_model)` to EngineConfig
+  on construct, with fallback to `DEFAULT_RVC_MODEL` when the path is
+  empty or doesn't exist (so a stale config can't brick the TUI).
+- `audio.engine.RealtimeEngine.request_model_swap(path)` is the new
+  thread-safe hot-swap entry point. Queues the path under a lock; the
+  audio worker picks it up at the next chunk boundary in `_maybe_swap_model`,
+  which drains the SOLA tail through pacat (so the last 50 ms of the *old*
+  voice plays out cleanly), replaces the ORT session, then resets streaming
+  state. No audible click on swap. Live-measured: ~115 ms swap latency.
+- Unix-socket protocol grew two commands: `MODEL <slug-or-path>` and
+  `PROFILE <name>`. Both apply via Textual's `call_from_thread` and persist
+  to config.toml. STATUS reply now includes `model=<basename>`.
+- `cli_models_use` now tries the socket first; only falls back to a config
+  writeback when the engine isn't running. The "restart the engine for the
+  change to take effect" message is **gone** (it was a band-aid over the
+  missing feature).
+- `action_cycle_profile` factored into `_apply_profile_named(name)` which
+  applies the full snapshot: pitch, sid, monitor, AND issues the model
+  swap when the profile's rvc_model differs from current.
+
+### New tests
+
+`tests/test_model_swap.py` (7 tests):
+- Engine honors `cfg.rvc_model` on init.
+- Engine falls back to default when cfg path is invalid.
+- `request_model_swap` queues; `_maybe_swap_model` replaces the session.
+- Idempotent re-queue keeps the latest target.
+- STATUS handler includes `model=`.
+- MODEL handler rejects unknown slugs with a clear error.
+- `cli_models_use` falls back to config writeback when no socket.
+
+### Verification gates
+
+- pytest 54/54 fast (47 prior + 7 new).
+- routing regression 2/2.
+- ruff clean, ruff-format clean, mypy --strict clean (17 source files).
+- Live test: amitaro → donald_trump → amitaro round-trip via
+  `request_model_swap` while the worker is actively processing chunks.
+  Swap latency 115 ms. Engine stayed running across the swap (no chunks
+  lost; cudnn autotune burst for the new shape resolves in ~3 chunks).
+
+### What this means for users
+
+| User action | Old behavior | v0.4.1 |
+|---|---|---|
+| `vcclient-cachy models use <slug>` while engine running | wrote config, told user to restart, restart still ignored it | hot-swap in <2s, status reports new model |
+| TUI `p` key | label updated, audio unchanged | label + audio actually swap |
+| `vcclient-cachy status` | running / pitch / profile / latency | + `model=<filename>` |
+| `vcclient-cachy run --autostart` after `models use` | always loaded Amitaro | loads whatever the user picked |
+
 ## [0.4.0] — 2026-05-04 — Sharing, browser, tray
 
 Three skeleton/format deliverables (no engine changes — perf identical to

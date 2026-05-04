@@ -391,7 +391,75 @@ huggingface_hub) were already in place from earlier releases.
    submitting to the Chrome Web Store / addons.mozilla.org.
 5. Submission of the AUR package once the GitHub repo is de-privatised.
 
-## 10. The brief's "FORBIDDEN list" was load-bearing
+## 10. v0.4.1 retrospective — the embarrassing model-switch bug
+
+> **Lesson, blunt:** v0.3.0 phase 4 shipped a CLI + TUI key for model
+> switching that was completely disconnected from the engine. The user
+> caught it during voice library QA. Future feature work MUST include
+> end-to-end manual QA before declaring a phase done. CLI surface +
+> "save_config writes correctly" tests are not enough — they verify
+> config plumbing, not effect.
+
+### What went wrong (the audit trail)
+
+Three independent holes, none of them caught by the v0.3.0 / v0.4.0
+verification gates:
+
+1. **`VCClientApp.__init__` constructed `EngineConfig` without
+   `rvc_model`.** The hardcoded `DEFAULT_RVC_MODEL` (Amitaro) was always
+   used regardless of `~/.config/vcclient-cachy/config.toml`. *Caught
+   only by the user actually trying it.*
+2. **`action_cycle_profile` mirrored a subset of profile fields onto
+   the engine.** Pitch, SID, monitor — yes. RVC model — no. The
+   displayed "profile: X" line updated, but `engine._rvc` did not.
+3. **`reload_rvc` had zero callers.** I wrote the method during the
+   v0.2.0 build expecting Phase 4 polish to wire it. Phase 4 polish
+   wired the *visual* bits and forgot the actual call site. `grep -rn
+   reload_rvc src/` returned exactly one line: the definition.
+
+The unit tests for v0.3.0 covered:
+- Config round-trip ✓
+- `apply_profile` updates fields on AppConfig ✓
+- `cli_models_use` writes `cfg.rvc_model` ✓
+
+What they didn't cover:
+- "After applying a profile, is the engine actually using the new model?"
+- "After `models use` while the engine runs, does inference change?"
+
+### Root-cause (process)
+
+I optimized for "all gates green" rather than "user pressed `p`, did the
+voice change?". The gates were green because the gates were testing the
+plumbing in isolation, not the wiring. End-to-end manual QA is what
+catches this — and Phase 4's verification gate didn't include it.
+
+### What I changed (and what to learn)
+
+- v0.4.1 added `tests/test_model_swap.py` covering the formerly-untested
+  *integration* points. New tests assert `app.engine.cfg.rvc_model`
+  matches `cfg.rvc_model` after construct, and that the MODEL handler
+  produces a `model=` line.
+- `request_model_swap` is now the thread-safe hot-swap path. SOLA tail
+  drains through pacat before swap so there's no audible click.
+- Two new socket commands: `MODEL <slug>`, `PROFILE <n>`. Status reply
+  grew a `model=<basename>` field.
+- The "restart the engine for the change to take effect" message is
+  removed everywhere — it was a band-aid over a missing feature.
+
+### Generalize
+
+Every "do X via the CLI" feature needs at least one test that verifies
+the engine *behavior* changed, not just the config file. The shape of
+that test: "given a running engine, send command, assert engine state
+afterwards." If you can't write that test cheaply (because there's no
+state-mutation API), the feature isn't done.
+
+For this repo specifically: the `_handle_control` dispatch in
+`tui/app.py` is now the single integration point. Every new socket
+command should ship with at least one `app._handle_control("X")` test
+that asserts the post-condition on `app.engine` or `app.cfg`.
+
+## 11. The brief's "FORBIDDEN list" was load-bearing
 
 Section 12 of `PROJECT_BRIEF.md` says: do not rewrite RVC in C++/Rust, do
 not write custom CUDA kernels, do not replace ONNX Runtime, do not distill

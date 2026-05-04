@@ -186,8 +186,9 @@ def _validate_inference(onnx_path: Path) -> tuple[bool, str]:
     """Load the converted .onnx through the engine, run a 1 s silent buffer.
     Returns (ok, reason_if_not_ok)."""
     try:
-        from audio.engine import EngineConfig, RealtimeEngine
         import numpy as np
+
+        from audio.engine import EngineConfig, RealtimeEngine
     except Exception as e:
         return False, f"import error: {type(e).__name__}: {e}"
 
@@ -239,8 +240,7 @@ def _write_sources_doc(outcomes: list[Outcome]) -> None:
     lines = [
         "# Voice library — provenance",
         "",
-        "Audit trail for the starter voice library imported via "
-        "`scripts/voice_library_import.py`.",
+        "Audit trail for the starter voice library imported via `scripts/voice_library_import.py`.",
         "",
         "Models are NOT bundled in this repo (per `LICENSE` / brief §7). They live "
         "in `~/.local/share/vcclient-cachy/models/` on the user's machine. This "

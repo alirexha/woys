@@ -2,6 +2,17 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## v0.4.1 — Model-switch P0 bugfix (2026-05-04)
+
+Critical UX bug found during voice library QA: `models use` and TUI `p` key
+were both half-wired. CLI wrote config but engine ignored it; TUI updated
+the visible label but never swapped the model. `STATUS` lacked a `model=`
+field. Fix wires `cfg.rvc_model` through TUI startup, adds thread-safe
+`request_model_swap` (with SOLA-tail drain), `MODEL` + `PROFILE` socket
+commands, hot-swap from CLI when engine running. Live-verified: 115 ms
+swap latency, no audible click, no chunks dropped. 7 new regression tests.
+See `docs/06-model-switch-bug.md` for the wiring trace.
+
 ## Voice Library v1 — 9 RVC voices batch-imported (2026-05-04)
 
 Built via `scripts/voice_library_import.py` per `VOICE_LIBRARY_BRIEF.md`.

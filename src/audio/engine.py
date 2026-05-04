@@ -264,6 +264,14 @@ class RealtimeEngine:
             dtype=np.float32,
         )
 
+        # v0.4.1 hot-swap: the worker thread checks this slot at the top of
+        # each chunk. The TUI / socket sets it via `request_model_swap`.
+        self._pending_model_swap: Path | None = None
+        self._swap_lock = threading.Lock()
+        # Promoted so _maybe_swap can flush the SOLA tail through the same
+        # pacat process the worker already owns.
+        self._pacat_proc: subprocess.Popen[bytes] | None = None
+
     # ---- model loading ------------------------------------------------------
 
     def _ensure_sessions(self) -> None:
@@ -317,10 +325,49 @@ class RealtimeEngine:
         return cand if cand.exists() else fp32_path
 
     def reload_rvc(self, path: Path) -> None:
-        """Hot-swap the RVC voice model."""
+        """Hot-swap the RVC voice model — synchronous, thread-unsafe.
+
+        Use `request_model_swap()` from any thread other than the engine
+        worker; this function is kept for tests + offline use only.
+        """
         self.cfg.rvc_model = path
         self._rvc = _make_session(path)
         self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
+        self.reset_streaming_state()
+
+    def request_model_swap(self, path: Path) -> None:
+        """Thread-safe: queue a model swap for the worker to pick up at the
+        next chunk boundary. Returns immediately. Idempotent — repeat calls
+        replace the pending target. The SOLA tail is drained before the
+        swap so consecutive chunks crossfade cleanly across the boundary.
+        """
+        with self._swap_lock:
+            self._pending_model_swap = Path(path)
+
+    def _maybe_swap_model(self) -> None:
+        """Worker-side hook: if a swap was queued, flush SOLA tail then
+        replace the RVC session and reset streaming state. Called from
+        `_run_loop` at the top of each chunk."""
+        with self._swap_lock:
+            target = self._pending_model_swap
+            self._pending_model_swap = None
+        if target is None:
+            return
+        # Drain SOLA's held-back tail through pacat so the last ~50 ms of
+        # the *old* voice plays out before the new session takes over.
+        if self._sola is not None and self._pacat_proc is not None:
+            with contextlib.suppress(Exception):
+                tail16 = self._sola.flush()
+                if tail16.size > 0 and self._pacat_proc.stdin is not None:
+                    tail48 = _resample_linear(tail16, 16_000, self.cfg.sink_rate)
+                    self._pacat_proc.stdin.write(tail48.tobytes())
+                    self._pacat_proc.stdin.flush()
+        # Replace the session. Existing _cv (contentvec) and _rmvpe stay
+        # — they're foundation models, not voice-specific.
+        self.cfg.rvc_model = target
+        self._rvc = _make_session(target)
+        self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
+        self.reset_streaming_state()
 
     # ---- inference ----------------------------------------------------------
 
@@ -487,6 +534,7 @@ class RealtimeEngine:
         monitor_stream = None
         try:
             pacat_proc = self._open_pacat()
+            self._pacat_proc = pacat_proc
             in_stream = sd.InputStream(
                 samplerate=self.cfg.mic_rate,
                 channels=self.cfg.channels,
@@ -509,6 +557,10 @@ class RealtimeEngine:
 
             with in_stream:
                 while not self._stop_event.is_set():
+                    # v0.4.1: pick up any queued model swap before reading
+                    # the next mic chunk. Owns _rvc on this thread, so no
+                    # race with _infer below.
+                    self._maybe_swap_model()
                     data, _ = in_stream.read(chunk_mic)
                     audio = data.reshape(-1).astype(np.float32, copy=False)
                     rms = float(np.sqrt(np.mean(audio**2)))
@@ -590,3 +642,6 @@ class RealtimeEngine:
                         pacat_proc.wait(timeout=1.0)
                     except subprocess.TimeoutExpired:
                         pacat_proc.kill()
+            # Clear the worker-thread reference so the next start() doesn't
+            # see a dead handle.
+            self._pacat_proc = None
