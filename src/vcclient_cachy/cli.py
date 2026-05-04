@@ -93,6 +93,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fp16_p.add_argument("--force", action="store_true", help="overwrite existing fp16 files")
 
+    models_p = sub.add_parser("models", help="manage the RVC voice-model library")
+    models_sub = models_p.add_subparsers(dest="models_cmd", required=True, metavar="ACTION")
+    models_sub.add_parser("list", help="show installed voice models")
+    dl_p = models_sub.add_parser("download", help="fetch all ONNX models from a HuggingFace repo")
+    dl_p.add_argument("repo", help='e.g. "wok000/vcclient_model"')
+    use_p = models_sub.add_parser("use", help="set the active RVC model in config.toml")
+    use_p.add_argument("name", help="model name (file stem) or absolute path to a .onnx")
+
     return parser
 
 
@@ -205,6 +213,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.include_contentvec:
             targets.append("contentvec")
         return cli_fp16_convert(targets, force=args.force)
+    if args.cmd == "models":
+        from vcclient_cachy.models import cli_models_download, cli_models_list, cli_models_use
+
+        if args.models_cmd == "list":
+            return cli_models_list()
+        if args.models_cmd == "download":
+            return cli_models_download(args.repo)
+        if args.models_cmd == "use":
+            return cli_models_use(args.name)
     if args.cmd in ("toggle", "status", "pitch"):
         from tui.control import send_command
 
