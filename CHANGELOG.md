@@ -11,6 +11,14 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - `tests/test_environment.py` (4/4 passing on host).
 - `docs/00-recon.md` — 813-line reconnaissance of upstream `w-okada/voice-changer`. Identified hot path (9 files), 8 non-RVC engines for removal, ~22k LOC reduction target, and proposed `src/server/` layout for Phase 1.
 
+### Phase 2 — PipeWire integration
+- `src/audio/pipewire.py` — `VirtualMic` shells out to `pactl` to load `module-null-sink` (`VCClientCachySink`) and `module-remap-source` (`vcclient-mic`) so apps see the mic as a normal input.
+- Idempotent `ensure()`/`teardown()`. `ensure_pipewire()` hard-fails with a clear paru hint if the host is on PulseAudio instead of PipeWire.
+- Discovered `object.linger=true` leaves orphan PipeWire *nodes* after module unload — defaulted to `linger=False` since modules persist across pactl client lifetime anyway. Added `_destroy_orphan_nodes()` (uses `pw-cli`) as a defensive cleanup so users who hit linger=true once can recover.
+- CLI: `vcclient-cachy pw {setup,teardown,status}` — exit 0 if both modules present.
+- `pkg/vcclient-cachy-mic.service` — systemd user unit, `Type=oneshot RemainAfterExit=yes`, calls `pw setup` at login. Discord/CS2 see `vcclient-mic` at boot regardless of whether the engine is running.
+- New tests in `tests/test_audio_pipewire.py`: round-trip + idempotency + missing-pactl error path.
+
 ### Phase 1 — Lean Core
 - Vendored `upstream/server/` → `src/server/`, then trimmed:
   - Deleted 8 non-RVC engines (Beatrice, DDSP_SVC, DiffusionSVC, EasyVC, LLVC, MMVCv13, MMVCv15, SoVitsSvc40), V1 `VoiceChanger.py`, `test.wav`, `.vscode/`, win/mac shell scripts.

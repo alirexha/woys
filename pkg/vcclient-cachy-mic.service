@@ -1,0 +1,20 @@
+[Unit]
+Description=vcclient-cachy persistent virtual microphone (vcclient-mic)
+Documentation=https://github.com/alirexha/vcclient-cachy
+# We need the user PipeWire daemon up; sound.target is its anchor.
+After=pipewire.socket pipewire-pulse.socket sound.target
+Requires=pipewire-pulse.socket
+PartOf=sound.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/env vcclient-cachy pw setup
+ExecStop=/usr/bin/env vcclient-cachy pw teardown
+# Service is idempotent — restart cleanly on failure.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+# Enable per-user; this is a `systemctl --user` unit.
+WantedBy=default.target
