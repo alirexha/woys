@@ -3,8 +3,7 @@
 Scope: trace exactly which code in `upstream/` (a clone of `w-okada/voice-changer`)
 implements the **RVC inference path on ONNX Runtime CUDA EP for Linux/PipeWire**,
 and what to delete around it. Every claim is anchored to `path:line`. All paths
-are relative to `/home/alireza/ai/vcclient-cachy/upstream/` unless otherwise
-stated.
+are relative to `<repo>/upstream/` unless otherwise stated.
 
 ---
 

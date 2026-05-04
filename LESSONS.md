@@ -4,6 +4,15 @@
 > The brief got executed, the targets got missed, and the misses tell you more
 > about the work than the wins do. The corrections are honest.
 
+> **Repo status note (post-build):** the GitHub repo at
+> `alirexha/vcclient-cachy` was switched to **private** after the v0.1.0 tag,
+> and the root `LICENSE` was switched from MIT to **All Rights Reserved**
+> for the original work pending a commercial decision. The `upstream/`
+> subtree and `src/server/` (which derives from upstream) remain MIT;
+> `NOTICE` at the repo root is the file-by-file audit trail. Future
+> sessions must respect this boundary — see `the project notes` "Things to never
+> do" for the constraints.
+
 ## 1. Execution summary
 
 | Metric                  | Value |

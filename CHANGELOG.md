@@ -4,6 +4,23 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Changed (post-v0.1.0 housekeeping)
+- **Repo visibility flipped to PRIVATE** on GitHub (`gh repo edit alirexha/vcclient-cachy --visibility private`).
+- **Root `LICENSE` switched from MIT to "All Rights Reserved"** for the original work pending a commercial decision. `upstream/LICENSE` (w-okada's MIT) preserved verbatim — that subtree and the vendored derivatives in `src/server/` remain MIT.
+- Added top-level `NOTICE` file establishing the file-by-file license boundary between original work (proprietary) and upstream-derived code (MIT). This is the audit trail for future legal review.
+- `README.md` rewritten: removed MIT framing for original work, added "private alpha — not for redistribution" banner, added a license-table section pointing at `NOTICE` for the full audit.
+- `pyproject.toml` classifiers updated: `License :: Other/Proprietary License` + `Private :: Do Not Upload`.
+- `pkg/PKGBUILD` `license=('custom' 'MIT')` reflects the dual licensing; install also drops `NOTICE` into `/usr/share/licenses/$pkgname/`.
+- `the project notes` updated with private-repo + license-boundary rules in "Things to never do".
+- `docs/00-recon.md` had one absolute path (`/home/alireza/ai/vcclient-cachy/upstream/`) sanitized to `<repo>/upstream/`.
+
+### Audit (clean — nothing scrubbed from history)
+- No model binaries (`*.onnx`, `*.pth`, `*.pt`, `*.bin`, `*.safetensors`) were ever committed (tree or history).
+- No secrets / API tokens / `.env` files / credential files in the repo.
+- `.gitignore` audited and confirmed comprehensive (Python, models, audio, env, editor caches, `./settings.local.json`, `upstream/`).
+
+## [0.1.0] — 2026-05-04
+
 ### Added
 - Initial project scaffold: directory layout, MIT license with upstream attribution, README placeholder, progress tracking.
 - `pyproject.toml` (hatchling, ruff, mypy strict, pytest), `.python-version` 3.11, isolated `uv` venv.

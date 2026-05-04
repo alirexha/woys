@@ -1,12 +1,15 @@
 # vcclient-cachy
 
-Linux-native, CachyOS-optimized real-time voice changer. RVC-only, ONNX Runtime CUDA, PipeWire-native, terminal-controlled. Beats upstream on latency, installs via PKGBUILD, runs without a browser.
+> **Status: private alpha — All Rights Reserved. Not for redistribution.**
+> This repository is private and proprietary pending a commercial decision.
+> See `LICENSE` and `NOTICE` for the boundary between original work and the
+> upstream `w-okada/voice-changer` MIT-licensed code.
 
-> **Status:** in active development — see `PROGRESS.md`.
+Linux-native, CachyOS-optimized real-time voice changer. RVC-only, ONNX Runtime CUDA, PipeWire-native, terminal-controlled.
 
-## Why a fork?
+## What it is
 
-[w-okada/voice-changer](https://github.com/w-okada/voice-changer) (MIT) is the best open-source RVC client, but it ships a multi-engine web app with Windows/WSL ergonomics. On Linux + PipeWire we don't need most of that. `vcclient-cachy` strips the engine to RVC-only, replaces the web GUI with a Textual TUI, integrates a persistent virtual mic via PipeWire, and ships as a proper Arch package.
+A fork-and-trim of [w-okada/voice-changer](https://github.com/w-okada/voice-changer) (MIT) that strips the engine to RVC-only, replaces the web GUI with a Textual TUI, integrates a persistent virtual mic via PipeWire, and ships as a proper Arch package. The fork keeps RVC inference on ONNX Runtime CUDA EP and removes the Beatrice / MMVC / so-vits-svc / DDSP-SVC / Diffusion-SVC / EasyVC / LLVC engine paths along with all Windows/WSL/macOS code.
 
 ## Goals (measured, not claimed)
 
@@ -15,14 +18,48 @@ Linux-native, CachyOS-optimized real-time voice changer. RVC-only, ONNX Runtime 
 - CPU `< 15 %` while active
 - Single `./install.sh`, runs in under 5 minutes on a fresh CachyOS
 
+See `docs/05-perf.md` for the actual measured numbers (some targets are
+currently missed; the path to closing the gap is documented).
+
 ## Quick start
 
-_See `docs/INSTALL.md` once Phase 6 ships._
+See `docs/INSTALL.md`. Short version:
+
+```
+git clone https://github.com/alirexha/vcclient-cachy.git
+cd vcclient-cachy
+./install.sh
+vcclient-cachy run --autostart
+```
+
+Then point Discord (`docs/DISCORD-SETUP.md`) or CS2 (`docs/CS2-SETUP.md`)
+at the `vcclient-mic` device that appears in their input-device pickers.
 
 ## Credits
 
-Built on the work of **[w-okada](https://github.com/w-okada)** and the original [voice-changer](https://github.com/w-okada/voice-changer) project. The original `LICENSE` is preserved at `upstream/LICENSE`. This fork's MIT license is at `LICENSE`.
+This fork is built on the work of **[w-okada](https://github.com/w-okada)**
+and the original [voice-changer](https://github.com/w-okada/voice-changer)
+project. The portions of this repository under `upstream/` and any code
+within `src/server/` that descends from upstream remain under the original
+MIT license (`upstream/LICENSE`). All original work in `src/vcclient_cachy/`,
+`src/audio/`, `src/tui/`, `tests/`, `scripts/`, `pkg/`, and `docs/` is the
+proprietary work of Alireza Hamayeli.
 
 ## License
 
-MIT — see `LICENSE`.
+This repository contains code under **two distinct licenses**:
+
+| Path                                          | License                  | Source            |
+|-----------------------------------------------|--------------------------|-------------------|
+| `upstream/`                                   | MIT                      | w-okada/voice-changer |
+| `src/server/` (vendored, trimmed)             | MIT (derivative)         | w-okada/voice-changer |
+| `src/{vcclient_cachy,audio,tui}/`             | **All Rights Reserved**  | Alireza Hamayeli  |
+| `tests/`, `scripts/`, `pkg/`, `docs/`, `*.sh` | **All Rights Reserved**  | Alireza Hamayeli  |
+| Top-level configuration & metadata            | **All Rights Reserved**  | Alireza Hamayeli  |
+
+Original-work files are governed by `LICENSE` at the repo root (proprietary,
+all rights reserved). Upstream-derived files are governed by `upstream/LICENSE`
+(MIT). See `NOTICE` for the file-by-file audit trail.
+
+No license is granted to copy, modify, distribute, or sublicense the
+original work without prior written permission from the copyright holder.

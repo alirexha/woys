@@ -1,0 +1,169 @@
+vcclient-cachy — file-by-file provenance and license boundary
+==============================================================
+
+This NOTICE file establishes the legal boundary between two bodies of code
+in this repository, for audit purposes (commercialization due diligence,
+legal review, future rights transfer).
+
+Two licenses apply:
+
+  (A) ORIGINAL WORK         — Copyright (c) 2026 Alireza Hamayeli.
+                              All Rights Reserved. Governed by ./LICENSE.
+  (B) UPSTREAM-DERIVED      — Copyright (c) 2022 wataru-okada and contributors.
+                              MIT License. Governed by ./upstream/LICENSE.
+
+Whenever a file in (B) is modified inside this repository, the modifications
+remain MIT-licensed; the modifications are not "incorporated into" (A).
+However, the *combination* (this whole repository) cannot be redistributed
+under MIT alone — (A) is more restrictive — and cannot be redistributed
+without preserving (B)'s MIT notices and copyright.
+
+If a future entity wishes to release this repository under a single license,
+the (B) portions must be either (1) replaced with original implementations,
+(2) re-licensed by the upstream author w-okada (or kept under MIT), or
+(3) preserved with attribution under MIT in a separate distribution unit.
+
+
+----------------------------------------------------------------------
+ORIGINAL WORK — Copyright 2026 Alireza Hamayeli, All Rights Reserved
+----------------------------------------------------------------------
+
+Source code (Python):
+  src/vcclient_cachy/__init__.py
+  src/vcclient_cachy/cli.py
+  src/audio/__init__.py
+  src/audio/engine.py
+  src/audio/pipewire.py
+  src/tui/__init__.py
+  src/tui/app.py
+  src/tui/config.py
+  src/tui/control.py
+  src/tui/hotkey.py
+
+Tests:
+  tests/conftest.py
+  tests/test_audio_pipewire.py
+  tests/test_environment.py
+  tests/test_smoke_rvc_onnx.py
+  tests/test_tui_config.py
+  tests/test_tui_control.py
+  tests/fixtures/                     (test inputs synthesized by scripts/)
+
+Scripts:
+  scripts/bench_loopback.py
+  scripts/download_weights.py
+  scripts/make_test_wav.py
+  scripts/smoke_rvc_onnx.py
+
+Packaging:
+  install.sh
+  uninstall.sh
+  pkg/PKGBUILD
+  pkg/vcclient-cachy-mic.service
+
+Configuration & metadata:
+  pyproject.toml
+  requirements.txt
+  .python-version
+  .gitignore
+
+Documentation (original):
+  README.md
+  CHANGELOG.md
+  the project notes
+  LESSONS.md
+  PROGRESS.md
+  PROJECT_BRIEF.md
+  BLOCKERS.md
+  NOTICE                              (this file)
+  LICENSE                             (the All Rights Reserved license)
+  docs/00-recon.md
+  docs/05-perf.md
+  docs/CS2-SETUP.md
+  docs/DISCORD-SETUP.md
+  docs/INSTALL.md
+  docs/MODELS.md
+  docs/QA.md
+  docs/TROUBLESHOOTING.md
+
+
+----------------------------------------------------------------------
+UPSTREAM-DERIVED — Copyright 2022 wataru-okada et al., MIT License
+----------------------------------------------------------------------
+
+Read-only mirror of the upstream repository (unmodified):
+  upstream/                 — pristine git clone of w-okada/voice-changer
+  upstream/LICENSE          — original MIT license text (DO NOT MODIFY)
+
+Vendored and *trimmed* from upstream (modifications are MIT, attribution
+required if redistributed):
+  src/server/               — entire subtree
+
+The src/server/ directory was created by:
+  1. Copying upstream/server/ into src/server/.
+  2. Deleting non-RVC engine subdirectories: Beatrice/, DDSP_SVC/,
+     DiffusionSVC/, EasyVC/, LLVC/, MMVCv13/, MMVCv15/, SoVitsSvc40/.
+  3. Deleting the V1 VoiceChanger.py.
+  4. Removing the rmvpe model from DiffusionSVC and re-homing it under
+     RVC/pitchExtractor/rmvpe/ (see commit history).
+  5. Surgical removal of Mac/Windows code paths (WASAPI, _MEIPASS,
+     native-client launchers, etc.).
+  6. Pruning of dead engine references in const.py, ModelSlot.py,
+     VoiceChangerManager.py, VoiceChangerV2.py, SampleDownloader.py.
+
+The trimming changes are detailed in CHANGELOG.md under "Phase 1 — Lean Core".
+The original copyright notices on upstream files inside src/server/ are
+preserved where present.
+
+
+----------------------------------------------------------------------
+DEPENDENCIES (third-party Python packages, not redistributed in source)
+----------------------------------------------------------------------
+
+Pinned in requirements.txt; installed at runtime by install.sh into a venv.
+Each carries its own license. Notable:
+
+  torch, torchaudio                   BSD-3
+  onnxruntime-gpu                     MIT
+  fairseq (optional extra)            MIT
+  faiss-cpu                           MIT
+  textual                             MIT
+  fastapi, uvicorn                    MIT
+  numpy, scipy                        BSD-3
+  librosa                             ISC
+  sounddevice                         MIT
+  python-socketio                     MIT
+  huggingface_hub                     Apache-2.0
+
+If this repository is redistributed in a form that includes its dependencies
+(e.g. a compiled binary, a Docker image), each dependency's license terms
+must be respected and notices preserved.
+
+
+----------------------------------------------------------------------
+MODEL WEIGHTS (NOT in this repository)
+----------------------------------------------------------------------
+
+This repository does NOT bundle voice-conversion model weights. Foundation
+weights downloaded by scripts/download_weights.py at install time:
+
+  rmvpe.onnx, rmvpe_wrapped.onnx      mirrored from huggingface.co/lj1995
+                                       and huggingface.co/wok000 — see those
+                                       repos for the upstream license terms
+  contentvec-f.onnx                    huggingface.co/wok000/weights_gpl —
+                                       upstream-licensed; see that repo
+  hubert_base.pt                       huggingface.co/ddPn08 — original
+                                       authors' license applies
+  amitaro_v2_16k.onnx                  huggingface.co/wok000/vcclient_model
+                                       (sample voice for smoke testing)
+
+End-users who add their own RVC voice models are responsible for the
+licensing of those weights. This repository's license does not grant any
+rights to the models or to the voices they synthesize.
+
+
+----------------------------------------------------------------------
+QUESTIONS
+----------------------------------------------------------------------
+
+For licensing inquiries, contact: alireza.hmyl@gmail.com
