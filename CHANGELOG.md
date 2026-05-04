@@ -11,6 +11,12 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - `tests/test_environment.py` (4/4 passing on host).
 - `docs/00-recon.md` — 813-line reconnaissance of upstream `w-okada/voice-changer`. Identified hot path (9 files), 8 non-RVC engines for removal, ~22k LOC reduction target, and proposed `src/server/` layout for Phase 1.
 
+### Phase 7 — Retrospective + handover
+- `LESSONS.md` (202 lines) — execution summary, honest scorecard against brief targets, unexpected challenges, mistakes, what was learned, recommendations for the next session. Calls out that the brief's "FORBIDDEN list" was load-bearing.
+- `the project notes` (project-level, 108 lines) — startup guide for the next CC session: 3-sentence summary, "read LESSONS.md first" instruction, architectural decisions + their *why*, build/test/run commands, known gotchas, "things to never do" checklist.
+- `docs/QA.md` (141 lines) — step-by-step live QA script for the user to validate DoD items #2 (Discord) and #3 (CS2). Engine on/off via CLI toggle, Discord/CS2 mic configuration, long-session stability, clean shutdown.
+- Updated `PROGRESS.md` with the full Definition of Done table — items #2 and #3 marked "ready for user QA, pending live test" per Q9.
+
 ### Phase 6 — ELI5 documentation
 - `docs/INSTALL.md` — step-by-step install for someone who's never used Python on Linux. Verifies PipeWire, walks through `./install.sh`, sanity-checks the install, sets PATH on fish vs bash/zsh.
 - `docs/DISCORD-SETUP.md` — Discord input device + critical "disable Discord noise suppression / Krisp" note (it gates RVC output as noise). Covers the auto-detect-other-device gotcha and a KDE/GNOME shortcut binding for `vcclient-cachy toggle`.
