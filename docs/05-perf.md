@@ -1,4 +1,23 @@
-# Phase 5 — Performance numbers
+# Performance numbers
+
+## v0.2.0 (2026-05-04, this run)
+
+| Metric | v0.1.1 actual | v0.2.0 actual | v0.2.0 brief target | Verdict |
+|---|---:|---:|---:|---|
+| Warm `avg_total_ms` (chunk=0.1, SOLA on) | ~280 ms (chunk=0.25) | **30.48 ms** | < 120 ms | **HIT** |
+| Warm `avg_inference_ms` | ~60 ms | **30.31 ms** | n/a | improved |
+| GPU memory used (process) | 1356 MiB | **1348 MiB** | < 700 MiB | **MISS** (see §6) |
+| CPU active (parent process) | ~26 % | **31.9 %** | < 18 % | **MISS** (see §6) |
+
+Hard fail thresholds (`> 200 ms`, `> 1.0 GiB`, `> 22 %`) — only the e2e
+threshold is comfortably cleared. VRAM and CPU are above hard-fail because
+the underlying model architecture hasn't changed; v0.3.0 work targets these.
+
+Methodology: `vcclient-cachy run --autostart` for 10.5 s. First 2.5 s are
+discarded as warm-up (cudnn autotune settles by then). Rolling-32 average
+captured during the next 8 s.
+
+
 
 Measured on this CachyOS machine; reproducible via the scripts called out per
 section. All numbers are wall-clock, no estimates. Brief targets:
