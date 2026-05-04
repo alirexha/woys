@@ -1,6 +1,6 @@
 [project]
 name = "vcclient-cachy"
-version = "0.1.0"
+version = "0.1.1"
 description = "Linux-native, CachyOS-optimized real-time voice changer. RVC-only on ONNX Runtime CUDA, PipeWire-native, terminal-controlled."
 authors = [{ name = "Alireza Hamayeli", email = "alireza.hmyl@gmail.com" }]
 license = { file = "LICENSE" }

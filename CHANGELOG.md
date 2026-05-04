@@ -4,6 +4,24 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-05-04
+
+### Fixed (P0 — engine output routing)
+- **CRITICAL: engine wrote transformed audio to ALSA default device, not VCClientCachySink.** Discord/Telegram/CS2 received silence even with `vcclient-mic` selected. Root cause: PortAudio on CachyOS is built with the ALSA host API only (no PulseAudio host API). `sd.OutputStream()` with no explicit `device=` falls through to ALSA default = system default sink (laptop speakers). The Phase 3 fix attempt (`os.environ.setdefault("PULSE_SINK", …)`) was a no-op because there was no Pulse host API for it to influence.
+- **Fix**: replaced `sd.OutputStream` with a `pacat --playback --device=VCClientCachySink` subprocess. `pacat` is the canonical PulseAudio client; talks to pipewire-pulse natively, takes an explicit `--device=`, and never auto-routes. Same path the acoustic loopback bench uses.
+- Verified live: `pw-link --output --links` now shows `vcclient-cachy:output_FL → VCClientCachySink:playback_FL` (and FR). `pactl list sink-inputs` confirms a `vcclient-cachy` sink-input on the right sink.
+
+### Fixed (P0 — monitor leak)
+- **Engine no longer plays transformed audio to host default output by default.** v0.1.0 implicitly opened a stream against ALSA default — that's how laptop speakers were getting blasted with the transformed audio. v0.1.1 writes only to VCClientCachySink unless the user explicitly opts in.
+- Added `--monitor` CLI flag to `vcclient-cachy run` and `monitor: bool = False` field in `EngineConfig` / `AppConfig`. With `--monitor`, the engine *additionally* writes to the host's default output (best-effort; failures don't stop the engine).
+
+### Added
+- `~/.config/vcclient-cachy/config.toml` is now auto-generated on first run with all defaults (was lazily created on first save before).
+- New config fields: `sink_name` (explicit target — must match systemd unit), `monitor` (default False), `output_latency_ms` (pacat playback latency request, default 30 ms).
+- `tests/test_engine_routing.py` — two regression tests:
+  1. Engine connects to VCClientCachySink within 3 s of start (the bug).
+  2. With `monitor=False`, no leaked sink-input on any sink other than VCClientCachySink (the second leak).
+
 ### Changed (post-v0.1.0 housekeeping)
 - **Repo visibility flipped to PRIVATE** on GitHub (`gh repo edit alirexha/vcclient-cachy --visibility private`).
 - **Root `LICENSE` switched from MIT to "All Rights Reserved"** for the original work pending a commercial decision. `upstream/LICENSE` (w-okada's MIT) preserved verbatim — that subtree and the vendored derivatives in `src/server/` remain MIT.

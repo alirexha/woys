@@ -1,29 +1,46 @@
 """Realtime voice-conversion engine.
 
-Wires the proven Phase 1 ONNX inference path (`scripts/smoke_rvc_onnx.py`)
-to a sounddevice input/output loop. Reads from the host mic, runs inference,
-writes to the VCClientCachySink (the audio appears on `vcclient-mic` for
-Discord/CS2/anything else listening).
+Wires the Phase 1 ONNX inference path to a real-time mic→infer→sink loop.
 
-Sample rate handling
---------------------
-RVC v2 16k models work at 16 kHz. The host mic typically captures at 48 kHz.
-We resample 48 → 16 → 48 around inference (linear poly resample via scipy is
-~free CPU-wise compared to the ONNX work).
+Audio routing — IMPORTANT (see v0.1.1 fix)
+------------------------------------------
+On CachyOS, PortAudio is built with the ALSA host API only (no PulseAudio host
+API). `sd.OutputStream()` with no explicit `device=` falls through to the ALSA
+*default* device, which routes to the system default sink (laptop speakers /
+headphones) — NOT to the named PipeWire sink we want. Setting `PULSE_SINK=…`
+in the environment is also ignored, because there's no Pulse host API for
+PortAudio to consult.
+
+The fix: instead of `sd.OutputStream`, the engine spawns
+`pacat --playback --device=VCClientCachySink …` as a subprocess and pipes
+raw float32 PCM to its stdin. `pacat` is the canonical PulseAudio client; it
+talks to pipewire-pulse natively, takes an explicit `--device=` argument, and
+never auto-routes to the system default. This is the same path that the
+acoustic loopback bench (`scripts/bench_loopback.py`) uses — proven on this host.
+
+Input is still `sd.InputStream` against the default mic; that path was always
+correct (host mic → 48 kHz capture).
+
+Optional local monitoring
+-------------------------
+By default, **the engine writes the transformed audio to ONLY the virtual
+sink** (which `vcclient-mic` reads from). Nothing plays out of the laptop
+speakers — your housemates / streamers / phone calls don't hear what you're
+processing. Pass `monitor=True` to additionally play to the host's default
+output for self-monitoring.
 
 Threading
 ---------
-- A worker thread runs the input/output sounddevice streams blocking. The
-  host mic and VCClientCachySink output are opened against pipewire-pulse via
-  PortAudio's PA backend, with `PULSE_SINK=VCClientCachySink` injected so the
-  output lands on the right node.
-- The TUI thread polls `EngineStats` for live UI; no shared mutable state
-  beyond a few atomic-ish primitives.
+- Worker thread runs the blocking I/O loop and feeds the pacat subprocess.
+- TUI thread polls `EngineStats` for live UI; no shared mutable state beyond
+  a few atomic-ish primitives.
 """
 
 from __future__ import annotations
 
-import os
+import contextlib
+import shutil
+import subprocess
 import threading
 import time
 from collections import deque
@@ -71,6 +88,13 @@ class EngineConfig:
     # Routing
     sink_name: str = "VCClientCachySink"
     input_device: str | int | None = None  # None = default mic
+    # When False (default): output goes ONLY to VCClientCachySink → vcclient-mic.
+    # When True: ALSO write a best-effort copy to the host's default output
+    # (laptop speakers / headphones) for self-monitoring.
+    monitor: bool = False
+    # Output latency in ms requested from pacat. Lower = tighter latency,
+    # higher = more buffer headroom against scheduler jitter.
+    output_latency_ms: int = 30
 
 
 @dataclass
@@ -234,14 +258,40 @@ class RealtimeEngine:
             self._thread.join(timeout=timeout)
         self.stats.running = False
 
-    def _run_loop(self) -> None:
-        # Direct PortAudio's PulseAudio backend at our sink.
-        os.environ.setdefault("PULSE_SINK", self.cfg.sink_name)
+    def _open_pacat(self) -> subprocess.Popen[bytes]:
+        """Spawn pacat targeting the named virtual sink. Raises if pacat missing."""
+        pacat = shutil.which("pacat")
+        if pacat is None:
+            raise RuntimeError(
+                "pacat not found — install pipewire-pulse (it provides pactl/pacat/parec)"
+            )
+        cmd = [
+            pacat,
+            "--playback",
+            f"--device={self.cfg.sink_name}",
+            f"--rate={self.cfg.sink_rate}",
+            f"--channels={self.cfg.channels}",
+            "--format=float32le",
+            f"--latency-msec={self.cfg.output_latency_ms}",
+            "--client-name=vcclient-cachy",
+            "--stream-name=engine-out",
+            "--raw",
+        ]
+        return subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
+    def _run_loop(self) -> None:
         import sounddevice as sd
 
         chunk_mic = int(self.cfg.mic_rate * self.cfg.chunk_seconds)
+        pacat_proc: subprocess.Popen[bytes] | None = None
+        monitor_stream = None
         try:
+            pacat_proc = self._open_pacat()
             in_stream = sd.InputStream(
                 samplerate=self.cfg.mic_rate,
                 channels=self.cfg.channels,
@@ -249,12 +299,20 @@ class RealtimeEngine:
                 dtype="float32",
                 device=self.cfg.input_device,
             )
-            out_stream = sd.OutputStream(
-                samplerate=self.cfg.sink_rate,
-                channels=self.cfg.channels,
-                dtype="float32",
-            )
-            with in_stream, out_stream:
+            if self.cfg.monitor:
+                # Best-effort self-monitor stream; failures here don't stop the engine.
+                try:
+                    monitor_stream = sd.OutputStream(
+                        samplerate=self.cfg.sink_rate,
+                        channels=self.cfg.channels,
+                        dtype="float32",
+                    )
+                    monitor_stream.start()
+                except Exception as e:
+                    self.stats.last_error = f"monitor: {type(e).__name__}: {e}"
+                    monitor_stream = None
+
+            with in_stream:
                 while not self._stop_event.is_set():
                     data, _ = in_stream.read(chunk_mic)
                     audio = data.reshape(-1).astype(np.float32, copy=False)
@@ -269,7 +327,19 @@ class RealtimeEngine:
                     inf_ms = (time.perf_counter() - t_inf) * 1000
 
                     out48 = _resample_linear(out16, 16_000, self.cfg.sink_rate)
-                    out_stream.write(out48.reshape(-1, 1))
+
+                    # Primary output → VCClientCachySink via pacat.
+                    if pacat_proc.poll() is not None:
+                        raise RuntimeError(f"pacat subprocess died (exit {pacat_proc.returncode})")
+                    if pacat_proc.stdin is None:
+                        raise RuntimeError("pacat stdin is unavailable")
+                    pacat_proc.stdin.write(out48.tobytes())
+                    pacat_proc.stdin.flush()
+
+                    # Optional self-monitor → host default output.
+                    if monitor_stream is not None:
+                        with contextlib.suppress(Exception):
+                            monitor_stream.write(out48.reshape(-1, 1))
 
                     total_ms = (time.perf_counter() - t_total) * 1000
                     self.stats.chunks_processed += 1
@@ -287,3 +357,24 @@ class RealtimeEngine:
         except Exception as e:
             self.stats.last_error = f"{type(e).__name__}: {e}"
             self.stats.running = False
+        finally:
+            if monitor_stream is not None:
+                try:
+                    monitor_stream.stop()
+                    monitor_stream.close()
+                except Exception:
+                    pass
+            if pacat_proc is not None:
+                try:
+                    if pacat_proc.stdin is not None:
+                        pacat_proc.stdin.close()
+                except Exception:
+                    pass
+                try:
+                    pacat_proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    pacat_proc.terminate()
+                    try:
+                        pacat_proc.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        pacat_proc.kill()

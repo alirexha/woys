@@ -102,6 +102,9 @@ class VCClientApp(App[int]):
                 sink_rate=self.cfg.sink_rate,
                 f0_up_key=self.cfg.f0_up_key,
                 sid=self.cfg.sid,
+                sink_name=self.cfg.sink_name,
+                monitor=self.cfg.monitor,
+                output_latency_ms=self.cfg.output_latency_ms,
             )
         )
         self.no_pw_setup = no_pw_setup
@@ -234,9 +237,16 @@ class VCClientApp(App[int]):
             pass
 
 
-def run_tui(*, no_pw_setup: bool = False, autostart: bool = False) -> int:
+def run_tui(
+    *,
+    no_pw_setup: bool = False,
+    autostart: bool = False,
+    monitor: bool | None = None,
+) -> int:
     cfg = load_config()
     if autostart:
         cfg.autostart_engine = True
+    if monitor is not None:
+        cfg.monitor = monitor
     app = VCClientApp(cfg=cfg, no_pw_setup=no_pw_setup)
     return app.run() or 0
