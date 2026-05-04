@@ -11,6 +11,15 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - `tests/test_environment.py` (4/4 passing on host).
 - `docs/00-recon.md` — 813-line reconnaissance of upstream `w-okada/voice-changer`. Identified hot path (9 files), 8 non-RVC engines for removal, ~22k LOC reduction target, and proposed `src/server/` layout for Phase 1.
 
+### Phase 6 — ELI5 documentation
+- `docs/INSTALL.md` — step-by-step install for someone who's never used Python on Linux. Verifies PipeWire, walks through `./install.sh`, sanity-checks the install, sets PATH on fish vs bash/zsh.
+- `docs/DISCORD-SETUP.md` — Discord input device + critical "disable Discord noise suppression / Krisp" note (it gates RVC output as noise). Covers the auto-detect-other-device gotcha and a KDE/GNOME shortcut binding for `vcclient-cachy toggle`.
+- `docs/CS2-SETUP.md` — CS2 audio config + an explicit anti-cheat note (vcclient-cachy is OS-level audio, not memory hooking — VAC-safe by default; evdev hotkey opt-in is the only thing flagged risky).
+- `docs/MODELS.md` — where models live, where to find them on HF/weights.gg, three `.pth → .onnx` paths (upstream Docker UI, manual `torch.onnx.export` recipe, future `vcclient-cachy convert` subcommand).
+- `docs/TROUBLESHOOTING.md` — the failure tree from "PulseAudio detected" to "voice sounds robotic" to "engine drops audio every 30s". Covers cuDNN preload, GPU memory, Krisp gating, and the evdev opt-in (with the VAC warning).
+- Added `vcclient-cachy convert` CLI **stub** that prints the manual paths from `MODELS.md`. **Real implementation deferred**; the slot-metadata probe needed to wrap upstream's `export2onnx` cleanly is a 1-2 hour task on its own. Honest miss against Q5; flagged in `LESSONS.md`.
+- All shell commands in docs verified working on this CachyOS host (re-ran `install.sh` after Phase 4's uninstall test, confirmed `vcclient-cachy {info, pw status}` and PipeWire listings).
+
 ### Phase 5 — Performance numbers
 - `docs/05-perf.md` — full measured numbers, hardware/software baseline, methodology, and targets-vs-reality.
 - Aligned `audio/engine.py:_make_session()` with the smoke-test ORT options: `arena_extend_strategy=kNextPowerOfTwo`, `cudnn_conv_algo_search=EXHAUSTIVE`, `do_copy_in_default_stream=True`. Steady-state engine inference dropped 86 → 60 ms (rolling-32 avg @ chunk=0.25).
