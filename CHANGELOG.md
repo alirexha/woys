@@ -11,6 +11,18 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - `tests/test_environment.py` (4/4 passing on host).
 - `docs/00-recon.md` — 813-line reconnaissance of upstream `w-okada/voice-changer`. Identified hot path (9 files), 8 non-RVC engines for removal, ~22k LOC reduction target, and proposed `src/server/` layout for Phase 1.
 
+### Phase 5 — Performance numbers
+- `docs/05-perf.md` — full measured numbers, hardware/software baseline, methodology, and targets-vs-reality.
+- Aligned `audio/engine.py:_make_session()` with the smoke-test ORT options: `arena_extend_strategy=kNextPowerOfTwo`, `cudnn_conv_algo_search=EXHAUSTIVE`, `do_copy_in_default_stream=True`. Steady-state engine inference dropped 86 → 60 ms (rolling-32 avg @ chunk=0.25).
+- Chunk-size sweep (60-500 ms): **inference is roughly constant at ~22 ms** for chunk sizes ≥ 100 ms. Below that, kernel-launch overhead dominates and inference *increases*. Sweet spot: 100-150 ms chunks.
+- `scripts/bench_chunks.py`-style chunk sweep is wired through `scripts/smoke_rvc_onnx.py`. Acoustic loopback `scripts/bench_loopback.py` is scaffolded but the subprocess timing alignment is fragile — documented as future work; in-process numbers are authoritative.
+- **Honest verdict**: brief targets *missed* on this hardware:
+  - e2e (target <80 ms): **~280 ms** measured warm-state at chunk=0.25 (250 ms audio buffer + ~25 ms inference + ~5 ms audio I/O).
+  - Idle VRAM (target <500 MB): **~1.35 GiB** (contentvec-f and rmvpe are both ~350 MB on disk fp32).
+  - CPU active (target <15%): **~26%** at chunk=0.25.
+  All three misses traceable to model architecture choices; closing them needs SOLA + IO-binding + fp16 export, which the brief permits but are deferred to future sessions.
+- TensorRT EP available in the wheel but its runtime libs aren't pip-shipped — falls back to CPU. Skipped (avoids worse-than-CUDA fallback path).
+
 ### Phase 4 — Packaging
 - `install.sh` — user-local installer. Creates `~/.local/share/vcclient-cachy/{venv,models}`, installs deps (auto-fetches `uv` if missing), symlinks `~/.local/bin/vcclient-cachy`, registers + enables `vcclient-cachy-mic.service`. Pre-flight checks PipeWire and warns on missing nvidia-smi. Flags: `--skip-models`, `--no-systemd`.
 - `uninstall.sh` — reverses install.sh. Stops and removes systemd unit, tears down the PipeWire mic via `vcclient-cachy pw teardown`, removes launcher symlink. `--keep-models` preserves the ~1 GiB ONNX cache. Always preserves user config at `~/.config/vcclient-cachy/`.

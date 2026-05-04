@@ -95,7 +95,20 @@ def _make_session(path: Path) -> ort.InferenceSession:
     so.log_severity_level = 3
     providers: list[tuple[str, dict[str, object]] | str] = []
     if "CUDAExecutionProvider" in ort.get_available_providers():
-        providers.append(("CUDAExecutionProvider", {"device_id": 0}))
+        # Mirror the Phase 5 smoke-test options. cudnn_conv_algo_search=EXHAUSTIVE
+        # eats a one-off ~50-100 ms autotune at first call but unlocks ~3-4x
+        # steady-state inference speed.
+        providers.append(
+            (
+                "CUDAExecutionProvider",
+                {
+                    "device_id": 0,
+                    "arena_extend_strategy": "kNextPowerOfTwo",
+                    "cudnn_conv_algo_search": "EXHAUSTIVE",
+                    "do_copy_in_default_stream": True,
+                },
+            )
+        )
     providers.append("CPUExecutionProvider")
     return ort.InferenceSession(str(path), sess_options=so, providers=providers)
 

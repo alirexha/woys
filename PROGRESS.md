@@ -10,8 +10,8 @@ Live tracking of phase status. Updated continuously during autonomous execution.
 | 2 | PipeWire integration + persistent vcclient-mic | ✅ done — round-trip + idempotency |
 | 3 | TUI + IPC toggle (Unix socket; D-Bus deferred to Phase 5) | ✅ done |
 | 4 | PKGBUILD + install/uninstall + systemd | ✅ done — round-trip verified |
-| 5 | Performance tuning | in progress |
-| 6 | ELI5 docs | pending |
+| 5 | Performance tuning | ⚠️ partial — measured + tuned ORT options; <80ms target missed (see docs/05-perf.md) |
+| 6 | ELI5 docs | in progress |
 | 7 | Retrospective + project the project notes + QA script | pending |
 
 ## Verification gate per phase
