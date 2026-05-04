@@ -25,6 +25,7 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Header, Label, ProgressBar, Static
 
 from audio import EngineConfig, RealtimeEngine
+from audio.engine import DEFAULT_RVC_MODEL
 from audio.pipewire import PipeWireError, VirtualMic
 from tui.config import AppConfig, load_config, save_config
 from tui.control import ControlServer
@@ -117,8 +118,17 @@ class VCClientApp(App[int]):
     ) -> None:
         super().__init__()
         self.cfg = cfg or load_config()
+        # v0.4.1: honor cfg.rvc_model on startup. Empty string ⇒ use the
+        # engine's hardcoded default (Amitaro). Any path that doesn't exist
+        # also falls back so a stale config.toml doesn't brick the engine.
+        rvc_path = (
+            Path(self.cfg.rvc_model)
+            if self.cfg.rvc_model and Path(self.cfg.rvc_model).exists()
+            else DEFAULT_RVC_MODEL
+        )
         self.engine = engine or RealtimeEngine(
             EngineConfig(
+                rvc_model=rvc_path,
                 chunk_seconds=self.cfg.chunk_seconds,
                 mic_rate=self.cfg.mic_rate,
                 sink_rate=self.cfg.sink_rate,
@@ -179,13 +189,38 @@ class VCClientApp(App[int]):
             return f"OK pitch={new}"
         if cmd == "STATUS":
             s = self.engine.stats
+            model_name = Path(str(self.engine.cfg.rvc_model)).name
             return (
                 f"OK running={s.running} "
                 f"pitch={int(self.pitch)} "
                 f"profile={self._active_profile or '-'} "
+                f"model={model_name} "
                 f"avg_total_ms={s.avg_total_ms:.1f} "
                 f"avg_inf_ms={s.avg_inference_ms:.1f}"
             )
+        if cmd.startswith("MODEL "):
+            arg = cmd[len("MODEL ") :].strip()
+            from vcclient_cachy.models import find_by_name
+
+            new_path = find_by_name(arg)
+            if new_path is None:
+                return f"ERR no such model: {arg!r} (try `models list`)"
+
+            def apply_model() -> None:
+                self.engine.request_model_swap(new_path)
+                self.cfg.rvc_model = str(new_path.resolve())
+                save_config(self.cfg)
+
+            self.call_from_thread(apply_model)
+            return f"OK model={new_path.name}"
+        if cmd.startswith("PROFILE "):
+            target = cmd[len("PROFILE ") :].strip()
+
+            def apply_prof() -> None:
+                self._apply_profile_named(target)
+
+            self.call_from_thread(apply_prof)
+            return f"OK profile={target}"
         if cmd == "QUIT":
             # action_quit is async; post a sync shim instead so call_from_thread
             # gets a non-coroutine callable (Textual typing requires it).
@@ -238,7 +273,12 @@ class VCClientApp(App[int]):
         self.cfg.f0_up_key = 0
 
     def action_cycle_profile(self) -> None:
-        """Phase 4 — cycle to the next saved profile (v0.3.0)."""
+        """Phase 4 — cycle to the next saved profile (v0.3.0).
+
+        v0.4.1 fix: this now actually swaps the loaded RVC model in addition
+        to mirroring pitch / sid / monitor / etc. Previously the `model:`
+        line updated cosmetically but the audio pipeline kept the old voice.
+        """
         names = list_profiles(self.cfg)
         if not names:
             self.notify(
@@ -250,22 +290,44 @@ class VCClientApp(App[int]):
         next_name = cycle_profile(self.cfg, self._active_profile)
         if next_name is None:
             return
-        if not apply_profile(self.cfg, next_name):
-            self.notify(f"failed to apply profile {next_name!r}", severity="error", timeout=4)
+        self._apply_profile_named(next_name)
+
+    def _apply_profile_named(self, name: str) -> None:
+        """Apply a saved profile to both `self.cfg` and `self.engine`. The
+        RVC model swap is queued via `request_model_swap` and takes effect
+        at the next chunk boundary in the worker (≤ chunk_seconds + a few
+        ms cudnn-cache lookups for the new shape)."""
+        if not apply_profile(self.cfg, name):
+            self.notify(f"failed to apply profile {name!r}", severity="error", timeout=4)
             return
-        self._active_profile = next_name
-        # Mirror the relevant fields into the engine config; some only take
-        # effect on engine restart (chunk_seconds, output_latency_ms).
+        self._active_profile = name
+        # Mirror live-tunable fields onto the engine config. chunk_seconds /
+        # output_latency_ms still need an engine restart to bite (they're
+        # set at sounddevice/pacat init).
         self.engine.cfg.f0_up_key = self.cfg.f0_up_key
         self.engine.cfg.sid = self.cfg.sid
         self.engine.cfg.monitor = self.cfg.monitor
         self.pitch = self.cfg.f0_up_key
-        save_config(self.cfg)
-        self.notify(
-            f"profile → {next_name} (pitch {self.cfg.f0_up_key:+d})",
-            severity="information",
-            timeout=2,
+        # The actual model swap — this is the v0.4.1 fix.
+        new_model = (
+            Path(self.cfg.rvc_model)
+            if self.cfg.rvc_model and Path(self.cfg.rvc_model).exists()
+            else None
         )
+        if new_model is not None and new_model != self.engine.cfg.rvc_model:
+            self.engine.request_model_swap(new_model)
+            self.notify(
+                f"profile → {name} (loading {new_model.name}, pitch {self.cfg.f0_up_key:+d})",
+                severity="information",
+                timeout=3,
+            )
+        else:
+            self.notify(
+                f"profile → {name} (pitch {self.cfg.f0_up_key:+d})",
+                severity="information",
+                timeout=2,
+            )
+        save_config(self.cfg)
 
     def action_save_cfg(self) -> None:
         save_config(self.cfg)
