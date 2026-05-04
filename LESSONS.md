@@ -336,7 +336,62 @@ auto-pick; e2e stays at 30 ms (already under target).
 6. **Optional system-tray icon** via libappindicator. Keep TUI primary;
    tray is for users who don't want a terminal open.
 
-## 9. The brief's "FORBIDDEN list" was load-bearing
+## 9. v0.4.0 retrospective (sharing + browser + tray)
+
+Three small skeleton/format deliverables, no engine work. Rapid execution
+because the underlying primitives (config round-trip, control socket,
+huggingface_hub) were already in place from earlier releases.
+
+### What worked
+- **`.vcprofile` via existing `_extras` round-trip.** Same trick as v0.3.0
+  profiles: save the bundle TOML's `[profile]` table verbatim into
+  `cfg._extras["profiles"][name]`. SHA-256 binding is a 4-line `for
+  entry in discover_models(): if _sha256_file(...) == desired_sha`.
+- **Browser extension was 90% boilerplate.** Manifest v3 + popup that
+  reads `navigator.mediaDevices.enumerateDevices()`. The detection logic
+  is honest: device labels are empty until the user grants mic permission
+  somewhere, so the popup says so with a yellow pill.
+- **Tray icon's Unix-socket integration was free.** The control socket
+  from v0.3.0 phase 3 already exposed STATUS / TOGGLE / QUIT. The tray
+  just polls and flips icon color.
+
+### What surprised
+- **Mypy doesn't have stubs for pystray/PIL.** Added them to the
+  `ignore_missing_imports` list. Annoying but standard for ML/CLI deps.
+- **Manifest v3 requires `service_worker` as a string, not as
+  `{ scripts: [...] }`** like v2 did. Easy to confuse; verified
+  by json-loading the file in CI.
+- **`navigator.mediaDevices.enumerateDevices()` returns empty labels
+  until the user grants `getUserMedia` permission anywhere in the
+  origin.** This is a privacy feature; the extension popup can't
+  pre-detect `vcclient-mic` reliably. The popup tells the user to visit
+  any site's audio settings page first.
+
+### Mistakes
+- **First `.vcprofile` test passed `monkeypatch.setattr("tui.config.CONFIG_FILE", cfg_path)`
+  expecting `load_config()` to honor it.** load_config takes the path as a
+  default arg, bound at function definition; the monkeypatch on the
+  module attribute didn't reach the existing default-arg binding.
+  Fixed by adding `config_path` / `models_dir` keyword args to
+  `export_profile` / `import_profile` so tests can pass tmp paths
+  explicitly.
+- **Browser extension placeholders got 1×1 transparent PNGs** generated
+  via raw PNG-spec encoding. They satisfy Manifest v3's icon requirement
+  but render as nothing. Documented as "replace before submission".
+
+### v0.5.0+ recommendations
+1. **Engine ↔ extension bridge.** WebSocket on a localhost port that the
+   extension can hit; surface engine state and let the popup toggle. Or
+   native messaging via stdin/stdout (more secure, less ergonomic).
+2. **Tray "engine off → click → start TUI" flow.** Currently the tray
+   expects a TUI already running.
+3. **`.vcprofile` model fetching.** When the receiver has no matching
+   sha256, surface "fetch this from <hf-repo>?" via huggingface_hub.
+4. Real icon artwork (16/48/128 PNGs) for the browser extension before
+   submitting to the Chrome Web Store / addons.mozilla.org.
+5. Submission of the AUR package once the GitHub repo is de-privatised.
+
+## 10. The brief's "FORBIDDEN list" was load-bearing
 
 Section 12 of `PROJECT_BRIEF.md` says: do not rewrite RVC in C++/Rust, do
 not write custom CUDA kernels, do not replace ONNX Runtime, do not distill
