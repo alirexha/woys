@@ -8,6 +8,7 @@ Keys
   t       toggle engine on/off
   +/-     pitch shift up/down (1 semitone)
   0       reset pitch shift
+  p       cycle through saved profiles  (v0.3.0)
   s       force-save config
   q       quit
 """
@@ -27,26 +28,46 @@ from audio import EngineConfig, RealtimeEngine
 from audio.pipewire import PipeWireError, VirtualMic
 from tui.config import AppConfig, load_config, save_config
 from tui.control import ControlServer
+from vcclient_cachy.profiles import apply_profile, cycle_profile, list_profiles
 
 
 class StatusPanel(Static):
-    """Top status block: model, on/off, pitch."""
+    """Top status block: model, on/off, pitch, active profile, cold-start hint."""
 
     DEFAULT_CSS = """
     StatusPanel {
         padding: 1 2;
         border: round $accent;
-        height: 7;
+        height: 8;
     }
     """
 
-    def render_status(self, *, running: bool, model: Path, pitch: int, error: str | None) -> str:
-        light = "[bold green]●[/]" if running else "[dim]○[/]"
+    def render_status(
+        self,
+        *,
+        running: bool,
+        model: Path,
+        pitch: int,
+        profile: str | None,
+        cold_start: bool,
+        error: str | None,
+    ) -> str:
+        if running and cold_start:
+            light = "[bold yellow]◐[/]"
+            state = "warming up…"
+        elif running:
+            light = "[bold green]●[/]"
+            state = "RUNNING"
+        else:
+            light = "[dim]○[/]"
+            state = "stopped"
+        prof = f"[italic]{profile}[/]" if profile else "[dim](none)[/]"
         err = f"\n[bold red]error:[/] {error}" if error else ""
         return (
-            f"{light}  status: [bold]{'RUNNING' if running else 'stopped'}[/]\n"
-            f"   model: [italic]{model.name or '(none)'}[/]\n"
-            f"   pitch: {pitch:+d} st"
+            f"{light}  status:  [bold]{state}[/]\n"
+            f"   model:   [italic]{model.name or '(none)'}[/]\n"
+            f"   pitch:   {pitch:+d} st\n"
+            f"   profile: {prof}"
             f"{err}"
         )
 
@@ -78,6 +99,7 @@ class VCClientApp(App[int]):
         Binding("plus,equals_sign", "pitch_up", "pitch +"),
         Binding("minus", "pitch_down", "pitch -"),
         Binding("0", "pitch_reset", "pitch 0"),
+        Binding("p", "cycle_profile", "profile"),
         Binding("s", "save_cfg", "save"),
         Binding("q,ctrl+c", "quit", "quit"),
     ]
@@ -115,6 +137,8 @@ class VCClientApp(App[int]):
         self.no_pw_setup = no_pw_setup
         self.pitch = self.cfg.f0_up_key
         self._control = ControlServer(self._handle_control)
+        # v0.3.0: track active profile so the status panel + cycle key know.
+        self._active_profile: str | None = None
 
     def on_mount(self) -> None:
         if not self.no_pw_setup:
@@ -122,6 +146,7 @@ class VCClientApp(App[int]):
                 VirtualMic().ensure()
             except PipeWireError as e:
                 self.engine.stats.last_error = f"PipeWire: {e}"
+                self.notify(f"PipeWire: {e}", severity="error", timeout=8)
         if self.cfg.autostart_engine:
             self._start_engine()
         self._control.start()
@@ -157,6 +182,7 @@ class VCClientApp(App[int]):
             return (
                 f"OK running={s.running} "
                 f"pitch={int(self.pitch)} "
+                f"profile={self._active_profile or '-'} "
                 f"avg_total_ms={s.avg_total_ms:.1f} "
                 f"avg_inf_ms={s.avg_inference_ms:.1f}"
             )
@@ -187,8 +213,10 @@ class VCClientApp(App[int]):
     def action_toggle_engine(self) -> None:
         if self.engine.stats.running:
             self.engine.stop()
+            self.notify("engine stopped", severity="information", timeout=2)
         else:
             self._start_engine()
+            self.notify("engine starting (cudnn warmup ~2s)", severity="information", timeout=2)
 
     def _start_engine(self) -> None:
         self.engine.cfg.f0_up_key = int(self.pitch)
@@ -209,6 +237,36 @@ class VCClientApp(App[int]):
         self.engine.cfg.f0_up_key = 0
         self.cfg.f0_up_key = 0
 
+    def action_cycle_profile(self) -> None:
+        """Phase 4 — cycle to the next saved profile (v0.3.0)."""
+        names = list_profiles(self.cfg)
+        if not names:
+            self.notify(
+                "no saved profiles. Use `vcclient-cachy profile save <name>` first.",
+                severity="warning",
+                timeout=4,
+            )
+            return
+        next_name = cycle_profile(self.cfg, self._active_profile)
+        if next_name is None:
+            return
+        if not apply_profile(self.cfg, next_name):
+            self.notify(f"failed to apply profile {next_name!r}", severity="error", timeout=4)
+            return
+        self._active_profile = next_name
+        # Mirror the relevant fields into the engine config; some only take
+        # effect on engine restart (chunk_seconds, output_latency_ms).
+        self.engine.cfg.f0_up_key = self.cfg.f0_up_key
+        self.engine.cfg.sid = self.cfg.sid
+        self.engine.cfg.monitor = self.cfg.monitor
+        self.pitch = self.cfg.f0_up_key
+        save_config(self.cfg)
+        self.notify(
+            f"profile → {next_name} (pitch {self.cfg.f0_up_key:+d})",
+            severity="information",
+            timeout=2,
+        )
+
     def action_save_cfg(self) -> None:
         save_config(self.cfg)
         self.notify("config saved", severity="information")
@@ -224,12 +282,18 @@ class VCClientApp(App[int]):
     def _refresh_stats(self) -> None:
         s = self.engine.stats
         try:
+            # "Cold start" heuristic: engine is running but the rolling
+            # latency window hasn't stabilized yet — first ~10 chunks at
+            # chunk_seconds=0.1 = roughly 1 second of warmup.
+            cold_start = bool(s.running and s.chunks_processed < 10)
             status = self.query_one("#status", StatusPanel)
             status.update(
                 status.render_status(
                     running=s.running,
                     model=self.engine.cfg.rvc_model,
                     pitch=int(self.pitch),
+                    profile=self._active_profile,
+                    cold_start=cold_start,
                     error=s.last_error,
                 )
             )
@@ -237,6 +301,11 @@ class VCClientApp(App[int]):
             lat.update(lat.render_lat(s.avg_total_ms, s.avg_inference_ms, s.chunks_processed))
             meter = self.query_one("#meter", ProgressBar)
             meter.update(progress=min(100, int(s.last_input_rms * 4 * 100)))
+
+            # Surface a fresh `last_error` to the user as a toast (not just text).
+            if s.last_error and s.last_error != getattr(self, "_last_notified_error", None):
+                self.notify(s.last_error, severity="error", timeout=8)
+                self._last_notified_error = s.last_error
         except Exception:
             # Widget tree may not be fully realized yet during early ticks.
             pass
