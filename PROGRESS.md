@@ -2,6 +2,38 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## Voice Library v1 — 9 RVC voices batch-imported (2026-05-04)
+
+Built via `scripts/voice_library_import.py` per `VOICE_LIBRARY_BRIEF.md`.
+All ✅; the `lana_del_rey` URL in the brief was wrong (`LanaDelReyV2.zip`
+doesn't exist; the actual file in `pinguG/Lana-Del-Rey` is `NFR.zip`),
+recovered manually. No version bump — this is operator-side data, not a
+code release.
+
+| Slug | Display | Onnx (MiB) | Source |
+|------|---------|-----------:|--------|
+| `donald_trump` | Donald Trump (POTUS) | 105.8 | Hazza1/DonaldTrump |
+| `e_girl` | E-Girl (HQ Female) | 110.3 | ZokaxDesu/e-girl |
+| `alfred_pennyworth` | Alfred Pennyworth (Arkham) | 107.8 | Homiebear/AlfredPennyworth_465e_8835s |
+| `lana_del_rey` | Lana Del Rey (NFR Era) | 105.8 | pinguG/Lana-Del-Rey |
+| `harley_quinn` | Harley Quinn V2 (Enemy Within) | 107.8 | Cauthess/HarleyQuinnTitanPretrain |
+| `catwoman` | Catwoman (Laura Bailey) | 107.8 | Cauthess/CatwomanLauraBailey |
+| `megan_fox` | Megan Fox | 105.8 | dragoncrack/(suspicious-but-functional repo name) |
+| `batman_troy_baker` | Batman / Bruce Wayne (Troy Baker, Telltale) | 105.8 | Zogii/zogiiRVC |
+| `spongebob_persian` | SpongeBob Persian Dub (Bab Asfanji) | 105.8 | PlushymehereJC/Spongebob_Persian_dub |
+
+Total: ~963 MiB on disk under `~/.local/share/vcclient-cachy/models/`.
+Each has a profile in `~/.config/vcclient-cachy/config.toml` with
+`pitch=0`, `chunk_seconds=0.1`, `monitor=false`, plus `_display`,
+`_source_url`, and (where relevant) `_note` fields documenting provenance.
+
+Smoke test on `donald_trump` after `models use`:
+- session load (3 ORT sessions): 1414 ms (one-time)
+- first inference (cold cudnn): 451 ms
+- warm inference (mean of 10): **34.6 ± 12.1 ms** — same envelope as v0.3.0 baseline.
+
+Provenance: `voice-library/SOURCES.md`. Models are NOT in the git tree.
+
 ## v0.4.0 — Sharing + Browser + Tray ✅ shipped 2026-05-04
 
 | Phase | Description | Status |
