@@ -115,6 +115,15 @@ class EngineConfig:
     # higher = more buffer headroom against scheduler jitter.
     output_latency_ms: int = 30
 
+    # v0.5.0 session-pool tuning.
+    # Cap on simultaneous cached RVC sessions (each ~150 MiB VRAM).
+    session_pool_size: int = 4
+    # If true, on engine.start() we eagerly create + cudnn-warm sessions for
+    # every .onnx in the models dir (minus foundations). Adds ~6-12 s to
+    # cold start for a 10-voice library, but every subsequent swap is a
+    # pointer swap (~10 ms). Recommended for users with persistent engines.
+    eager_warmup: bool = False
+
 
 @dataclass
 class EngineStats:
@@ -220,6 +229,105 @@ class _FairseqEmbedder:
         return out  # type: ignore[no-any-return]
 
 
+class RvcSessionPool:
+    """Per-path cache of `ort.InferenceSession` objects.
+
+    Hot-swap performance was the v0.4.x P0: every `models use` rebuilt the
+    session from scratch, including cudnn EXHAUSTIVE algo-tuning, costing
+    ~1.5 s + a 305 ms first-chunk inference burst. This pool keeps a small
+    set of cached sessions; second swap to an already-seen voice is a
+    pointer swap (~10 ms total).
+
+    LRU eviction keeps VRAM bounded — a session uses ~150 MiB resident,
+    so the default `max_size=4` caps voice-model VRAM at ~600 MiB on top
+    of the foundations. Configurable via `EngineConfig.session_pool_size`.
+
+    Thread-safe. The audio worker calls `get_or_create()` from inside
+    `_maybe_swap_model`; tests / TUI may call it from any thread.
+    """
+
+    def __init__(self, max_size: int = 4) -> None:
+        self._cache: dict[Path, ort.InferenceSession] = {}
+        self._access_order: list[Path] = []
+        self._max_size = max(1, max_size)
+        self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._cache)
+
+    def __contains__(self, path: Path) -> bool:
+        with self._lock:
+            return Path(path).resolve() in self._cache
+
+    def get_or_create(self, path: Path) -> ort.InferenceSession:
+        """Return a cached session if present, else create + cache.
+
+        Cache hit: ~0.1 ms. Cache miss: ~600 ms (model load + cudnn tune).
+        """
+        key = Path(path).resolve()
+        with self._lock:
+            if key in self._cache:
+                # Bump LRU.
+                self._access_order.remove(key)
+                self._access_order.append(key)
+                return self._cache[key]
+
+        # Cache miss — build outside the lock (slow); other threads can
+        # still get cached sessions while we tune.
+        sess = _make_session(key)
+
+        with self._lock:
+            # Another thread may have raced us; if so, drop ours and use theirs.
+            if key in self._cache:
+                return self._cache[key]
+            self._cache[key] = sess
+            self._access_order.append(key)
+            while len(self._access_order) > self._max_size:
+                evicted = self._access_order.pop(0)
+                if evicted != key:
+                    self._cache.pop(evicted, None)
+        return sess
+
+    def warmup(self, path: Path) -> ort.InferenceSession:
+        """Create + run one dummy forward pass so cudnn populates its algo
+        cache. Subsequent inferences against the same shape are near-instant.
+
+        The caller is expected to know the model's input shape — we feed the
+        widest plausible RVC v2 input (768-dim feats x 100 frames).
+        """
+        sess = self.get_or_create(path)
+        try:
+            shape = sess.get_inputs()[0].shape
+            feats_dim = int(shape[2]) if len(shape) >= 3 and isinstance(shape[2], int) else 768
+        except (IndexError, ValueError):
+            feats_dim = 768
+        is_half = sess.get_inputs()[0].type != "tensor(float)"
+        feats_dt = np.float16 if is_half else np.float32
+        n_frames = 100
+        feed = {
+            "feats": np.zeros((1, n_frames, feats_dim), dtype=feats_dt),
+            "p_len": np.array([n_frames], dtype=np.int64),
+            "pitch": np.zeros((1, n_frames), dtype=np.int64),
+            "pitchf": np.zeros((1, n_frames), dtype=np.float32),
+            "sid": np.array([0], dtype=np.int64),
+        }
+        with contextlib.suppress(Exception):
+            sess.run(["audio"], feed)
+        return sess
+
+    def warmup_all(self, paths: list[Path]) -> None:
+        """Warm a batch of models. Costs ~600 ms per model. Useful at engine
+        startup when `eager_warmup` is enabled."""
+        for p in paths:
+            self.warmup(p)
+
+    def evict_all(self) -> None:
+        with self._lock:
+            self._cache.clear()
+            self._access_order.clear()
+
+
 class RealtimeEngine:
     """Owns the 3 ONNX sessions and a worker thread that loops mic→infer→sink."""
 
@@ -237,6 +345,11 @@ class RealtimeEngine:
         self._is_half: bool = False
         self._cv_input_dtype: str = "tensor(float)"
         self._rmvpe_input_dtype: str = "tensor(float)"
+        # v0.5.0: each RVC voice ONNX has its own native output rate
+        # (16k for amitaro, 40k for most v2 voices, 32k/48k for some).
+        # Probed at session load by running a known-length forward pass.
+        # Default 16k matches the amitaro-only assumption v0.4.x baked in.
+        self._rvc_output_sr: int = 16_000
 
         # Active embedder mode after _ensure_sessions(). Either "onnx" or
         # "fairseq" — falls back from "fairseq" to "onnx" automatically if
@@ -244,23 +357,28 @@ class RealtimeEngine:
         self.active_embedder: str = "onnx"
         self._fairseq: _FairseqEmbedder | None = None
 
-        # SOLA streaming state (Phase B). At 16 kHz: a rolling buffer of
-        # past mic input that we prepend to each new chunk before running
-        # the model, plus a SOLAStream that crossfades consecutive outputs.
+        # SOLA streaming state (Phase B). v0.5.0 fix: SOLA operates at the
+        # OUTPUT rate (model_sr — varies per voice: 16k for amitaro, 40k for
+        # most v2 voices, 32k/48k for some). Input history stays at 16 kHz
+        # because contentvec/rmvpe always take 16 kHz audio. Two SOLAConfigs:
+        # `_sola_input_cfg` sizes the input history (16 kHz);
+        # `_sola_output_cfg` runs the actual crossfade (model_sr, rebuilt on swap).
         from audio.sola import SOLAConfig, SOLAStream
 
-        self._sola_cfg = SOLAConfig(
+        self._sola_input_cfg = SOLAConfig(
             rate=16_000,
             crossfade_ms=self.cfg.sola_crossfade_ms,
             search_ms=self.cfg.sola_search_ms,
             context_ms=self.cfg.sola_context_ms,
         )
         self._sola: SOLAStream | None = (
-            SOLAStream(self._sola_cfg) if self.cfg.sola_enabled else None
+            SOLAStream(self._sola_input_cfg) if self.cfg.sola_enabled else None
         )
-        # Past-input buffer at 16 kHz (zero-padded on first call).
+        # Past-input buffer at 16 kHz (zero-padded on first call). Sized
+        # against the input-side SOLAConfig so the math doesn't change when
+        # we swap to a higher-rate output model.
         self._input_history: NDArrayF32 = np.zeros(
-            self._sola_cfg.context_samples + self._sola_cfg.crossfade_samples,
+            self._sola_input_cfg.context_samples + self._sola_input_cfg.crossfade_samples,
             dtype=np.float32,
         )
 
@@ -271,6 +389,12 @@ class RealtimeEngine:
         # Promoted so _maybe_swap can flush the SOLA tail through the same
         # pacat process the worker already owns.
         self._pacat_proc: subprocess.Popen[bytes] | None = None
+
+        # v0.5.0 session pool — shared cache so swap = pointer swap.
+        self._rvc_pool = RvcSessionPool(max_size=self.cfg.session_pool_size)
+        # Probed `model_sr` per voice path so we don't redo the probe each
+        # swap. Keys are resolved Paths.
+        self._rvc_sr_cache: dict[Path, int] = {}
 
     # ---- model loading ------------------------------------------------------
 
@@ -289,8 +413,9 @@ class RealtimeEngine:
             self._rmvpe = _make_session(rmvpe_path)
             self._rmvpe_input_dtype = self._rmvpe.get_inputs()[0].type
         if self._rvc is None:
-            self._rvc = _make_session(self.cfg.rvc_model)
+            self._rvc = self._rvc_pool.get_or_create(self.cfg.rvc_model)
             self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
+            self._rvc_output_sr = self._cached_rvc_sr(Path(self.cfg.rvc_model))
 
         # Resolve embedder mode. ONNX is the default; "fairseq" is opt-in via
         # config and degrades gracefully when the package isn't installed.
@@ -324,6 +449,88 @@ class RealtimeEngine:
         cand = fp32_path.with_name(fp32_path.stem + "-fp16" + fp32_path.suffix)
         return cand if cand.exists() else fp32_path
 
+    def _probe_rvc_output_sr(self) -> int:
+        """Run one forward pass through the loaded RVC session to measure its
+        native output sample rate.
+
+        The output of an RVC v2 ONNX is `(N_out,)` audio at the model's
+        training rate (16 kHz for amitaro v2_16k, 40 kHz for most v2 voices,
+        32 kHz / 48 kHz for some). The convert.py exporter stamps the rate
+        into ONNX `custom_metadata_map["metadata"]` as JSON, but reading
+        that is brittle — different exporters use different keys. Probing
+        is bulletproof: feed a known-length input, count output samples.
+
+        Costs ~20 ms once at session load. Worth it.
+        """
+        assert self._rvc is not None
+        # Feed a 1 s feats window (50 frames after 2x upsample = 100 frames),
+        # measure output. Feats dim from the RVC input shape.
+        feats_dim = 768
+        try:
+            shape = self._rvc.get_inputs()[0].shape
+            if len(shape) >= 3 and isinstance(shape[2], int):
+                feats_dim = shape[2]
+        except (IndexError, ValueError):
+            pass
+        # 1 s of audio at 16 kHz contentvec = 50 frames. Upsample 2x = 100.
+        n_frames = 100
+        feats_dummy = np.zeros((1, n_frames, feats_dim), dtype=np.float32)
+        feats_dtype = np.float16 if self._is_half else np.float32
+        feed: dict[str, np.ndarray] = {  # type: ignore[type-arg]
+            "feats": feats_dummy.astype(feats_dtype),
+            "p_len": np.array([n_frames], dtype=np.int64),
+            "pitch": np.zeros((1, n_frames), dtype=np.int64),
+            "pitchf": np.zeros((1, n_frames), dtype=np.float32),
+            "sid": np.array([0], dtype=np.int64),
+        }
+        try:
+            out = self._rvc.run(["audio"], feed)[0]
+        except Exception:
+            # Probe failed (model likely doesn't take pitch/pitchf — nono variant).
+            # Fall back to 16 kHz; the engine will still work, just possibly chipmunk.
+            return 16_000
+        n_out = int(np.asarray(out).size)
+        # Output for 1 s of feats input ≈ 1 s of audio at the model rate.
+        # Round to the nearest known RVC training rate.
+        for sr in (16_000, 22_050, 24_000, 32_000, 40_000, 44_100, 48_000):
+            if abs(n_out - sr) < sr * 0.05:
+                return sr
+        # Unknown rate — best effort, treat the raw count as Hz.
+        return n_out
+
+    def _cached_rvc_sr(self, path: Path) -> int:
+        """Probe and remember the model's output sample rate.
+
+        Side-effect: recreates `self._sola` at the new rate so the
+        crossfade-window math matches the actual output samples.
+        """
+        key = Path(path).resolve()
+        if key in self._rvc_sr_cache:
+            sr = self._rvc_sr_cache[key]
+        else:
+            sr = self._probe_rvc_output_sr()
+            self._rvc_sr_cache[key] = sr
+        self._rebuild_sola_for_rate(sr)
+        return sr
+
+    def _rebuild_sola_for_rate(self, model_sr: int) -> None:
+        """Recreate the output-side SOLAStream for the given rate. Idempotent —
+        no-op when the rate is unchanged."""
+        from audio.sola import SOLAConfig, SOLAStream
+
+        if not self.cfg.sola_enabled:
+            self._sola = None
+            return
+        if self._sola is not None and self._sola.cfg.rate == model_sr:
+            return
+        out_cfg = SOLAConfig(
+            rate=model_sr,
+            crossfade_ms=self.cfg.sola_crossfade_ms,
+            search_ms=self.cfg.sola_search_ms,
+            context_ms=self.cfg.sola_context_ms,
+        )
+        self._sola = SOLAStream(out_cfg)
+
     def reload_rvc(self, path: Path) -> None:
         """Hot-swap the RVC voice model — synchronous, thread-unsafe.
 
@@ -331,9 +538,46 @@ class RealtimeEngine:
         worker; this function is kept for tests + offline use only.
         """
         self.cfg.rvc_model = path
-        self._rvc = _make_session(path)
+        self._rvc = self._rvc_pool.get_or_create(path)
         self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
+        self._rvc_output_sr = self._cached_rvc_sr(Path(path))
         self.reset_streaming_state()
+
+    def warmup_voice_library(self, voice_paths: list[Path] | None = None) -> int:
+        """Eagerly load + cudnn-warm every cached voice. Returns count warmed.
+
+        If `voice_paths` is None, walks the user's models dir and warms
+        every `.onnx` that doesn't look like a foundation file. Costs
+        ~600 ms per voice on RTX 2070; subsequent swaps to any of those
+        voices are pointer swaps (~10 ms total).
+        """
+        if voice_paths is None:
+            foundations = {
+                "rmvpe.onnx", "rmvpe-fp16.onnx",
+                "rmvpe_wrapped.onnx", "rmvpe_wrapped-fp16.onnx",
+                "contentvec-f.onnx", "contentvec-f-fp16.onnx",
+                "hubert_base.onnx",
+            }  # fmt: skip
+            voice_paths = sorted(p for p in MODELS_DIR.glob("*.onnx") if p.name not in foundations)
+        for p in voice_paths:
+            self._rvc_pool.warmup(p)
+            # Also probe + cache the SR for each.
+            with contextlib.suppress(Exception):
+                self._rvc_sr_cache[p.resolve()] = self._probe_sr_for(p)
+        return len(voice_paths)
+
+    def _probe_sr_for(self, path: Path) -> int:
+        """Probe the model's output SR via the pool (so the session is cached)."""
+        sess = self._rvc_pool.get_or_create(path)
+        prev_rvc = self._rvc
+        prev_is_half = self._is_half
+        self._rvc = sess
+        self._is_half = sess.get_inputs()[0].type != "tensor(float)"
+        try:
+            return self._probe_rvc_output_sr()
+        finally:
+            self._rvc = prev_rvc
+            self._is_half = prev_is_half
 
     def request_model_swap(self, path: Path) -> None:
         """Thread-safe: queue a model swap for the worker to pick up at the
@@ -355,18 +599,21 @@ class RealtimeEngine:
             return
         # Drain SOLA's held-back tail through pacat so the last ~50 ms of
         # the *old* voice plays out before the new session takes over.
+        # Tail is at the OLD model's output rate, not necessarily 16 kHz.
         if self._sola is not None and self._pacat_proc is not None:
             with contextlib.suppress(Exception):
-                tail16 = self._sola.flush()
-                if tail16.size > 0 and self._pacat_proc.stdin is not None:
-                    tail48 = _resample_linear(tail16, 16_000, self.cfg.sink_rate)
+                tail = self._sola.flush()
+                if tail.size > 0 and self._pacat_proc.stdin is not None:
+                    tail48 = _resample_linear(tail, self._rvc_output_sr, self.cfg.sink_rate)
                     self._pacat_proc.stdin.write(tail48.tobytes())
                     self._pacat_proc.stdin.flush()
         # Replace the session. Existing _cv (contentvec) and _rmvpe stay
         # — they're foundation models, not voice-specific.
+        # v0.5.0: pool-cached. Cache hit ≈ 10 ms; cache miss ≈ 600 ms.
         self.cfg.rvc_model = target
-        self._rvc = _make_session(target)
+        self._rvc = self._rvc_pool.get_or_create(target)
         self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
+        self._rvc_output_sr = self._cached_rvc_sr(target)
         self.reset_streaming_state()
 
     # ---- inference ----------------------------------------------------------
@@ -438,8 +685,9 @@ class RealtimeEngine:
         emitted chunk (assuming the same SOLA stream). Output length is
         approximately equal to the input length once warmed up.
         """
-        cf = self._sola_cfg.crossfade_samples
-        ctx = self._sola_cfg.context_samples
+        # Input-side sizing always uses the 16 kHz config (mic input rate).
+        cf = self._sola_input_cfg.crossfade_samples
+        ctx = self._sola_input_cfg.context_samples
         history_len = ctx + cf
 
         # Build model input: last (ctx + cf) of input history + the new chunk.
@@ -474,7 +722,7 @@ class RealtimeEngine:
         """Clear SOLA + input history so the engine can resume cleanly after a
         stop / start without leaking stale tail from a previous session."""
         self._input_history = np.zeros(
-            self._sola_cfg.context_samples + self._sola_cfg.crossfade_samples,
+            self._sola_input_cfg.context_samples + self._sola_input_cfg.crossfade_samples,
             dtype=np.float32,
         )
         if self._sola is not None:
@@ -487,6 +735,11 @@ class RealtimeEngine:
             return
         self._stop_event.clear()
         self._ensure_sessions()
+        # v0.5.0: optionally pre-warm every voice so swaps are instant from
+        # the first press of `p`. Costs ~6 s for a 10-voice library.
+        if self.cfg.eager_warmup:
+            n = self.warmup_voice_library()
+            print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
         self.stats.running = True
         self._thread = threading.Thread(target=self._run_loop, name="vcclient-engine", daemon=True)
         self._thread.start()
@@ -574,14 +827,18 @@ class RealtimeEngine:
                     # `sola_enabled=False`, _process_streaming_16k still routes
                     # the model call through the history buffer but skips the
                     # crossfade — useful for A/B perf comparisons.
-                    out16 = self._process_streaming_16k(audio16)
+                    out_native = self._process_streaming_16k(audio16)
                     inf_ms = (time.perf_counter() - t_inf) * 1000
 
-                    if out16.shape[0] == 0:
+                    if out_native.shape[0] == 0:
                         # First-chunk warmup may emit nothing; skip the write.
                         continue
 
-                    out48 = _resample_linear(out16, 16_000, self.cfg.sink_rate)
+                    # `out_native` is at the loaded RVC model's native sample
+                    # rate (16k for amitaro, 40k for most v2 voices, etc.).
+                    # Resample from THAT rate to the sink rate. v0.4.x bug
+                    # was treating every voice as 16 kHz output.
+                    out48 = _resample_linear(out_native, self._rvc_output_sr, self.cfg.sink_rate)
 
                     # Primary output → VCClientCachySink via pacat.
                     if pacat_proc.poll() is not None:
@@ -615,11 +872,12 @@ class RealtimeEngine:
         finally:
             # Flush SOLA's held-back tail through to the sink before tearing
             # down the subprocess — otherwise the last ~50 ms of audio is lost.
+            # Tail samples are at the RVC model's native rate.
             if self._sola is not None and pacat_proc is not None:
                 with contextlib.suppress(Exception):
-                    tail16 = self._sola.flush()
-                    if tail16.size > 0 and pacat_proc.stdin is not None:
-                        tail48 = _resample_linear(tail16, 16_000, self.cfg.sink_rate)
+                    tail = self._sola.flush()
+                    if tail.size > 0 and pacat_proc.stdin is not None:
+                        tail48 = _resample_linear(tail, self._rvc_output_sr, self.cfg.sink_rate)
                         pacat_proc.stdin.write(tail48.tobytes())
                         pacat_proc.stdin.flush()
             if monitor_stream is not None:

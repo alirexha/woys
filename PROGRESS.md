@@ -2,6 +2,22 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## v0.5.0 — Voice quality + fast swap (2026-05-04)
+
+The chipmunk bug, fixed. v0.4.x treated every voice's output as 16 kHz; the
+character voices natively output 32 / 40 / 48 kHz, so playback was 2-3× too
+fast. Engine now probes per-voice output rate at session load and routes
+the resample correctly. SOLA crossfade is rate-aware too.
+
+Plus: `RvcSessionPool` (cache hit = 30 µs pointer swap, cache miss = ~600 ms),
+async socket protocol with JOB ids (kills the 7 s TimeoutError class),
+profile/model sync (`profile=-` regression fixed), TUI swap UX (loading
+spinner, queued swaps), real-audio QA harness with per-voice output WAVs.
+
+All 9 voices: warm inference 29-33 ms, output duration matches input within
+±5 % for 3 s test phrase, hot-swap < 1 s cached / ~610 ms cold. Per-voice
+quality table: `docs/v0_5_0_quality_report.md`.
+
 ## v0.4.1 — Model-switch P0 bugfix (2026-05-04)
 
 Critical UX bug found during voice library QA: `models use` and TUI `p` key
