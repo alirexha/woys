@@ -11,6 +11,12 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 - `tests/test_environment.py` (4/4 passing on host).
 - `docs/00-recon.md` — 813-line reconnaissance of upstream `w-okada/voice-changer`. Identified hot path (9 files), 8 non-RVC engines for removal, ~22k LOC reduction target, and proposed `src/server/` layout for Phase 1.
 
+### Phase 4 — Packaging
+- `install.sh` — user-local installer. Creates `~/.local/share/vcclient-cachy/{venv,models}`, installs deps (auto-fetches `uv` if missing), symlinks `~/.local/bin/vcclient-cachy`, registers + enables `vcclient-cachy-mic.service`. Pre-flight checks PipeWire and warns on missing nvidia-smi. Flags: `--skip-models`, `--no-systemd`.
+- `uninstall.sh` — reverses install.sh. Stops and removes systemd unit, tears down the PipeWire mic via `vcclient-cachy pw teardown`, removes launcher symlink. `--keep-models` preserves the ~1 GiB ONNX cache. Always preserves user config at `~/.config/vcclient-cachy/`.
+- `pkg/PKGBUILD` — AUR-ready Arch package: deps (`pipewire`, `pipewire-pulse`, `pipewire-alsa`, `nvidia-utils`, `python>=3.11`), system-wide install via wheel + `python-installer`, ships license preserving upstream attribution and the systemd user unit. Not published to AUR (Q8: GitHub only).
+- Verified: install.sh round-trips cleanly. After install, `vcclient-cachy info`, `pw status`, and the systemd unit all work; `uninstall.sh --keep-models` removes everything except the model cache and config.
+
 ### Phase 3 — TUI + control surface
 - `src/audio/engine.py` — `RealtimeEngine` wraps the proven Phase 1 inference path in a sounddevice mic→infer→sink worker thread. ORT sessions lazy-load on first start; `process_chunk_16k` returns a `(N,) float32` audio buffer. Live verified: starts, processes chunks, stops cleanly with no errors.
 - `src/tui/app.py` — Textual TUI: toggle (`t`), pitch +/- (`+`/`-`/`0`), save (`s`), quit (`q`). Status + latency panels + input level meter, polled every 250 ms.
