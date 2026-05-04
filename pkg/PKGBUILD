@@ -8,7 +8,9 @@ pkgrel=1
 pkgdesc='Linux-native real-time voice changer (RVC + ONNX + PipeWire) — fork of w-okada/voice-changer'
 arch=('x86_64')
 url='https://github.com/alirexha/vcclient-cachy'
-license=('MIT')
+# Mixed license: proprietary (All Rights Reserved) for original work,
+# MIT for the upstream-derived src/server/ subtree. See NOTICE.
+license=('custom' 'MIT')
 
 # We rely on the user's NVIDIA driver — `cuda` itself is pulled in by Python's
 # bundled `nvidia-cuda-runtime-cu12` wheels, so we don't depend on the system
@@ -53,8 +55,11 @@ package() {
     install -Dm644 pkg/vcclient-cachy-mic.service \
         "$pkgdir/usr/lib/systemd/user/vcclient-cachy-mic.service"
 
-    # License + attribution.
+    # License + attribution. Both files are required: LICENSE governs the
+    # original work (proprietary), LICENSE.upstream-w-okada governs the
+    # src/server/ subtree (MIT). NOTICE establishes the boundary.
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 NOTICE  "$pkgdir/usr/share/licenses/$pkgname/NOTICE"
     install -Dm644 upstream/LICENSE \
         "$pkgdir/usr/share/licenses/$pkgname/LICENSE.upstream-w-okada" 2>/dev/null || true
 
