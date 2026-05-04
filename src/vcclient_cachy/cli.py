@@ -40,6 +40,26 @@ def build_parser() -> argparse.ArgumentParser:
     pw_sub.add_parser("teardown", help="remove vcclient-mic and the sink")
     pw_sub.add_parser("status", help="report whether the mic is currently loaded")
 
+    run = sub.add_parser("run", help="launch the TUI engine controller")
+    run.add_argument(
+        "--no-pw-setup",
+        action="store_true",
+        help="skip the auto-creation of vcclient-mic (use pavucontrol manually)",
+    )
+    run.add_argument(
+        "--autostart",
+        action="store_true",
+        help="start the engine immediately on TUI launch",
+    )
+
+    sub.add_parser("toggle", help="toggle a running TUI's engine on/off")
+    sub.add_parser("status", help="ask a running TUI for its status")
+    pitch_p = sub.add_parser(
+        "pitch",
+        help="bump pitch shift in a running TUI (e.g. `vcclient-cachy pitch +2`)",
+    )
+    pitch_p.add_argument("delta", help="signed integer or `0` to reset")
+
     return parser
 
 
@@ -128,6 +148,26 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_pw_teardown()
         if args.pw_cmd == "status":
             return cmd_pw_status()
+    if args.cmd == "run":
+        from tui.app import run_tui
+
+        return run_tui(no_pw_setup=args.no_pw_setup, autostart=args.autostart)
+    if args.cmd in ("toggle", "status", "pitch"):
+        from tui.control import send_command
+
+        if args.cmd == "toggle":
+            print(send_command("TOGGLE"))
+        elif args.cmd == "status":
+            print(send_command("STATUS"))
+        else:  # pitch
+            delta = args.delta.lstrip("+") if args.delta.startswith("+") else args.delta
+            try:
+                int(delta)
+            except ValueError:
+                print(f"error: pitch must be an integer (got {args.delta!r})", file=sys.stderr)
+                return 2
+            print(send_command(f"PITCH {delta}"))
+        return 0
     parser.print_help()
     return 0
 

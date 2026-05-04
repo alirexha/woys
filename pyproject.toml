@@ -42,6 +42,13 @@ dependencies = [
     "dataclasses-json>=0.6",
     "tqdm>=4.66",
     "psutil>=6",
+    # TUI + config + IPC
+    "textual>=0.85",
+    "rich>=13.9",
+    "tomli-w>=1.0",
+    "dasbus>=1.7",
+    # Audio I/O
+    "sounddevice>=0.5",
 ]
 
 [project.optional-dependencies]
@@ -60,6 +67,8 @@ fairseq = ["fairseq>=0.12"]
 # pyworld is only needed for harvest/dio f0 detectors (RMVPE/Crepe/Fcpe don't
 # need it). Optional — installs C extensions, sometimes painful.
 worldpitch = ["pyworld>=0.3.4"]
+# evdev is opt-in for the global hotkey (CS2/VAC users should stay off).
+evdev = ["evdev>=1.7"]
 
 [project.scripts]
 vcclient-cachy = "vcclient_cachy.cli:main"

@@ -8,8 +8,8 @@ Live tracking of phase status. Updated continuously during autonomous execution.
 | 0 | Recon — clone + map upstream | ✅ done |
 | 1 | Lean Core — RVC-only ONNX server | ✅ done — 36.65 ms mean GPU e2e (target <80) |
 | 2 | PipeWire integration + persistent vcclient-mic | ✅ done — round-trip + idempotency |
-| 3 | TUI + D-Bus toggle | in progress |
-| 4 | PKGBUILD + install/uninstall | pending |
+| 3 | TUI + IPC toggle (Unix socket; D-Bus deferred to Phase 5) | ✅ done |
+| 4 | PKGBUILD + install/uninstall | in progress |
 | 5 | Performance tuning | pending |
 | 6 | ELI5 docs | pending |
 | 7 | Retrospective + project the project notes + QA script | pending |
