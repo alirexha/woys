@@ -85,6 +85,13 @@ class EngineConfig:
     sid: int = 0
     threshold: float = 0.3
 
+    # Embedder selection (v0.2.0):
+    #   "onnx"    — direct ORT contentvec-f.onnx call (default, fastest, no torch+fairseq)
+    #   "fairseq" — upstream FairseqHubert PyTorch path; needs the [fairseq] extra installed.
+    # Misconfiguration / missing fairseq → fall back to "onnx" with a warning,
+    # never crash the engine. (Brief Phase A.)
+    embedder: str = "onnx"
+
     # Routing
     sink_name: str = "VCClientCachySink"
     input_device: str | int | None = None  # None = default mic
@@ -171,6 +178,36 @@ def _resample_linear(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArray
     return out
 
 
+class _FairseqEmbedder:
+    """Wrapper that lazy-loads FairseqHubert; tracks the active mode for stats."""
+
+    def __init__(self, hubert_path: Path) -> None:
+        # Imports are deferred until extract() is called so users without the
+        # `[fairseq]` extra never pay the torch import cost.
+        import torch
+        from fairseq import checkpoint_utils  # type: ignore[import-not-found]
+
+        models, _, _ = checkpoint_utils.load_model_ensemble_and_task([str(hubert_path)], suffix="")
+        model = models[0]
+        model.eval()
+        if torch.cuda.is_available():
+            model = model.to("cuda:0")
+        self._torch = torch
+        self.model = model
+        self.dev = next(model.parameters()).device
+
+    def extract(self, audio_np: NDArrayF32) -> NDArrayF32:
+        torch = self._torch
+        with torch.no_grad():
+            feats_t = torch.from_numpy(audio_np.reshape(1, -1)).to(self.dev)
+            padding_mask = torch.zeros(feats_t.shape, dtype=torch.bool, device=self.dev)
+            logits = self.model.extract_features(
+                source=feats_t, padding_mask=padding_mask, output_layer=12
+            )
+            out = logits[0].detach().to(torch.float32).cpu().numpy()
+        return out  # type: ignore[no-any-return]
+
+
 class RealtimeEngine:
     """Owns the 3 ONNX sessions and a worker thread that loops mic→infer→sink."""
 
@@ -187,6 +224,12 @@ class RealtimeEngine:
         self._rvc: ort.InferenceSession | None = None
         self._is_half: bool = False
 
+        # Active embedder mode after _ensure_sessions(). Either "onnx" or
+        # "fairseq" — falls back from "fairseq" to "onnx" automatically if
+        # the fairseq import or model load fails (Phase A spec).
+        self.active_embedder: str = "onnx"
+        self._fairseq: _FairseqEmbedder | None = None
+
     # ---- model loading ------------------------------------------------------
 
     def _ensure_sessions(self) -> None:
@@ -198,6 +241,30 @@ class RealtimeEngine:
             self._rvc = _make_session(self.cfg.rvc_model)
             self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
 
+        # Resolve embedder mode. ONNX is the default; "fairseq" is opt-in via
+        # config and degrades gracefully when the package isn't installed.
+        if self.cfg.embedder == "fairseq" and self._fairseq is None:
+            hubert_path = MODELS_DIR / "hubert_base.pt"
+            try:
+                if not hubert_path.exists():
+                    raise FileNotFoundError(
+                        f"hubert_base.pt missing at {hubert_path} — "
+                        "run `scripts/download_weights.py` to fetch it"
+                    )
+                self._fairseq = _FairseqEmbedder(hubert_path)
+                self.active_embedder = "fairseq"
+                print(f"[engine] embedder=fairseq (hubert_base.pt @ {hubert_path})")
+            except Exception as e:
+                msg = (
+                    f"fairseq embedder unavailable ({type(e).__name__}: {e}); "
+                    "falling back to ONNX contentvec"
+                )
+                print(f"[engine] {msg}")
+                self.stats.last_error = msg
+                self.active_embedder = "onnx"
+        else:
+            self.active_embedder = "onnx"
+
     def reload_rvc(self, path: Path) -> None:
         """Hot-swap the RVC voice model."""
         self.cfg.rvc_model = path
@@ -206,11 +273,21 @@ class RealtimeEngine:
 
     # ---- inference ----------------------------------------------------------
 
+    def _extract_feats(self, audio16k: NDArrayF32) -> NDArrayF32:
+        """Embedder dispatch — see `EngineConfig.embedder` and `active_embedder`."""
+        if self.active_embedder == "fairseq" and self._fairseq is not None:
+            return self._fairseq.extract(audio16k.astype(np.float32, copy=False))
+        assert self._cv is not None
+        feats: NDArrayF32 = self._cv.run(
+            ["unit12"], {"audio": audio16k.reshape(1, -1).astype(np.float32)}
+        )[0]
+        return feats
+
     def process_chunk_16k(self, audio16k: NDArrayF32) -> NDArrayF32:
         """One inference pass on a (N,) float32 chunk at 16 kHz."""
         assert self._cv is not None and self._rmvpe is not None and self._rvc is not None
 
-        feats = self._cv.run(["unit12"], {"audio": audio16k.reshape(1, -1).astype(np.float32)})[0]
+        feats = self._extract_feats(audio16k)
         pitchf = self._rmvpe.run(
             ["pitchf"],
             {

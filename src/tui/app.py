@@ -105,6 +105,7 @@ class VCClientApp(App[int]):
                 sink_name=self.cfg.sink_name,
                 monitor=self.cfg.monitor,
                 output_latency_ms=self.cfg.output_latency_ms,
+                embedder=self.cfg.embedder,
             )
         )
         self.no_pw_setup = no_pw_setup

@@ -29,6 +29,7 @@ class AppConfig:
     sink_name: str = "VCClientCachySink"  # explicit target — must match systemd unit
     monitor: bool = False  # play transformed audio to default output too (self-monitor)
     output_latency_ms: int = 30  # pacat playback latency request
+    embedder: str = "onnx"  # "onnx" (default, no torch) or "fairseq" (heavy fallback)
     autostart_engine: bool = False
     enable_dbus: bool = True  # reserved for future D-Bus wiring (currently unused)
     enable_evdev_hotkey: bool = False

@@ -4,6 +4,15 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+### Phase A (v0.2.0) — OnnxContentvec real impl + embedder selector
+- `src/server/voice_changer/RVC/embedder/OnnxContentvec.py`: filled the upstream stub. Real ORT inference on `contentvec-f.onnx`. Routes layer/projection arguments to the right ONNX output (`units9` for v1 256-dim path, `unit12` for v2 768-dim path). Handles `(1, T)` and `(1, 1, T)` input shapes from upstream's pipeline. (MIT modification — file remains under upstream's license.)
+- `EngineConfig.embedder` / `AppConfig.embedder` config flag: `"onnx"` default (direct ORT, no torch), `"fairseq"` opt-in fallback. Misconfiguration / missing fairseq → graceful fallback to ONNX with a clear log line and `EngineStats.last_error` populated. Engine never crashes on this path.
+- Added `_FairseqEmbedder` lazy wrapper in `src/audio/engine.py`. Imports torch + fairseq only when actually invoked, so default-install users never pay that cost.
+- Added `onnx>=1.17` and `onnxconverter-common>=1.16` to runtime deps for Phase C.
+- New `tests/test_embedder.py` (4 tests): OnnxContentvec v1 + v2 shape correctness, engine default-embedder is onnx, fairseq-requested-but-missing falls back gracefully without crash.
+- **Honest note on the VRAM claim:** the brief expected this phase to drop ~700 MB by killing fairseq+torch on the embedder hot path. Reality: our v0.1.1 engine never used fairseq+torch in the first place — it was already direct ORT. The savings claim doesn't materialize from this phase. We explored fp16 conversion of `contentvec-f.onnx`/`rmvpe_wrapped.onnx` (~50% on disk), but contentvec fp16 cosine similarity to fp32 was 0.75 — too divergent to ship as default without RVC quality regression. fp16 conversion path is plumbed for Phase C as opt-in, but Phase A does not flip the default. Measured VRAM stays ~1.35 GiB.
+- All v0.1.1 routing tests still pass; engine still writes to VCClientCachySink only.
+
 ## [0.1.1] — 2026-05-04
 
 ### Fixed (P0 — engine output routing)

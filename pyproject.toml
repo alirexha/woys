@@ -43,6 +43,8 @@ dependencies = [
     "dataclasses-json>=0.6",
     "tqdm>=4.66",
     "psutil>=6",
+    "onnx>=1.17",  # Phase C convert subcommand (.pth → .onnx) + fp16 conversion
+    "onnxconverter-common>=1.16",
     # TUI + config + IPC
     "textual>=0.85",
     "rich>=13.9",

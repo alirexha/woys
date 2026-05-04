@@ -2,6 +2,15 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## v0.2.0 — Optimization release (in progress, 2026-05-04)
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| A | OnnxContentvec real impl + embedder config flag | ✅ done — graceful fairseq fallback |
+| B | SOLA crossfade for low-latency chunks | in progress |
+| C | Real `convert` subcommand (.pth → .onnx) | pending |
+| D | Perf verification + docs + tag v0.2.0 | pending |
+
 ## v0.1.1 — P0 routing fix (2026-05-04)
 
 After v0.1.0 was tagged, the user reported that Discord/Telegram receive
