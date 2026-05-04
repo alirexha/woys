@@ -77,8 +77,20 @@ class EngineConfig:
     # Audio I/O
     mic_rate: int = 48_000
     sink_rate: int = 48_000
-    chunk_seconds: float = 1.0  # block size at the mic rate; SOLA polish in Phase 5
+    # v0.2.0 dropped the default to 100 ms thanks to SOLA crossfade; consecutive
+    # chunks share `sola_crossfade_ms` of overlap, so seams stay inaudible at
+    # this size on continuous speech.
+    chunk_seconds: float = 0.1
     channels: int = 1
+
+    # SOLA crossfade (Phase B). Disable at your peril — without it, audible
+    # clicks at every chunk boundary when chunk_seconds is short.
+    sola_enabled: bool = True
+    sola_crossfade_ms: float = 50.0  # overlap window between consecutive chunks
+    sola_search_ms: float = 4.0  # how far to shift looking for in-phase alignment
+    # History fed to the model alongside each new chunk so the embedder /
+    # vocoder convolutions don't see edge artifacts. Brief calls this "context".
+    sola_context_ms: float = 100.0
 
     # RVC
     f0_up_key: int = 0  # semitones
@@ -230,6 +242,26 @@ class RealtimeEngine:
         self.active_embedder: str = "onnx"
         self._fairseq: _FairseqEmbedder | None = None
 
+        # SOLA streaming state (Phase B). At 16 kHz: a rolling buffer of
+        # past mic input that we prepend to each new chunk before running
+        # the model, plus a SOLAStream that crossfades consecutive outputs.
+        from audio.sola import SOLAConfig, SOLAStream
+
+        self._sola_cfg = SOLAConfig(
+            rate=16_000,
+            crossfade_ms=self.cfg.sola_crossfade_ms,
+            search_ms=self.cfg.sola_search_ms,
+            context_ms=self.cfg.sola_context_ms,
+        )
+        self._sola: SOLAStream | None = (
+            SOLAStream(self._sola_cfg) if self.cfg.sola_enabled else None
+        )
+        # Past-input buffer at 16 kHz (zero-padded on first call).
+        self._input_history: NDArrayF32 = np.zeros(
+            self._sola_cfg.context_samples + self._sola_cfg.crossfade_samples,
+            dtype=np.float32,
+        )
+
     # ---- model loading ------------------------------------------------------
 
     def _ensure_sessions(self) -> None:
@@ -284,7 +316,16 @@ class RealtimeEngine:
         return feats
 
     def process_chunk_16k(self, audio16k: NDArrayF32) -> NDArrayF32:
-        """One inference pass on a (N,) float32 chunk at 16 kHz."""
+        """One inference pass on a (N,) float32 chunk at 16 kHz.
+
+        Standalone path — used by tests and by the engine when SOLA is
+        disabled. Doesn't touch streaming state. The streaming engine path
+        goes through `_process_streaming_16k` instead.
+        """
+        return self._infer(audio16k)
+
+    def _infer(self, audio16k: NDArrayF32) -> NDArrayF32:
+        """Raw model invocation; no streaming bookkeeping."""
         assert self._cv is not None and self._rmvpe is not None and self._rvc is not None
 
         feats = self._extract_feats(audio16k)
@@ -317,6 +358,56 @@ class RealtimeEngine:
         )[0]
         result: NDArrayF32 = np.array(out).astype(np.float32).squeeze()
         return result
+
+    def _process_streaming_16k(self, new_chunk_16k: NDArrayF32) -> NDArrayF32:
+        """Streaming variant. Maintains a sliding input history so the model
+        sees overlapping content; SOLA crossfades consecutive outputs.
+
+        Returns audio at 16 kHz that's safe to concatenate with the previous
+        emitted chunk (assuming the same SOLA stream). Output length is
+        approximately equal to the input length once warmed up.
+        """
+        cf = self._sola_cfg.crossfade_samples
+        ctx = self._sola_cfg.context_samples
+        history_len = ctx + cf
+
+        # Build model input: last (ctx + cf) of input history + the new chunk.
+        model_input = np.concatenate([self._input_history, new_chunk_16k.astype(np.float32)])
+        # Update history for next call: keep the last (ctx + cf) samples of
+        # the combined buffer (these will be the leading samples next time).
+        self._input_history = model_input[-history_len:].copy()
+
+        full_out = self._infer(model_input)
+
+        # Map the trim from input space to output space proportionally —
+        # the model is roughly 1:1 in time, but RVC trims a few samples at
+        # the boundaries. Compute the per-sample ratio defensively.
+        in_len = model_input.shape[0]
+        out_len = full_out.shape[0]
+        ratio = out_len / max(in_len, 1)
+        # Drop the leading "context" portion in the model output. Keep the
+        # last `ctx_drop_out` samples as the part that overlaps with the
+        # previous emit + the new chunk's worth of audio.
+        ctx_drop_in = max(
+            history_len - cf, 0
+        )  # samples of pure history (no overlap with prev emit)
+        ctx_drop_out = round(ctx_drop_in * ratio)
+        emitted_region = full_out[ctx_drop_out:]
+
+        if self._sola is not None:
+            return self._sola.process(emitted_region)
+        # SOLA disabled — emit raw, expect chunk-boundary clicks for short chunks.
+        return emitted_region
+
+    def reset_streaming_state(self) -> None:
+        """Clear SOLA + input history so the engine can resume cleanly after a
+        stop / start without leaking stale tail from a previous session."""
+        self._input_history = np.zeros(
+            self._sola_cfg.context_samples + self._sola_cfg.crossfade_samples,
+            dtype=np.float32,
+        )
+        if self._sola is not None:
+            self._sola.reset()
 
     # ---- realtime loop ------------------------------------------------------
 
@@ -365,6 +456,9 @@ class RealtimeEngine:
         import sounddevice as sd
 
         chunk_mic = int(self.cfg.mic_rate * self.cfg.chunk_seconds)
+        # Reset SOLA buffers so a stop/start cycle doesn't leak stale audio.
+        self.reset_streaming_state()
+
         pacat_proc: subprocess.Popen[bytes] | None = None
         monitor_stream = None
         try:
@@ -400,8 +494,16 @@ class RealtimeEngine:
                     audio16 = _resample_linear(audio, self.cfg.mic_rate, 16_000)
 
                     t_inf = time.perf_counter()
-                    out16 = self.process_chunk_16k(audio16)
+                    # Streaming path uses SOLA + input history (Phase B). When
+                    # `sola_enabled=False`, _process_streaming_16k still routes
+                    # the model call through the history buffer but skips the
+                    # crossfade — useful for A/B perf comparisons.
+                    out16 = self._process_streaming_16k(audio16)
                     inf_ms = (time.perf_counter() - t_inf) * 1000
+
+                    if out16.shape[0] == 0:
+                        # First-chunk warmup may emit nothing; skip the write.
+                        continue
 
                     out48 = _resample_linear(out16, 16_000, self.cfg.sink_rate)
 
@@ -435,6 +537,15 @@ class RealtimeEngine:
             self.stats.last_error = f"{type(e).__name__}: {e}"
             self.stats.running = False
         finally:
+            # Flush SOLA's held-back tail through to the sink before tearing
+            # down the subprocess — otherwise the last ~50 ms of audio is lost.
+            if self._sola is not None and pacat_proc is not None:
+                with contextlib.suppress(Exception):
+                    tail16 = self._sola.flush()
+                    if tail16.size > 0 and pacat_proc.stdin is not None:
+                        tail48 = _resample_linear(tail16, 16_000, self.cfg.sink_rate)
+                        pacat_proc.stdin.write(tail48.tobytes())
+                        pacat_proc.stdin.flush()
             if monitor_stream is not None:
                 try:
                     monitor_stream.stop()
