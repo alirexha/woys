@@ -58,6 +58,31 @@ Residual after part 2: the controlled engine+pacat test still shows
 to a follow-up; ship the 3× improvement, let the user judge whether
 further work is warranted.
 
+**Part 3** — user reported "still has random cuts, not every second
+but randomly" after part 2. Sweep tests across
+`(chunk_seconds × output_latency_ms × prime_silence_seconds)` to
+hunt the residual:
+
+- `prime_silence_seconds` config knob added (default 0). Tested
+  values 0.0, 0.25, 0.5 at latency 300/500/1000 ms. Priming did
+  *not* help — slightly increased xruns in repeated trials, likely
+  because pacat applies its prebuf threshold to the silence and
+  trips re-buffering more often. Kept the knob for future tuning.
+- `chunk_seconds = 0.10` and `0.05` tested. Both *worse* than 0.25
+  (3.5–4.3 cuts/s vs 0.7–1.1 at 0.25 s). Smaller chunks → more
+  frequent writes → more chances for pacat-internal race
+  conditions. 0.25 s is the local minimum.
+- `sd.OutputStream(device='pipewire')` tried as a pacat-bypass.
+  Routed to default sink (laptop speakers), not WoysSink, because
+  PortAudio's ALSA host API doesn't honour `PIPEWIRE_NODE_TARGET`.
+  Would need a deeper plumbing change to use; deferred.
+
+Net: the v0.6.7-part-2 defaults are the pareto frontier for this
+backend. Residual ~1 cut/s is engine-driven jitter the playback
+backend can't fully absorb. Likely fixable only by reducing engine
+inference variance (ORT/CUDA scheduler) or switching to a non-stdin
+output path. Both are larger projects deferred to v0.7.x.
+
 Tag is held until the user confirms in Telegram.
 
 ## [0.6.6] — 2026-05-05 — Polish round: stop bleeding state across boundaries

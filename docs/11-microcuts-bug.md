@@ -184,6 +184,49 @@ stream sync or scheduler interaction. **Deferred** — already a
 Telegram before deciding whether further investigation is
 warranted.
 
+## Part 3 — sweep tests after the part-2 ship
+
+User feedback after part 2: "better but still has random cuts, not
+every second but randomly." Investigated the residual via parameter
+sweep:
+
+| chunk_s | latency_ms | prime_s | zero gaps / s |
+|---------|------------|---------|---------------|
+| 0.25    | 300        | 0.0     | 0.67–0.92     |
+| 0.25    | 300        | 0.5     | 1.15          |
+| 0.25    | 500        | 0.5     | 1.09          |
+| 0.25    | 1000       | 0.5     | 1.15          |
+| 0.10    | 300        | 0.0     | 3.49          |
+| 0.10    | 200        | 0.0     | 3.16          |
+| 0.05    | 200        | 0.0     | 4.33          |
+
+Findings:
+
+- **Priming silence didn't help** and slightly increased xruns —
+  likely pacat applies its prebuf threshold to the silence and
+  rebuffers more aggressively. `prime_silence_seconds` kept as a
+  config knob (default 0) for future backend changes.
+- **Smaller chunks made it worse.** 0.25 s is a local minimum.
+  Tighter chunks → more frequent writes → more race window
+  surface area inside pacat / pulseaudio.
+- **`sd.OutputStream(device='pipewire')`** routed to the default
+  sink (laptop speakers), not `WoysSink`. PortAudio's ALSA host
+  API doesn't propagate `PIPEWIRE_NODE_TARGET`. Would need a
+  larger plumbing change to use as the default output path.
+
+Net: ~1 zero-gap / s appears to be the floor with the current
+stdin-pipe-to-pacat output method. The bottleneck is engine inference
+variance (jitter ~30 ms std-dev) propagating into pacat's internal
+buffer accounting. Fixing that requires either:
+
+- Reducing engine variance — ORT/CUDA scheduler tuning, possibly
+  IOBinding with explicit stream control; OR
+- Replacing the stdin-pipe output path with a native PipeWire
+  Python binding (pw-python is unmaintained but viable as a
+  rewrite target).
+
+Both are v0.7.x scope, not v0.6.7.
+
 ## What was *not* fixed
 
 - Writer jitter itself (29.6 ms vs target 12.5 ms). Tightening
