@@ -864,6 +864,41 @@ class RealtimeEngine:
             self._thread.join(timeout=timeout)
         self.stats.running = False
 
+    def _assert_sink_loaded(self) -> None:
+        """v0.6.4 — refuse to start if `cfg.sink_name` isn't a loaded
+        PipeWire sink.
+
+        Without this guard, `pw-cat --target=…` and `pacat --device=…`
+        treat the named sink as a hint: if it's missing, the session
+        manager silently routes the stream to the *default* sink
+        (typically laptop speakers). The engine's playback subprocess
+        starts cleanly, exits 0, no stderr — and your transformed
+        voice plays out of the speakers instead of the virtual mic.
+        See docs/10-monitor-leak-diag.md for the full forensic trail.
+
+        If `pactl` itself is unavailable or hangs, we skip the check
+        rather than refusing to start (best-effort guard).
+        """
+        try:
+            result = subprocess.run(
+                ["pactl", "list", "short", "sinks"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return
+        if result.returncode != 0:
+            return
+        loaded = [line.split("\t")[1] for line in result.stdout.splitlines() if "\t" in line]
+        if self.cfg.sink_name not in loaded:
+            raise RuntimeError(
+                f"PipeWire sink {self.cfg.sink_name!r} is not loaded — refusing to start.\n"
+                f"  loaded sinks: {loaded}\n"
+                f"  fix: run `woys pw setup` to load the virtual sink, "
+                f"or correct `sink_name` in ~/.config/woys/config.toml."
+            )
+
     def _open_pacat(self) -> subprocess.Popen[bytes]:
         """Spawn the playback subprocess targeting the named virtual sink.
 
@@ -872,10 +907,15 @@ class RealtimeEngine:
         prebuf/tlength buffer near zero on every chunk → underrun storm).
         Falls back to pacat only if pw-cat is missing.
 
+        v0.6.4: pre-flights sink existence — see `_assert_sink_loaded`.
+        Without that guard, `--target` / `--device` silently fall back
+        to the default sink when the named sink is missing.
+
         The retained name `_open_pacat` is historical — the watchdog and
         writer threads don't care which binary is on the other side, only
         that it accepts raw float32le on stdin.
         """
+        self._assert_sink_loaded()
         if self.cfg.prefer_pw_cat:
             pw_cat = shutil.which("pw-cat")
             if pw_cat is not None:

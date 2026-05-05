@@ -22,9 +22,13 @@ Systemd:
 PipeWire:
     The user-facing SOURCE name (`vcclient-mic`) is intentionally NOT
     renamed in v0.6.0 so Discord / CS2 / Telegram don't need
-    re-configuration. The internal SINK name (`VCClientCachySink`) is
-    only consulted by the engine + new systemd unit and gets recreated
-    on next service start.
+    re-configuration. The internal SINK name DID change
+    (`VCClientCachySink` → `WoysSink`); this migrator rewrites the
+    `sink_name` key in `config.toml` accordingly so the engine targets
+    the sink that v0.6.0+ actually loads. v0.6.4 fix — without this
+    rewrite, `pw-cat --target=VCClientCachySink` silently falls back
+    to the default sink (laptop speakers) since the legacy sink no
+    longer exists. See `docs/10-monitor-leak-diag.md`.
 
 Usage:
     python3 scripts/migrate_to_woys.py [--dry-run]
@@ -44,6 +48,12 @@ from typing import Any
 
 OLD_NAME = "vcclient-cachy"
 NEW_NAME = "woys"
+
+# v0.6.4 — the v0.6.0 rename also changed the internal PipeWire sink
+# name. Configs from v0.5.x carry the legacy string and must be rewritten
+# or the engine routes playback to the default sink (laptop speakers).
+LEGACY_SINK_NAME = "VCClientCachySink"
+NEW_SINK_NAME = "WoysSink"
 
 # Anchor points relative to $HOME — overridable for tests.
 DEFAULT_HOME = Path.home()
@@ -74,14 +84,23 @@ def _move_dir(old: Path, new: Path, *, dry_run: bool, log: list[str]) -> None:
 
 
 def _rewrite_paths_in_value(value: Any) -> Any:
-    """Recursively swap '<OLD_NAME>/models/' → '<NEW_NAME>/models/' in any
-    string. Tuples/lists/dicts walked. Other types passed through."""
-    needle = f"{OLD_NAME}/models/"
-    new_needle = f"{NEW_NAME}/models/"
+    """Recursively rewrite legacy strings in any TOML value.
+
+    Two substitutions:
+      • '<OLD_NAME>/models/' → '<NEW_NAME>/models/'   (path migration)
+      • exact string LEGACY_SINK_NAME → NEW_SINK_NAME (sink rename, v0.6.4)
+
+    Tuples/lists/dicts walked. Other types passed through.
+    """
+    path_needle = f"{OLD_NAME}/models/"
+    path_replacement = f"{NEW_NAME}/models/"
     if isinstance(value, str):
-        if needle in value:
-            return value.replace(needle, new_needle)
-        return value
+        out = value
+        if path_needle in out:
+            out = out.replace(path_needle, path_replacement)
+        if out == LEGACY_SINK_NAME:
+            out = NEW_SINK_NAME
+        return out
     if isinstance(value, list):
         return [_rewrite_paths_in_value(v) for v in value]
     if isinstance(value, dict):
@@ -138,7 +157,11 @@ def _rewrite_config_toml(config_path: Path, *, dry_run: bool, log: list[str]) ->
     if rewritten == data:
         log.append("  config.toml: no path rewrites needed")
         return
-    log.append(f"  config.toml: rewrote model paths {OLD_NAME}/models/ → {NEW_NAME}/models/")
+    log.append(
+        f"  config.toml: rewrote legacy strings "
+        f"({OLD_NAME}/models/ → {NEW_NAME}/models/, "
+        f"{LEGACY_SINK_NAME} → {NEW_SINK_NAME})"
+    )
     if dry_run:
         return
     # Atomic write via .tmp + rename so a crash mid-write can't corrupt config.

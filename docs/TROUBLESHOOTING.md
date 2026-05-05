@@ -101,6 +101,41 @@ woys pw setup
 
 Also restart the app — Discord especially caches the device list at launch.
 
+## I hear my own transformed voice through laptop speakers (monitor=false)
+
+Symptom: `monitor = false` in `~/.config/woys/config.toml`, but the
+engine output is still audible on the system default sink (laptop
+speakers / headphones). Discord / CS2 also report `vcclient-mic` as
+silent.
+
+Cause: a stale `sink_name` in your config from before the v0.6.0
+rename. The internal sink was `VCClientCachySink` in v0.5.x and is
+`WoysSink` in v0.6.0+. The v0.6.0 migrator (before v0.6.4) didn't
+rewrite that key, so the engine asked `pw-cat` to play to a sink that
+no longer exists. PipeWire silently fell back to the default sink.
+
+Quickest fix:
+
+```
+# 1. stop any running woys engine first (Ctrl-C in the TUI, or:)
+pkill -f 'woys run'
+
+# 2. rewrite the sink name in your config:
+sed -i 's|sink_name = "VCClientCachySink"|sink_name = "WoysSink"|' \
+    ~/.config/woys/config.toml
+
+# 3. confirm the WoysSink module is loaded:
+woys pw status
+
+# 4. relaunch:
+woys
+```
+
+If you upgrade to v0.6.4+ and re-run `./install.sh`, the migrator does
+this rewrite for you. The engine in v0.6.4+ also pre-flights — it
+refuses to start if `sink_name` doesn't resolve to a loaded sink, so
+this failure mode can't recur silently.
+
 ## Engine starts then stops with `last_error`
 
 The engine's `EngineStats.last_error` will surface the underlying issue. Most
