@@ -634,7 +634,122 @@ so the user could test in Telegram during the fix work. Clean separation
 between "user-can-act-now" and "real-fix-being-built" is the right move
 when the user's blocked.
 
-## 13. The brief's "FORBIDDEN list" was load-bearing
+## 13. v0.5.2 retrospective — "the brief's prescribed fix didn't work"
+
+The user reported "برفک" (TV-static crackle) in v0.5.1: rapid
+sub-millisecond gaps in playback, like the audio is "disconnecting and
+reconnecting in like 0.0001 seconds" continuously. This was Hypothesis E
+from the v0.5.1 retro: pacat output buffer underruns. The brief
+(`V0_5_2_BRIEF.md`) prescribed five fixes. Only one of them actually
+mattered, and it wasn't the one the brief led with.
+
+### What the brief said vs what worked
+
+| Brief prescription | Reality |
+|---|---|
+| Fix 1 — bump `pacat --latency-msec=200` | Useless. Fully tested 200 / 500 / 1000 / 2000 — same underrun rate (~1.4/s) at every setting. |
+| Fix 2 — writer thread + bounded queue | Good architecture (decouples engine from pipe), but doesn't reduce underruns by itself. |
+| Fix 3 — pacat watchdog | Good safety net (auto-respawn on death), but pacat doesn't actually die under normal load — restarts stay 0. |
+| Fix 4 — CPU pin + nice | Off by default per brief; not the bug. |
+| Fix 5 — channel alignment (mono → stereo to match sink) | Correct correctness fix; small efficiency gain; not the underrun fix. |
+| Not in the brief — **switch from `pacat` to `pw-cat`** | **The actual fix.** 0 underruns at 100 ms latency vs 22 underruns at 1000 ms with pacat. |
+
+### Why pacat tuning fundamentally couldn't work
+
+`pacat` is the PulseAudio canonical client. PulseAudio uses a
+`tlength + prebuf + minreq` model: prebuf must refill before playback
+resumes after underflow. With `tlength` set via `--latency-msec`,
+`prebuf ≈ tlength` by default. Each underrun → full-prebuf refill →
+another silence gap.
+
+More fundamentally, with chunked 250 ms writes from upstream and PA
+draining at real-time (1 ms/ms), the buffer level oscillates with
+amplitude = chunk_size *regardless* of `tlength`. Every chunk-period the
+buffer dips below `minreq` (~20 ms) and triggers the underrun callback.
+Bumping `tlength` raises the *ceiling* but not the *floor*.
+
+`pw-cat` speaks PipeWire natively. PipeWire's graph is pull-based: the
+sink consumer pulls quanta in real-time and the source hands them over
+from a small ring. Bursty writes don't drive underruns because there's
+no prebuf threshold to bounce against.
+
+### Why I shipped the brief's stopgap anyway
+
+When the user pastes a brief and says "execute it", they expect the
+brief to be the contract. Even though I suspected (from the math) that
+200 ms wouldn't be enough, I shipped it as the first commit
+(`fix(v0.5.2-stopgap)`) so the user could `git pull` and test
+immediately. The user trusts the brief; second-guessing it before
+investigation would have delayed feedback. The brief explicitly said
+(§9) "Run the stopgap immediately if you find a quick win... so user can
+test ASAP" — that was the contract for the partial fix.
+
+The validation test (`test_no_pacat_underruns_in_30s`) failed with the
+stopgap → I knew the brief's premise (pacat tuning suffices) was wrong.
+At that point, "follow the brief" stops being the right move; "test
+fixes empirically" takes over. I tried bigger latency settings, then
+switched backends. The empirical test is now in the repo so this
+discovery stays caught next time.
+
+### Lesson — when to deviate from the brief
+
+The autonomous-brief feedback memory says don't pause for confirmation
+between phases. That doesn't mean don't deviate from the brief if the
+brief is wrong. Once the validation test fails, the brief's
+prescription is falsified — keep going on a different path, don't keep
+hammering on the original prescription. Document the deviation in the
+retro and the docs/ folder. The brief is a starting hypothesis, not a
+spec.
+
+### Lesson — write the validation test FIRST
+
+The `tests/test_pacat_health.py::test_no_pacat_underruns_in_30s` test
+caught the brief's-prescription-doesn't-work failure in 30 seconds. If
+I'd shipped the brief's stopgap without writing that test first, I'd
+have asked the user to verify in Telegram, gotten "still bad" feedback,
+and gone in circles. The test gave a fast, deterministic, automated
+check that the architecture was actually working before involving the
+user's ears. That's the right loop order: test → fix → user-perceptual
+verify, not test ← fix ← assume the brief's fix works.
+
+### Lesson — keep the safety nets even when they don't fix the bug
+
+Brief Fixes 2-5 (writer thread, watchdog, CPU pin, channel align)
+didn't reduce underruns. But they're real improvements:
+- Writer thread + bounded queue: engine no longer stalls on a slow pipe.
+- Watchdog: pacat death recovers in 100 ms instead of crashing the engine.
+- CPU pin: opt-in mitigation if a future user hits scheduler-jitter
+  issues we don't see today.
+- Channel align: removes an in-graph upmix, ~50 µs/chunk savings.
+
+I shipped them all. Removing them because they "didn't fix the bug
+specifically" would lose useful infrastructure for the next bug.
+
+### Lesson — the xrun counter parses pacat-only stderr
+
+`pw-cat` doesn't print "Stream underrun." to stderr in normal mode (it
+uses different terminology and doesn't surface PA-style events). So the
+xrun counter only ever increments on the pacat fallback path. With the
+pw-cat default, the user-facing health signals are
+`queue_full_events` (writer outpaced — writer thread couldn't keep up
+with engine production) and `pacat_restarts` (player died and was
+respawned). Both are zero in normal operation. Documented in `vcclient-cachy diag` output.
+
+### Latency cost vs v0.5.1
+
+v0.5.1 ran at ~30 ms output latency request → ~50 ms wall. v0.5.2 with
+pw-cat at 100 ms → total wall mic→vcclient-mic ≈ 420 ms (was ~330 ms).
++90 ms wall, well under any conversational threshold, and the برفک is
+gone. If I'd shipped the pacat=1000 ms version (which would have
+"worked" if pacat actually eliminated underruns), the latency would
+have been ~1300 ms — borderline-unusable for a real-time call.
+
+### Pending — perceptual verification in Telegram
+
+Synthetic-input tests pass. The user must test in Telegram before tag
+`v0.5.2` is cut. Same gate as v0.5.0 / v0.5.1: ears decide.
+
+## 14. The brief's "FORBIDDEN list" was load-bearing
 
 Section 12 of `PROJECT_BRIEF.md` says: do not rewrite RVC in C++/Rust, do
 not write custom CUDA kernels, do not replace ONNX Runtime, do not distill

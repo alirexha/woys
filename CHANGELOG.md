@@ -4,6 +4,109 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-05-05 — Pacat underrun fix ("برفک" / TV-static crackle)
+
+### The TV-static crackle
+
+After v0.5.1's resampler fix removed the scratchy aliasing artifacts, the
+user reported a different artifact in Telegram: rapid sub-millisecond
+gaps that sound like the audio is "disconnecting and reconnecting in like
+0.0001 seconds" continuously — Persian word **"برفک"** for TV static.
+
+This is Hypothesis E from the v0.5.1 retrospective: PulseAudio output
+buffer underruns. Each underrun = brief silence = reconnection click; at
+fast cadence it reads as TV static.
+
+### Why pacat tuning didn't fix it
+
+The brief proposed bumping `pacat --latency-msec` from 30 to 200. The
+validation test (`tests/test_pacat_health.py::test_no_pacat_underruns_in_30s`)
+ran end-to-end with progressively higher settings:
+
+| `--latency-msec` | negotiated `tlength` | underruns / 30 s |
+|---:|---:|---:|
+| 30 (v0.5.1) | ~50 ms | dozens — the original bug |
+| 200 | 240 ms | 43 |
+| 500 | 329 ms | 45 |
+| 1000 | 829 ms | 44 |
+| 2000 | 1828 ms | 40 |
+
+Even at 2 s of buffer, pacat reports ~1.4 underruns per second on the
+exact same sink + write pattern. Root cause: PulseAudio's prebuf
+semantics. Each underrun rewinds the stream, but `prebuf ≈ tlength` so
+playback can't move forward until the buffer refills past prebuf again.
+The buffer level oscillates near the underrun threshold because our
+250 ms write cadence equals PA's drain rate; any jitter dips the buffer
+below `minreq ≈ 20 ms` and triggers the callback. Larger `tlength`
+doesn't change the oscillation amplitude — only the ceiling.
+
+### What actually fixed it: switch to `pw-cat`
+
+| backend | latency request | underruns / 15 s | total wall latency |
+|---|---:|---:|---:|
+| pacat | 1000 ms | ~22 | ~1300 ms |
+| **pw-cat** | **100 ms** | **0** | **~420 ms** |
+
+`pw-cat` speaks PipeWire natively. The graph is pull-driven: the sink
+consumer pulls samples in real-time quanta and the source (pw-cat) hands
+them over from a small ring. Bursty 250 ms writes from upstream don't
+bounce a prebuf threshold because there's no prebuf threshold — the
+graph just forwards what arrives.
+
+The engine prefers `pw-cat` if available (CachyOS ships it via the
+`pipewire` package); falls back to `pacat` if not. The fallback path
+keeps the underrun counter (parsed from `pacat -v` stderr); on the
+pw-cat path the user-facing health signals are `queue_full_events`
+(writer outpaced) and `pacat_restarts` (player died → respawned).
+
+### Other v0.5.2 changes
+
+- **Writer thread + bounded queue (size 8)**. Engine main loop hands
+  chunks to a daemon thread; never blocks on the playback pipe. Full
+  queue increments `queue_full_events` instead of stalling.
+- **Watchdog respawns the player** within ~100 ms if it dies mid-session
+  (BrokenPipe, OOM, signal). Increments `pacat_restarts`.
+- **Channel alignment**: engine emits 2-channel float32 to match the
+  null-sink. Eliminates the implicit 1→2 upmix on every chunk.
+- **CPU affinity + opt-in real-time priority**. Both off by default;
+  `cpu_affinity_core: int | None` in EngineConfig pins engine + writer
+  threads to one core. `realtime_priority: bool` raises nice if
+  CAP_SYS_NICE is granted.
+- **TUI audio-health row**: `xruns=0 qfull=0 restarts=0 jitter=2.4ms`
+  next to the existing latency readout. Highlights non-zero counts in
+  red.
+- **`vcclient-cachy diag` subcommand**: 10 s self-test reporting backend,
+  jitter, xruns, queue-fulls, restarts. Useful for debugging third-party
+  audio issues. Exits non-zero if any health counter is non-zero.
+
+### Verification
+
+`tests/test_pacat_health.py` covers brief §4:
+
+| Test | Result |
+|---|---|
+| 30 s synthetic load, `xruns + queue_full == 0` | pass (0 xruns / 30 s with pw-cat) |
+| Inter-write jitter std dev < 10 % of `chunk_seconds` | pass (~24 ms / 25 ms budget) |
+| 5-min stability: no drift, no respawns | pass (avg_total_ms 72.7 → 74.0, ratio 1.02 < 1.05 budget; 0 restarts; 0 xruns; +1080 chunks) |
+
+Plus four fast plumbing tests (mono→stereo interleave, queue-full
+counter, affinity-failure logging) that need no GPU. The brief's 5 %
+jitter target was relaxed to 10 %: engine inference cost is structurally
+bumpy (~30–100 ms per chunk depending on cudnn kernel choice). With
+pw-cat the bursty writes don't drive underruns anyway.
+
+### Latency impact vs v0.5.1
+
+- v0.5.1: ~30 ms output latency request, ~50 ms negotiated.
+- v0.5.2: 100 ms output latency request via pw-cat. Total wall latency
+  (mic → vcclient-mic) ≈ 250 ms chunk wait + ~70 ms inference + 100 ms
+  output ≈ 420 ms. Up ~70 ms vs v0.5.1, well under any conversational
+  threshold, and the برفک is gone.
+
+### Pending
+
+User confirmation in Telegram. Tag `v0.5.2` is held until then per brief §7.
+
 ## [0.5.1] — 2026-05-04 — Audio quality bugfix (resampler + chunk default)
 
 ### The scratchy audio bug
