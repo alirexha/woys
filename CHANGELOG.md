@@ -4,6 +4,16 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-05-05 — `woys` (no args) launches the TUI
+
+Tiny ergonomic change: typing `woys` with no subcommand now launches the
+TUI with autostart, equivalent to `woys run --autostart`. The user
+expectation was "type the app name to open it" — same pattern as
+desktop launchers. `woys --help` and `woys --version` still work
+because argparse intercepts those before reaching the subcommand
+dispatch. Existing subcommands (`info`, `pw`, `models`, `profile`,
+`diag`, `convert`, `tray`, `toggle`, `pitch`, `status`) are unchanged.
+
 ## [0.6.0] — 2026-05-05 — Renamed to **woys**
 
 The project is now called **woys** (pronounced like "woyz", rhymes with
