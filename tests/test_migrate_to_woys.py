@@ -94,7 +94,8 @@ def test_migrate_rewrites_model_paths_in_config(tmp_path: Path) -> None:
 
     # Other fields preserved verbatim.
     assert data["f0_up_key"] == 0
-    assert data["sink_name"] == "VCClientCachySink"
+    # v0.6.4: legacy sink name is rewritten to the v0.6.0+ name.
+    assert data["sink_name"] == "WoysSink"
     assert data["profiles"]["default"]["_display"] == "Amitaro"
 
 
@@ -164,3 +165,65 @@ def test_migrate_partial_install(tmp_path: Path, missing: str) -> None:
 
     changed, _log = migrate(home=tmp_path)
     assert changed is True
+
+
+def test_migrate_rewrites_legacy_sink_name(tmp_path: Path) -> None:
+    """v0.6.4 — a v0.5.x config carries `sink_name = "VCClientCachySink"`
+    which v0.6.0+ doesn't load (the sink is named `WoysSink` now). Without
+    this rewrite, pw-cat falls back to the default sink and audio leaks
+    to laptop speakers. See docs/10-monitor-leak-diag.md."""
+    from migrate_to_woys import migrate
+
+    _build_old_install(tmp_path)
+    migrate(home=tmp_path)
+
+    cfg_path = tmp_path / ".config" / "woys" / "config.toml"
+    with open(cfg_path, "rb") as f:
+        data = tomllib.load(f)
+    assert data["sink_name"] == "WoysSink"
+
+
+def test_migrate_idempotent_on_already_correct_sink_name(tmp_path: Path) -> None:
+    """If a config already has `sink_name = "WoysSink"`, re-running the
+    migrator must not corrupt it."""
+    from migrate_to_woys import migrate
+
+    _build_old_install(tmp_path)
+    migrate(home=tmp_path)
+    cfg_path = tmp_path / ".config" / "woys" / "config.toml"
+    with open(cfg_path, "rb") as f:
+        first = tomllib.load(f)
+    assert first["sink_name"] == "WoysSink"
+
+    changed, _log = migrate(home=tmp_path)
+    assert changed is False
+    with open(cfg_path, "rb") as f:
+        second = tomllib.load(f)
+    assert second["sink_name"] == "WoysSink"
+
+
+def test_migrate_does_not_rewrite_unrelated_strings_containing_sink_word(
+    tmp_path: Path,
+) -> None:
+    """Rewrite must be exact-string match on `VCClientCachySink`. A free-text
+    value that merely *contains* the legacy name as a substring should not
+    be modified."""
+    from migrate_to_woys import migrate
+
+    _build_old_install(tmp_path)
+    cfg_path = tmp_path / ".config" / "vcclient-cachy" / "config.toml"
+    # Inject a top-level free-text key BEFORE the [profiles.default] section so
+    # it parses at top level, not under the profile.
+    text = cfg_path.read_text()
+    head, _, tail = text.partition("[profiles.default]")
+    cfg_path.write_text(
+        head + '_note = "fwd from old VCClientCachySink era"\n' + "[profiles.default]" + tail
+    )
+
+    migrate(home=tmp_path)
+
+    new_cfg = tmp_path / ".config" / "woys" / "config.toml"
+    with open(new_cfg, "rb") as f:
+        data = tomllib.load(f)
+    assert data["_note"] == "fwd from old VCClientCachySink era"
+    assert data["sink_name"] == "WoysSink"
