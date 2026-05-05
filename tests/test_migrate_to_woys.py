@@ -202,6 +202,46 @@ def test_migrate_idempotent_on_already_correct_sink_name(tmp_path: Path) -> None
     assert second["sink_name"] == "WoysSink"
 
 
+def test_migrate_bumps_stale_output_latency_ms(tmp_path: Path) -> None:
+    """v0.6.7 — `output_latency_ms = 30` (the v0.5.x default) makes pw-cat's
+    playback buffer too small to absorb engine writer jitter, producing
+    audible micro-cuts. v0.5.2 raised the default to 100; this migrator
+    bumps any stored value below 100 to match. See `docs/11-microcuts-bug.md`."""
+    from migrate_to_woys import migrate
+
+    _build_old_install(tmp_path)
+    cfg_path = tmp_path / ".config" / "vcclient-cachy" / "config.toml"
+    text = cfg_path.read_text()
+    head, _, tail = text.partition("[profiles.default]")
+    cfg_path.write_text(head + "output_latency_ms = 30\n[profiles.default]" + tail)
+
+    migrate(home=tmp_path)
+
+    new_cfg = tmp_path / ".config" / "woys" / "config.toml"
+    with open(new_cfg, "rb") as f:
+        data = tomllib.load(f)
+    assert data["output_latency_ms"] == 100
+
+
+def test_migrate_leaves_above_threshold_output_latency_alone(tmp_path: Path) -> None:
+    """If the user already has output_latency_ms >= 100, don't touch it
+    (preserves any explicit power-user override on the high side)."""
+    from migrate_to_woys import migrate
+
+    _build_old_install(tmp_path)
+    cfg_path = tmp_path / ".config" / "vcclient-cachy" / "config.toml"
+    text = cfg_path.read_text()
+    head, _, tail = text.partition("[profiles.default]")
+    cfg_path.write_text(head + "output_latency_ms = 250\n[profiles.default]" + tail)
+
+    migrate(home=tmp_path)
+
+    new_cfg = tmp_path / ".config" / "woys" / "config.toml"
+    with open(new_cfg, "rb") as f:
+        data = tomllib.load(f)
+    assert data["output_latency_ms"] == 250
+
+
 def test_migrate_does_not_rewrite_unrelated_strings_containing_sink_word(
     tmp_path: Path,
 ) -> None:

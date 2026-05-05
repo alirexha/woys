@@ -90,12 +90,18 @@ def _move_dir(old: Path, new: Path, *, dry_run: bool, log: list[str]) -> None:
         shutil.rmtree(old)
 
 
-def _rewrite_paths_in_value(value: Any) -> Any:
-    """Recursively rewrite legacy strings in any TOML value.
+def _rewrite_paths_in_value(value: Any, *, key: str | None = None) -> Any:
+    """Recursively rewrite legacy strings + numeric defaults in any TOML value.
 
-    Two substitutions:
+    String substitutions:
       • '<OLD_NAME>/models/' → '<NEW_NAME>/models/'   (path migration)
       • exact string LEGACY_SINK_NAME → NEW_SINK_NAME (sink rename, v0.6.4)
+
+    Numeric bumps (only fire when `key` matches a known stale-default name):
+      • output_latency_ms < 100 → 100   (v0.6.7 — pw-cat needs at least
+        100 ms to absorb engine writer jitter without underrun. Configs
+        snapshotted before v0.5.2 default-bump ship 30, which produces
+        audible micro-cuts on real-time playback.)
 
     Tuples/lists/dicts walked. Other types passed through.
     """
@@ -108,10 +114,15 @@ def _rewrite_paths_in_value(value: Any) -> Any:
         if out == LEGACY_SINK_NAME:
             out = NEW_SINK_NAME
         return out
+    if isinstance(value, bool):
+        # bool is a subclass of int — must short-circuit before the int branch.
+        return value
+    if isinstance(value, int) and key == "output_latency_ms" and value < 100:
+        return 100
     if isinstance(value, list):
         return [_rewrite_paths_in_value(v) for v in value]
     if isinstance(value, dict):
-        return {k: _rewrite_paths_in_value(v) for k, v in value.items()}
+        return {k: _rewrite_paths_in_value(v, key=k) for k, v in value.items()}
     return value
 
 
@@ -165,9 +176,10 @@ def _rewrite_config_toml(config_path: Path, *, dry_run: bool, log: list[str]) ->
         log.append("  config.toml: no path rewrites needed")
         return
     log.append(
-        f"  config.toml: rewrote legacy strings "
+        f"  config.toml: rewrote legacy values "
         f"({OLD_NAME}/models/ → {NEW_NAME}/models/, "
-        f"{LEGACY_SINK_NAME} → {NEW_SINK_NAME})"
+        f"{LEGACY_SINK_NAME} → {NEW_SINK_NAME}, "
+        "output_latency_ms < 100 → 100)"
     )
     if dry_run:
         return
