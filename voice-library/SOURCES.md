@@ -13,6 +13,7 @@ Models are NOT bundled in this repo (per `LICENSE` / brief §7). They live in `~
 | `catwoman` | Catwoman (Laura Bailey) | ✅ | <https://huggingface.co/Cauthess/CatwomanLauraBailey/resolve/main/Catwoman%20-%20Laura%20Bailey.zip> |
 | `megan_fox` | Megan Fox | ✅ | <https://huggingface.co/dragoncrack/https___www_donationalerts_com_r_crack_dragon/resolve/main/MeganFox.zip> |
 | `spongebob_persian` | SpongeBob Persian Dub (Bab Asfanji) | ✅ | <https://huggingface.co/PlushymehereJC/Spongebob_Persian_dub/resolve/main/Bab_Asfanj.zip> |
+| `jennie` | Jennie (BLACKPINK, Legacy Core 32K 230E) | ✅ | <https://huggingface.co/natanworkspace/Legacy_Core_Models/resolve/main/JENNIE_Legacy_Core1.5_32K_230E.zip> |
 
 **Removed in v0.6.2** (user opted out):
 - `alfred_pennyworth` — was at <https://huggingface.co/Homiebear/AlfredPennyworth_465e_8835s/resolve/main/AlfredPennyworth_465e_8835s.zip>
