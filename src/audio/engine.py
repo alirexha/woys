@@ -214,6 +214,13 @@ class EngineStats:
     queue_full_events: int = 0
     pacat_restarts: int = 0
     writer_jitter_ms: float = 0.0
+    # v0.6.8 — count of chunks the engine had to drop because inference
+    # raised (GPU OOM, numerical, transient ORT error). Without this,
+    # any single bad chunk crashes the entire engine; with it, we drop
+    # the chunk, leave a brief silence (SOLA tail covers most of it),
+    # and keep going. First few hits log to `last_error`; subsequent
+    # ones increment silently to avoid spamming the TUI.
+    dropped_chunks: int = 0
 
     # Rolling latency window for the TUI.
     _recent_inference: deque[float] = field(default_factory=lambda: deque(maxlen=32))
@@ -860,6 +867,36 @@ class RealtimeEngine:
         result: NDArrayF32 = np.array(out).astype(np.float32).squeeze()
         return result
 
+    def _safe_process_streaming_16k(self, audio16: NDArrayF32) -> NDArrayF32 | None:
+        """v0.6.8 — wrap `_process_streaming_16k` so a transient
+        ORT / CUDA / numerical error drops the chunk instead of killing
+        the engine.
+
+        Returns the inferred chunk, or `None` if inference failed.
+        Caller must check for `None` and skip the playback write — the
+        engine's main loop does this with `continue`.
+
+        First three failures log to `stats.last_error` with the
+        exception type + message. After that the counter increments
+        silently except for every 100th hit (to keep the diagnostic
+        line refreshing without spamming).
+
+        Pulled out of `_run_loop` so the failure path is unit-testable
+        without spinning up the full audio thread.
+        """
+        try:
+            return self._process_streaming_16k(audio16)
+        except Exception as e:
+            self.stats.dropped_chunks += 1
+            n = self.stats.dropped_chunks
+            if n <= 3:
+                self.stats.last_error = f"inference dropped chunk #{n}: {type(e).__name__}: {e}"
+            elif n % 100 == 0:
+                self.stats.last_error = (
+                    f"inference still dropping chunks (total #{n}): {type(e).__name__}: {e}"
+                )
+            return None
+
     def _process_streaming_16k(self, new_chunk_16k: NDArrayF32) -> NDArrayF32:
         """Streaming variant. Maintains a sliding input history so the model
         sees overlapping content; SOLA crossfades consecutive outputs.
@@ -1307,11 +1344,16 @@ class RealtimeEngine:
                     # `sola_enabled=False`, _process_streaming_16k still routes
                     # the model call through the history buffer but skips the
                     # crossfade — useful for A/B perf comparisons.
-                    out_native = self._process_streaming_16k(audio16)
+                    out_native = self._safe_process_streaming_16k(audio16)
                     inf_ms = (time.perf_counter() - t_inf) * 1000
 
-                    if out_native.shape[0] == 0:
-                        # First-chunk warmup may emit nothing; skip the write.
+                    if out_native is None or out_native.shape[0] == 0:
+                        # `None`: inference raised — `_safe_*` already
+                        # bumped `stats.dropped_chunks` and updated
+                        # `stats.last_error`. Skip the write; SOLA's
+                        # held-back tail covers the gap on resume.
+                        # `shape[0] == 0`: first-chunk warmup or
+                        # resampler buffer fill — emit nothing yet.
                         continue
 
                     # `out_native` is at the loaded RVC model's native sample

@@ -2,11 +2,20 @@
 
 Round-trips (load → save → load) are stable: any unknown keys present in the
 on-disk file pass through untouched.
+
+v0.6.8 — `AppConfig` defaults forward from `EngineConfig`. EngineConfig is
+the canonical source of truth for runtime parameters; AppConfig is the
+user-facing config-file shape. Without forwarding, the two drift over
+releases (LESSONS §17 — v0.6.7 shipped with `output_latency_ms = 100`
+in `AppConfig` while `EngineConfig` had been bumped to 300, so fresh
+installs reproduced the v0.6.7 micro-cut bug we'd just fixed).
 """
 
 from __future__ import annotations
 
 import contextlib
+import os
+import sys
 import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -14,34 +23,37 @@ from typing import Any
 
 import tomli_w
 
+from audio.engine import EngineConfig as _EngineConfig
+
 CONFIG_DIR = Path.home() / ".config" / "woys"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
+
+# Single shared instance — evaluated at module import. AppConfig's
+# field defaults reference attributes of this instance so a future
+# default-bump in `EngineConfig` propagates here automatically.
+_E = _EngineConfig()
 
 
 @dataclass
 class AppConfig:
     rvc_model: str = ""  # absolute path, "" = use engine default
-    f0_up_key: int = 0
-    sid: int = 0
-    # v0.5.1 raised default 0.1 → 0.25; SOLA tail-hold at 0.1 was trimming
-    # ~10 % of output duration on continuous speech. Existing config.toml
-    # files keep their saved value (TOML round-trip preserves it).
-    chunk_seconds: float = 0.25
-    mic_rate: int = 48_000
-    sink_rate: int = 48_000
-    sink_name: str = "WoysSink"  # explicit target — must match systemd unit
-    monitor: bool = False  # play transformed audio to default output too (self-monitor)
-    output_latency_ms: int = 100  # playback latency request — pw-cat default (v0.5.2: 30 → 100)
-    output_process_time_ms: int = 20  # pacat process-time granule (v0.5.2)
-    embedder: str = "onnx"  # "onnx" (default, no torch) or "fairseq" (heavy fallback)
-    # SOLA streaming params (Phase B — see src/audio/sola.py).
-    sola_enabled: bool = True
-    sola_crossfade_ms: float = 50.0
-    sola_search_ms: float = 4.0
-    sola_context_ms: float = 100.0
-    # v0.5.1: software input pre-attenuation in dB. 0.0 = passthrough.
-    # Negative values trim hot mics so RVC doesn't amplify clipping.
-    input_gain_db: float = 0.0
+    # Runtime parameters — defaults forwarded from EngineConfig.
+    f0_up_key: int = _E.f0_up_key
+    sid: int = _E.sid
+    chunk_seconds: float = _E.chunk_seconds
+    mic_rate: int = _E.mic_rate
+    sink_rate: int = _E.sink_rate
+    sink_name: str = _E.sink_name
+    monitor: bool = _E.monitor
+    output_latency_ms: int = _E.output_latency_ms
+    output_process_time_ms: int = _E.output_process_time_ms
+    embedder: str = _E.embedder
+    sola_enabled: bool = _E.sola_enabled
+    sola_crossfade_ms: float = _E.sola_crossfade_ms
+    sola_search_ms: float = _E.sola_search_ms
+    sola_context_ms: float = _E.sola_context_ms
+    input_gain_db: float = _E.input_gain_db
+    # TUI / app-only settings (not in EngineConfig).
     autostart_engine: bool = False
     enable_dbus: bool = True  # reserved for future D-Bus wiring (currently unused)
     enable_evdev_hotkey: bool = False
@@ -57,6 +69,11 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     Writing defaults on first run gives the user a discoverable place to twiddle
     options (sink_name, monitor, chunk_seconds, etc.) without having to read the
     source code first.
+
+    v0.6.8 — malformed TOML or unreadable file no longer crashes the app.
+    A clear message is printed to stderr and an in-memory `AppConfig()`
+    with EngineConfig-forwarded defaults is returned instead. The bad
+    file is left in place for the user to inspect / fix.
     """
     if not path.exists():
         cfg = AppConfig()
@@ -64,8 +81,24 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
         with contextlib.suppress(OSError):
             save_config(cfg, path)
         return cfg
-    with open(path, "rb") as f:
-        raw = tomllib.load(f)
+    try:
+        with open(path, "rb") as f:
+            raw = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        print(
+            f"[woys] {path} is malformed TOML — using in-memory defaults instead.\n"
+            f"       parse error: {e}\n"
+            f"       (the file was NOT touched; fix the syntax and re-launch)",
+            file=sys.stderr,
+        )
+        return AppConfig()
+    except OSError as e:
+        print(
+            f"[woys] cannot read {path} ({type(e).__name__}: {e}) — "
+            f"using in-memory defaults instead.",
+            file=sys.stderr,
+        )
+        return AppConfig()
     known = {f.name for f in AppConfig.__dataclass_fields__.values()} - {"_extras"}
     fields_in: dict[str, Any] = {k: raw[k] for k in known if k in raw}
     extras = {k: v for k, v in raw.items() if k not in known}
@@ -76,5 +109,12 @@ def save_config(cfg: AppConfig, path: Path = CONFIG_FILE) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {k: v for k, v in asdict(cfg).items() if not k.startswith("_")}
     data.update(cfg._extras)
-    with open(path, "wb") as f:
+    # Write atomically via .tmp + rename so a crash mid-write can't corrupt
+    # config. v0.6.8 — chmod 0600 (was inheriting umask 0644). Config can
+    # contain user paths and tuning that other local users have no business
+    # reading.
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "wb") as f:
         tomli_w.dump(data, f)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
