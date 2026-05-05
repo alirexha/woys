@@ -31,7 +31,8 @@ class AppConfig:
     sink_rate: int = 48_000
     sink_name: str = "VCClientCachySink"  # explicit target — must match systemd unit
     monitor: bool = False  # play transformed audio to default output too (self-monitor)
-    output_latency_ms: int = 30  # pacat playback latency request
+    output_latency_ms: int = 200  # pacat playback latency request (v0.5.2: 30 → 200)
+    output_process_time_ms: int = 20  # pacat process-time granule (v0.5.2)
     embedder: str = "onnx"  # "onnx" (default, no torch) or "fairseq" (heavy fallback)
     # SOLA streaming params (Phase B — see src/audio/sola.py).
     sola_enabled: bool = True
