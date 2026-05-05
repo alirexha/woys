@@ -1,4 +1,4 @@
-// vcclient-cachy mic-helper popup script.
+// woys mic-helper popup script.
 //
 // v0.4.0 deliverable: skeleton only. No API integration with the local engine
 // yet — that lands in a future release. For now this script just enumerates
@@ -37,7 +37,7 @@ async function detectVcclientMic() {
     status.classList.add("ok");
   } else {
     status.textContent =
-      "vcclient-mic not detected. Is the engine running? Run `vcclient-cachy pw status`.";
+      "vcclient-mic not detected. Is the engine running? Run `woys pw status`.";
     status.classList.add("warn");
   }
 }

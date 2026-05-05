@@ -1,13 +1,13 @@
 # Maintainer: Alireza Hamayeli <alireza.hmyl@gmail.com>
-# vcclient-cachy: Linux-native, CachyOS-optimized real-time voice changer.
+# woys: Linux-native, CachyOS-optimized real-time voice changer.
 # Fork of w-okada/voice-changer (MIT). RVC-only, ONNX Runtime CUDA, PipeWire-native, TUI.
 
-pkgname=vcclient-cachy
-pkgver=0.5.1
+pkgname=woys
+pkgver=0.6.0
 pkgrel=1
 pkgdesc='Linux-native real-time voice changer (RVC + ONNX + PipeWire) — fork of w-okada/voice-changer'
 arch=('x86_64')
-url='https://github.com/alirexha/vcclient-cachy'
+url='https://github.com/alirexha/woys'
 # Mixed license: proprietary (All Rights Reserved) for original work,
 # MIT for the upstream-derived src/server/ subtree. See NOTICE.
 license=('custom' 'MIT')
@@ -37,7 +37,7 @@ optdepends=(
 
 # A real release would point at a tag tarball; for the local install path we
 # grab the working tree.
-source=("$pkgname-$pkgver::git+https://github.com/alirexha/vcclient-cachy.git#tag=v$pkgver")
+source=("$pkgname-$pkgver::git+https://github.com/alirexha/woys.git#tag=v$pkgver")
 sha256sums=('SKIP')
 
 build() {
@@ -52,8 +52,8 @@ package() {
     python -m installer --destdir="$pkgdir" dist/*.whl
 
     # Systemd user unit for the persistent vcclient-mic.
-    install -Dm644 pkg/vcclient-cachy-mic.service \
-        "$pkgdir/usr/lib/systemd/user/vcclient-cachy-mic.service"
+    install -Dm644 pkg/woys-mic.service \
+        "$pkgdir/usr/lib/systemd/user/woys-mic.service"
 
     # License + attribution. Both files are required: LICENSE governs the
     # original work (proprietary), LICENSE.upstream-w-okada governs the
@@ -74,5 +74,5 @@ package() {
 
 # After install, the user runs:
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now vcclient-cachy-mic.service
-# Or just `vcclient-cachy run` and let it auto-create the mic on first use.
+#   systemctl --user enable --now woys-mic.service
+# Or just `woys run` and let it auto-create the mic on first use.

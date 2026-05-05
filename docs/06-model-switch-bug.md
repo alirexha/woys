@@ -5,10 +5,10 @@
 
 ## Reported symptoms
 
-1. `vcclient-cachy models use <slug>` writes config but the running engine
+1. `woys models use <slug>` writes config but the running engine
    doesn't pick it up. After TUI restart, the boot still loads Amitaro.
 2. TUI `p` keypress changes the displayed `profile:` but not the audio voice.
-3. `vcclient-cachy status` doesn't include the loaded model name anywhere.
+3. `woys status` doesn't include the loaded model name anywhere.
 
 ## Wiring trace
 
@@ -25,7 +25,7 @@ sola_crossfade_ms, sola_search_ms, sola_context_ms
 
 **`rvc_model` is NOT passed.** Therefore `EngineConfig`'s default kicks in
 (`audio/engine.py:65`: `DEFAULT_RVC_MODEL = MODELS_DIR / "amitaro_v2_16k.onnx"`).
-Whatever the user has in `~/.config/vcclient-cachy/config.toml`'s
+Whatever the user has in `~/.config/woys/config.toml`'s
 `rvc_model` field is **silently ignored** at TUI startup.
 
 This is failure #1 (post-restart): no matter what `models use` writes, the
@@ -50,11 +50,11 @@ keeps using the original RVC session.
 
 ### C. `models use` CLI — what does it write?
 
-`src/vcclient_cachy/models.py:213-229` (`cli_models_use`):
+`src/woys/models.py:213-229` (`cli_models_use`):
 
 1. Loads the on-disk config.
 2. Sets `cfg.rvc_model = str(path.resolve())`.
-3. Calls `save_config(cfg)` — writes to `~/.config/vcclient-cachy/config.toml`.
+3. Calls `save_config(cfg)` — writes to `~/.config/woys/config.toml`.
 4. Prints a "restart the engine for the change to take effect" message.
 
 It writes the config correctly. But the running engine has no IPC channel

@@ -25,7 +25,7 @@ import sys
 from collections.abc import Iterable
 from pathlib import Path
 
-MODELS_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 
 
 def _convert_one(src: Path, dst: Path, *, op_block_list: list[str] | None = None) -> int:

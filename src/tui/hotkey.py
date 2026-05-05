@@ -10,7 +10,7 @@ Setup
 - Install the optional dep: `uv pip install -e .[evdev]`
 - Add the user to the `input` group:  `sudo usermod -aG input $USER && reboot`
 - (Or: ship a `udev` rule under `pkg/udev/` granting r/w on `/dev/input/event*`
-  to the `vcclient-cachy` group; see `docs/TROUBLESHOOTING.md`.)
+  to the `woys` group; see `docs/TROUBLESHOOTING.md`.)
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import logging
 import threading
 from collections.abc import Callable
 
-logger = logging.getLogger("vcclient_cachy.hotkey")
+logger = logging.getLogger("woys.hotkey")
 
 DEFAULT_COMBO = ("KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_V")
 

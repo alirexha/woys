@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# vcclient-cachy installer — local user install (no sudo for the venv).
+# woys installer — local user install (no sudo for the venv).
 #
 # Lays down:
-#   $HOME/.local/share/vcclient-cachy/{venv,models}
-#   $HOME/.local/bin/vcclient-cachy           (symlink into the venv)
-#   $HOME/.config/systemd/user/vcclient-cachy-mic.service
+#   $HOME/.local/share/woys/{venv,models}
+#   $HOME/.local/bin/woys                     (symlink into the venv)
+#   $HOME/.local/bin/vcclient-cachy           (deprecated shim — prints warning, delegates to woys)
+#   $HOME/.config/systemd/user/woys-mic.service
+#
+# v0.6.0: detects an existing vcclient-cachy install and migrates it
+# losslessly before installing the new code (config + models + systemd
+# unit all move). The PipeWire mic name (`vcclient-mic`) is unchanged so
+# Discord / CS2 / Telegram don't need re-configuration.
 #
 # Pre-reqs (the script checks):
 #   - PipeWire + pipewire-pulse running
@@ -20,7 +26,8 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_HOME="$HOME/.local/share/vcclient-cachy"
+APP_HOME="$HOME/.local/share/woys"
+OLD_APP_HOME="$HOME/.local/share/vcclient-cachy"
 VENV="$APP_HOME/venv"
 BIN_DIR="$HOME/.local/bin"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
@@ -33,7 +40,7 @@ for arg in "$@"; do
     --skip-models) SKIP_MODELS=1 ;;
     --no-systemd)  NO_SYSTEMD=1 ;;
     -h|--help)
-        sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
+        sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
         exit 0
         ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -42,6 +49,17 @@ done
 
 say() { printf '\n[install] %s\n' "$*"; }
 fail() { printf '\n[install] error: %s\n' "$*" >&2; exit 1; }
+
+# ---- v0.6.0 migration: vcclient-cachy → woys ---------------------------------
+
+if [ -d "$OLD_APP_HOME" ] || [ -d "$HOME/.config/vcclient-cachy" ] || [ -d "$HOME/.cache/vcclient-cachy" ]; then
+    say "detected an existing vcclient-cachy install — migrating to woys…"
+    PY="$(command -v python3 || command -v python || true)"
+    if [ -z "$PY" ]; then
+        fail "python3 not found — install python before running this script"
+    fi
+    "$PY" "$REPO_DIR/scripts/migrate_to_woys.py" || fail "migration failed"
+fi
 
 # ---- pre-reqs -----------------------------------------------------------------
 
@@ -64,15 +82,28 @@ say "creating Python 3.11 venv at $VENV…"
 "$UV_BIN" python install 3.11 >/dev/null
 "$UV_BIN" venv --python 3.11 "$VENV" >/dev/null
 
-say "installing vcclient-cachy + runtime deps (this is the long step — torch + ORT-GPU)…"
+say "installing woys + runtime deps (this is the long step — torch + ORT-GPU)…"
 "$UV_BIN" pip install --python "$VENV/bin/python" -e "$REPO_DIR" >/dev/null
 "$UV_BIN" pip install --python "$VENV/bin/python" -r "$REPO_DIR/requirements.txt" >/dev/null
 
 # ---- launcher symlink ---------------------------------------------------------
 
-LINK="$BIN_DIR/vcclient-cachy"
-ln -sfn "$VENV/bin/vcclient-cachy" "$LINK"
-say "linked launcher: $LINK -> $VENV/bin/vcclient-cachy"
+LINK="$BIN_DIR/woys"
+ln -sfn "$VENV/bin/woys" "$LINK"
+say "linked launcher: $LINK -> $VENV/bin/woys"
+
+# v0.6.0 — backward-compat shim. `vcclient-cachy` keeps working but prints
+# a deprecation warning, then exec's the new binary with the same args.
+SHIM="$BIN_DIR/vcclient-cachy"
+cat > "$SHIM" <<'SHIM_EOF'
+#!/usr/bin/env bash
+# Deprecated shim — `vcclient-cachy` was renamed to `woys` in v0.6.0.
+# This wrapper will be removed in v0.7.0. Update your scripts / muscle memory.
+printf '\033[33m[deprecation]\033[0m vcclient-cachy is deprecated, use `woys` (this shim will be removed in v0.7.0)\n' >&2
+exec woys "$@"
+SHIM_EOF
+chmod +x "$SHIM"
+say "linked deprecated shim: $SHIM -> woys (delete in v0.7.0)"
 
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
@@ -93,10 +124,10 @@ fi
 # ---- systemd user unit --------------------------------------------------------
 
 if [ "$NO_SYSTEMD" -eq 0 ]; then
-    install -m 0644 "$REPO_DIR/pkg/vcclient-cachy-mic.service" "$SYSTEMD_USER_DIR/"
+    install -m 0644 "$REPO_DIR/pkg/woys-mic.service" "$SYSTEMD_USER_DIR/"
     systemctl --user daemon-reload || true
-    systemctl --user enable --now vcclient-cachy-mic.service || true
-    say "vcclient-cachy-mic.service enabled (Discord/CS2 see vcclient-mic at boot)."
+    systemctl --user enable --now woys-mic.service || true
+    say "woys-mic.service enabled (Discord/CS2 see vcclient-mic at boot)."
 else
     say "skipping systemd unit registration (--no-systemd)"
 fi
@@ -108,12 +139,16 @@ cat <<EOF
 [install] done.
 
   launcher : $LINK
+  shim     : $SHIM  (deprecated, removed in v0.7.0)
   venv     : $VENV
   models   : $APP_HOME/models   ($([ -f "$APP_HOME/models/amitaro_v2_16k.onnx" ] && echo present || echo missing))
-  service  : $SYSTEMD_USER_DIR/vcclient-cachy-mic.service
+  service  : $SYSTEMD_USER_DIR/woys-mic.service
 
   next steps:
-    vcclient-cachy info        # sanity check
-    vcclient-cachy pw status   # confirm vcclient-mic exists
-    vcclient-cachy run         # launch the TUI
+    woys info            # sanity check
+    woys pw status       # confirm vcclient-mic exists
+    woys run             # launch the TUI
+
+  PipeWire mic name is still 'vcclient-mic' — your Discord/CS2/Telegram
+  setup keeps working without re-configuration.
 EOF

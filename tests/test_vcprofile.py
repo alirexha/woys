@@ -29,8 +29,8 @@ def test_export_writes_format_v1_toml(tmp_path: Path, monkeypatch: pytest.Monkey
     sha = _write_dummy_onnx(onnx_path, b"\x08\x07iramodelweights")
 
     from tui.config import AppConfig, save_config
-    from vcclient_cachy.profiles import save_profile
-    from vcclient_cachy.vcprofile import export_profile
+    from woys.profiles import save_profile
+    from woys.vcprofile import export_profile
 
     cfg = AppConfig()
     cfg.rvc_model = str(onnx_path)
@@ -63,7 +63,7 @@ def test_export_unknown_profile_raises(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr("tui.config.CONFIG_FILE", cfg_path)
 
     from tui.config import AppConfig, save_config
-    from vcclient_cachy.vcprofile import export_profile
+    from woys.vcprofile import export_profile
 
     save_config(AppConfig(), cfg_path)
     with pytest.raises(KeyError):
@@ -88,11 +88,11 @@ def test_import_resolves_model_by_sha(tmp_path: Path, monkeypatch: pytest.Monkey
     cfg_path = tmp_path / "config.toml"
 
     from tui.config import AppConfig, load_config, save_config
-    from vcclient_cachy.profiles import save_profile
-    from vcclient_cachy.vcprofile import export_profile, import_profile
+    from woys.profiles import save_profile
+    from woys.vcprofile import export_profile, import_profile
 
     monkeypatch.setattr("tui.config.CONFIG_FILE", cfg_path)
-    monkeypatch.setattr("vcclient_cachy.models.MODELS_DIR", receiver_models)
+    monkeypatch.setattr("woys.models.MODELS_DIR", receiver_models)
 
     cfg = AppConfig()
     cfg.rvc_model = str(sender_models / "myvoice.onnx")
@@ -107,7 +107,7 @@ def test_import_resolves_model_by_sha(tmp_path: Path, monkeypatch: pytest.Monkey
     save_config(cfg2, cfg_path)
 
     # Patch discover_models to use the receiver's library.
-    from vcclient_cachy import models as models_mod
+    from woys import models as models_mod
 
     real_discover = models_mod.discover_models
     monkeypatch.setattr(
@@ -143,8 +143,8 @@ def test_import_missing_model_leaves_rvc_unset(
     cfg_path = tmp_path / "config.toml"
 
     from tui.config import AppConfig, load_config, save_config
-    from vcclient_cachy.profiles import save_profile
-    from vcclient_cachy.vcprofile import export_profile, import_profile
+    from woys.profiles import save_profile
+    from woys.vcprofile import export_profile, import_profile
 
     monkeypatch.setattr("tui.config.CONFIG_FILE", cfg_path)
 
@@ -157,7 +157,7 @@ def test_import_missing_model_leaves_rvc_unset(
     cfg2 = AppConfig()
     save_config(cfg2, cfg_path)
 
-    from vcclient_cachy import models as models_mod
+    from woys import models as models_mod
 
     real_discover = models_mod.discover_models
     monkeypatch.setattr(
@@ -179,7 +179,7 @@ def test_import_rejects_unsupported_format_version(tmp_path: Path) -> None:
         '[meta]\nformat_version = 99\nprofile_name = "x"\n[profile]\n[model]\n', encoding="utf-8"
     )
 
-    from vcclient_cachy.vcprofile import import_profile
+    from woys.vcprofile import import_profile
 
     with pytest.raises(ValueError, match="format_version"):
         import_profile(bad, "x")

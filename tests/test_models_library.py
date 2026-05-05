@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from vcclient_cachy.models import (
+from woys.models import (
     FOUNDATION_NAMES,
     ModelEntry,
     discover_models,
@@ -78,6 +78,6 @@ def test_model_entry_dataclass_round_trip(tmp_path: Path) -> None:
 
 
 def test_cleanup() -> None:  # pragma: no cover — keeps pytest happy if temp leaks
-    leftover = Path("/tmp/vcclient_cachy_models_test")
+    leftover = Path("/tmp/woys_models_test")
     if leftover.exists():
         shutil.rmtree(leftover, ignore_errors=True)

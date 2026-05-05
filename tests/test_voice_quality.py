@@ -29,7 +29,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-MODELS_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "voice_qa"
 SR_INPUT = 16_000
 DURATION_S = 3.0

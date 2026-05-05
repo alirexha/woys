@@ -2,6 +2,32 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## v0.6.0 — Renamed to woys (2026-05-05)
+
+Project renamed `vcclient-cachy` → `woys`. Mechanical change with
+lossless user-data migration. Same engine, same v0.5.2 audio quality,
+same hot-swap, same 9-voice library, new name.
+
+What moved:
+- Python module: `vcclient_cachy` → `woys`
+- Binary: `vcclient-cachy` → `woys` (old name kept as a deprecated shim
+  through v0.6.x; removed in v0.7.0)
+- Config dir: `~/.config/vcclient-cachy/` → `~/.config/woys/`
+- App + models dir: `~/.local/share/vcclient-cachy/` → `~/.local/share/woys/`
+- Systemd unit: `vcclient-cachy-mic.service` → `woys-mic.service`
+- Internal sink: `VCClientCachySink` → `WoysSink`
+
+What stayed the same on purpose:
+- PipeWire SOURCE name (`vcclient-mic`) — Discord / CS2 / Telegram keep
+  working without re-configuration.
+
+Migration handled by `scripts/migrate_to_woys.py` (called by `install.sh`
+on upgrade): 9 unit tests cover fresh install no-op, full move, partial
+install, idempotent re-run, dry-run mode. The migrator parses TOML
+properly + atomic-renames + atomic-writes.
+
+See `LESSONS.md §14` for the retrospective.
+
 ## v0.5.2 — Pacat underrun fix (2026-05-05)
 
 The TV-static crackle ("برفک"), fixed. v0.5.1 cleaned up the resampler
@@ -21,7 +47,7 @@ Also shipped from the brief: writer thread + bounded queue (engine
 never blocks on the playback pipe), watchdog (auto-respawn within
 ~100 ms on player death), channel alignment (engine emits stereo to
 match the null-sink), CPU affinity + opt-in real-time priority (off by
-default), TUI audio-health row, `vcclient-cachy diag` self-test
+default), TUI audio-health row, `woys diag` self-test
 subcommand.
 
 Verification: 30 s underrun test = 0 xruns; jitter test = 24 ms / 25 ms
@@ -107,8 +133,8 @@ code release.
 | `batman_troy_baker` | Batman / Bruce Wayne (Troy Baker, Telltale) | 105.8 | Zogii/zogiiRVC |
 | `spongebob_persian` | SpongeBob Persian Dub (Bab Asfanji) | 105.8 | PlushymehereJC/Spongebob_Persian_dub |
 
-Total: ~963 MiB on disk under `~/.local/share/vcclient-cachy/models/`.
-Each has a profile in `~/.config/vcclient-cachy/config.toml` with
+Total: ~963 MiB on disk under `~/.local/share/woys/models/`.
+Each has a profile in `~/.config/woys/config.toml` with
 `pitch=0`, `chunk_seconds=0.1`, `monitor=false`, plus `_display`,
 `_source_url`, and (where relevant) `_note` fields documenting provenance.
 
@@ -160,10 +186,10 @@ into v0.3.0.
 After v0.1.0 was tagged, the user reported that Discord/Telegram receive
 silence when set to `vcclient-mic`, and that they hear transformed audio from
 the laptop speakers. Diagnosis: the engine's output was going to the system
-default sink, not VCClientCachySink. Root cause: PortAudio on CachyOS only
+default sink, not WoysSink. Root cause: PortAudio on CachyOS only
 exposes the ALSA host API; `sd.OutputStream()` with no `device=` falls
 through to ALSA default. Fix: switched engine output to a `pacat
---device=VCClientCachySink` subprocess (proven path; same as bench_loopback).
+--device=WoysSink` subprocess (proven path; same as bench_loopback).
 Also gated the host-default monitor stream behind a `--monitor` opt-in flag.
 Two new regression tests in `tests/test_engine_routing.py`. Tag: **v0.1.1**.
 
@@ -186,7 +212,7 @@ Two new regression tests in `tests/test_engine_routing.py`. Tag: **v0.1.1**.
 | 1. `./install.sh` on a fresh CachyOS works in under 5 minutes | ✅ verified (~3 min, mostly torch+ORT pip install) |
 | 2. Discord with `vcclient-mic` selected → real-time voice transformation, **measured** < 80 ms | **ready for user QA, pending live test** (v0.1.1 routing fix verified — see `docs/QA.md` Test 2). Phase 5 measured 280 ms warm e2e; <80 ms target needs SOLA + IO binding (deferred). |
 | 3. CS2 with the same mic → same result | **ready for user QA, pending live test** (v0.1.1 routing fix verified — see `docs/QA.md` Test 3). |
-| 4. Full control from the TUI — no browser needed | ✅ `vcclient-cachy run` |
+| 4. Full control from the TUI — no browser needed | ✅ `woys run` |
 | 5. All 5 user-facing docs in `docs/` | ✅ INSTALL, DISCORD-SETUP, CS2-SETUP, MODELS, TROUBLESHOOTING (+ QA + perf + recon) |
 | 6. PROGRESS shows every phase complete | ✅ this file |
 | 7. LESSONS.md and project the project notes | ✅ written |

@@ -1,4 +1,4 @@
-# Using vcclient-cachy with Counter-Strike 2
+# Using woys with Counter-Strike 2
 
 Same idea as Discord: point CS2 at `vcclient-mic`. CS2 itself doesn't have
 "noise suppression" toggles you need to fiddle with — its in-game voice
@@ -6,17 +6,17 @@ chat reads from the OS audio input you select.
 
 ## ⚠️ One thing first — anti-cheat note
 
-vcclient-cachy is **userspace audio software**. It doesn't read game memory,
+woys is **userspace audio software**. It doesn't read game memory,
 hook into Source 2, or touch CS2's process. Pointing the game at a virtual
 mic is the same kind of OS-level audio routing Windows users do every day for
 mic processing. **VAC has no problem with this.**
 
 What VAC *does* take issue with is `evdev` raw-input grabbing for global
-hotkeys. That's why vcclient-cachy ships with the evdev hotkey **off by
+hotkeys. That's why woys ships with the evdev hotkey **off by
 default**, exposing the same toggle through:
 
 - the TUI (`t` key while focused)
-- the CLI (`vcclient-cachy toggle`) → bind to a KDE/GNOME shortcut
+- the CLI (`woys toggle`) → bind to a KDE/GNOME shortcut
 
 If you really want a global hotkey, see `docs/TROUBLESHOOTING.md` for the
 opt-in evdev setup, but understand it's at your own risk.
@@ -24,8 +24,8 @@ opt-in evdev setup, but understand it's at your own risk.
 ## Step 1 — start the engine
 
 ```
-vcclient-cachy pw status         # confirm vcclient-mic is loaded
-vcclient-cachy run --autostart    # start the TUI with engine running
+woys pw status         # confirm vcclient-mic is loaded
+woys run --autostart    # start the TUI with engine running
 ```
 
 Leave the TUI open in a terminal — Alt-Tab back to your game.
@@ -75,7 +75,7 @@ modern GPU usage stays low when your mic is silent.
 
 If you'd prefer the engine to stop entirely between rounds:
 
-- bind a KDE/GNOME shortcut to `vcclient-cachy toggle`, or
+- bind a KDE/GNOME shortcut to `woys toggle`, or
 - press `t` in the TUI when you want to mute the voice changer.
 
 ## Step 5 — verify in a casual match
@@ -94,7 +94,7 @@ If everything looks right but they still can't hear you, see
 
 The pipeline introduces ~150-300 ms of latency by default (chunk size +
 inference + audio I/O). For competitive play this can feel slow. Two knobs
-in `~/.config/vcclient-cachy/config.toml`:
+in `~/.config/woys/config.toml`:
 
 - `chunk_seconds = 0.25` is the comfort default. Drop to `0.15` for less
   latency at slightly worse pitch quality.

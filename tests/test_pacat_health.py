@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-MODELS_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 
 
 class _PacedFakeInputStream:
@@ -103,7 +103,7 @@ def _ensure_test_prereqs() -> Path:
     VirtualMic().ensure()
     state = get_state()
     if not state.fully_present:
-        pytest.skip("VCClientCachySink + vcclient-mic not loaded")
+        pytest.skip("WoysSink + vcclient-mic not loaded")
     return voices[0]
 
 

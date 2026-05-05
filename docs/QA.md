@@ -9,11 +9,11 @@ Run through this once after install. ~10 minutes. Mark the boxes as you go.
 
 ## Pre-flight
 
-- [ ] `vcclient-cachy info` shows your GPU and PipeWire version
-- [ ] `vcclient-cachy pw status` exits 0 (both `True`)
+- [ ] `woys info` shows your GPU and PipeWire version
+- [ ] `woys pw status` exits 0 (both `True`)
 - [ ] `pactl list short sources | grep vcclient-mic` shows one line
 - [ ] `pactl list short sinks | grep VCClientCachy` shows one line
-- [ ] `systemctl --user status vcclient-cachy-mic.service` is `active (exited)`
+- [ ] `systemctl --user status woys-mic.service` is `active (exited)`
 
 If any of those fail, fix per `docs/TROUBLESHOOTING.md` before going on.
 
@@ -22,7 +22,7 @@ If any of those fail, fix per `docs/TROUBLESHOOTING.md` before going on.
 In one terminal:
 
 ```
-vcclient-cachy run --autostart
+woys run --autostart
 ```
 
 - [ ] TUI displays `RUNNING` after the cold-start chunks finish
@@ -32,10 +32,10 @@ vcclient-cachy run --autostart
 In a *second* terminal:
 
 ```
-vcclient-cachy status
-vcclient-cachy toggle
-vcclient-cachy status
-vcclient-cachy toggle
+woys status
+woys toggle
+woys status
+woys toggle
 ```
 
 - [ ] First `status` shows `running=True`
@@ -44,9 +44,9 @@ vcclient-cachy toggle
 - [ ] TUI's status panel reflects the toggles in real time
 
 ```
-vcclient-cachy pitch +2
-vcclient-cachy pitch -3
-vcclient-cachy pitch 0
+woys pitch +2
+woys pitch -3
+woys pitch 0
 ```
 
 - [ ] TUI's `pitch` line updates each time
@@ -109,14 +109,14 @@ Leave the TUI running with the engine on for 10+ minutes.
 - [ ] `nvidia-smi` shows VCClient-cachy's process around 1.3-1.4 GiB stable
 
 If you see `last_error: OSError ... vcclient-mic`, the systemd unit may have
-restarted; check `journalctl --user -u vcclient-cachy-mic.service`.
+restarted; check `journalctl --user -u woys-mic.service`.
 
 ## Test 5 — clean shutdown
 
 In the TUI: press `q`.
 
 - [ ] TUI exits within 1-2 seconds
-- [ ] Config saved (mtime on `~/.config/vcclient-cachy/config.toml` updates)
+- [ ] Config saved (mtime on `~/.config/woys/config.toml` updates)
 - [ ] `pactl list short sources | grep vcclient-mic` *still* shows the mic
       (the systemd unit owns it; engine quit didn't tear it down — that's
       intentional per Q6)
@@ -124,15 +124,15 @@ In the TUI: press `q`.
 To fully tear down everything:
 
 ```
-systemctl --user stop vcclient-cachy-mic.service
-vcclient-cachy pw status   # both False
+systemctl --user stop woys-mic.service
+woys pw status   # both False
 ```
 
 ## If anything failed
 
 Drop the failure into `docs/TROUBLESHOOTING.md`'s template — open an issue
 on GitHub or ping me directly. The exact `journalctl --user -u
-vcclient-cachy-mic.service` lines around the failure are usually enough.
+woys-mic.service` lines around the failure are usually enough.
 
 ---
 

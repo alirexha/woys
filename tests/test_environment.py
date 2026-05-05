@@ -11,9 +11,7 @@ import pytest
 
 def test_python_version() -> None:
     """We target 3.11 in the venv; reject system 3.13/3.14."""
-    assert sys.version_info[:2] == (3, 11), (
-        f"vcclient-cachy targets Python 3.11; got {sys.version_info[:2]}"
-    )
+    assert sys.version_info[:2] == (3, 11), f"woys targets Python 3.11; got {sys.version_info[:2]}"
 
 
 def test_pactl_available() -> None:

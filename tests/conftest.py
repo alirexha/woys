@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for vcclient-cachy."""
+"""Shared pytest fixtures for woys."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SERVER_ROOT = PROJECT_ROOT / "src" / "server"
-MODELS_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 FIXTURES_DIR = PROJECT_ROOT / "tests" / "fixtures"
 
 # upstream uses unprefixed imports (from voice_changer.X import Y); inject the

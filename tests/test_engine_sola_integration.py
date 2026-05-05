@@ -92,7 +92,7 @@ def test_engine_warm_avg_total_under_120ms_at_chunk_100ms() -> None:
 
     VirtualMic().ensure()
     if not get_state().fully_present:
-        pytest.skip("VCClientCachySink + vcclient-mic not loaded")
+        pytest.skip("WoysSink + vcclient-mic not loaded")
 
     eng = RealtimeEngine(EngineConfig(chunk_seconds=0.1, sola_enabled=True))
     eng.start()

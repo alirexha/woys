@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# vcclient-cachy uninstaller — reverses what install.sh did.
+# woys uninstaller — reverses what install.sh did.
 #
 # Removes:
-#   $HOME/.local/share/vcclient-cachy/        (venv, models — opt-out with --keep-models)
-#   $HOME/.local/bin/vcclient-cachy           (launcher symlink)
-#   $HOME/.config/systemd/user/vcclient-cachy-mic.service
+#   $HOME/.local/share/woys/                  (venv, models — opt-out with --keep-models)
+#   $HOME/.local/share/vcclient-cachy/        (legacy path, if still present from pre-v0.6.0)
+#   $HOME/.local/bin/woys                     (launcher symlink)
+#   $HOME/.local/bin/vcclient-cachy           (deprecated shim from v0.6.x)
+#   $HOME/.config/systemd/user/woys-mic.service
+#   $HOME/.config/systemd/user/vcclient-cachy-mic.service  (legacy)
 #
 # Leaves alone:
-#   $HOME/.config/vcclient-cachy/config.toml (your settings)
+#   $HOME/.config/woys/config.toml            (your settings)
+#   $HOME/.config/vcclient-cachy/config.toml  (legacy settings, if still present)
 #
 # Usage:
 #   ./uninstall.sh               # remove everything except your config
@@ -15,7 +19,8 @@
 
 set -euo pipefail
 
-APP_HOME="$HOME/.local/share/vcclient-cachy"
+APP_HOME="$HOME/.local/share/woys"
+LEGACY_APP_HOME="$HOME/.local/share/vcclient-cachy"
 BIN_DIR="$HOME/.local/bin"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 
@@ -24,7 +29,7 @@ for arg in "$@"; do
     case "$arg" in
     --keep-models) KEEP_MODELS=1 ;;
     -h|--help)
-        sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
+        sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
         exit 0
         ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -33,40 +38,48 @@ done
 
 say() { printf '\n[uninstall] %s\n' "$*"; }
 
-# Stop and disable the systemd unit first.
-if systemctl --user list-unit-files vcclient-cachy-mic.service >/dev/null 2>&1; then
-    say "disabling vcclient-cachy-mic.service…"
-    systemctl --user disable --now vcclient-cachy-mic.service 2>/dev/null || true
-fi
-rm -f "$SYSTEMD_USER_DIR/vcclient-cachy-mic.service"
+# Stop and disable both unit names (post-v0.6.0 + legacy).
+for unit in woys-mic.service vcclient-cachy-mic.service; do
+    if systemctl --user list-unit-files "$unit" >/dev/null 2>&1; then
+        say "disabling $unit…"
+        systemctl --user disable --now "$unit" 2>/dev/null || true
+    fi
+    rm -f "$SYSTEMD_USER_DIR/$unit"
+done
 systemctl --user daemon-reload 2>/dev/null || true
 
 # Tear down the PipeWire mic if a previous run left it loaded.
 if command -v pactl >/dev/null && pactl info 2>/dev/null | grep -q PipeWire; then
-    if [ -x "$APP_HOME/venv/bin/vcclient-cachy" ]; then
-        "$APP_HOME/venv/bin/vcclient-cachy" pw teardown 2>/dev/null || true
+    if [ -x "$APP_HOME/venv/bin/woys" ]; then
+        "$APP_HOME/venv/bin/woys" pw teardown 2>/dev/null || true
+    elif [ -x "$LEGACY_APP_HOME/venv/bin/vcclient-cachy" ]; then
+        "$LEGACY_APP_HOME/venv/bin/vcclient-cachy" pw teardown 2>/dev/null || true
     fi
 fi
 
-# Remove launcher symlink.
-rm -f "$BIN_DIR/vcclient-cachy"
+# Remove launcher symlinks (current + legacy shim).
+rm -f "$BIN_DIR/woys" "$BIN_DIR/vcclient-cachy"
 
-# Remove app dir (optionally keeping models).
-if [ "$KEEP_MODELS" -eq 1 ] && [ -d "$APP_HOME/models" ]; then
-    say "preserving models at $APP_HOME/models/"
-    rm -rf "$APP_HOME/venv"
-else
-    say "removing $APP_HOME/"
-    rm -rf "$APP_HOME"
-fi
+# Remove app dirs (optionally keeping models).
+for HOME_DIR in "$APP_HOME" "$LEGACY_APP_HOME"; do
+    [ -d "$HOME_DIR" ] || continue
+    if [ "$KEEP_MODELS" -eq 1 ] && [ -d "$HOME_DIR/models" ]; then
+        say "preserving models at $HOME_DIR/models/"
+        rm -rf "$HOME_DIR/venv"
+    else
+        say "removing $HOME_DIR/"
+        rm -rf "$HOME_DIR"
+    fi
+done
 
 cat <<EOF
 
 [uninstall] done.
 
-  Config preserved: $HOME/.config/vcclient-cachy/config.toml
-  Models preserved: $([ "$KEEP_MODELS" -eq 1 ] && echo "yes ($APP_HOME/models)" || echo no)
+  Config preserved (woys)         : $HOME/.config/woys/config.toml
+  Config preserved (legacy)       : $HOME/.config/vcclient-cachy/config.toml (if still present)
+  Models preserved                : $([ "$KEEP_MODELS" -eq 1 ] && echo "yes" || echo no)
 
   To wipe everything (including config):
-    rm -rf $HOME/.config/vcclient-cachy/
+    rm -rf $HOME/.config/woys/ $HOME/.config/vcclient-cachy/
 EOF

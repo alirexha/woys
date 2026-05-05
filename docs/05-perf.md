@@ -13,7 +13,7 @@ Hard fail thresholds (`> 200 ms`, `> 1.0 GiB`, `> 22 %`) — only the e2e
 threshold is comfortably cleared. VRAM and CPU are above hard-fail because
 the underlying model architecture hasn't changed; v0.3.0 work targets these.
 
-Methodology: `vcclient-cachy run --autostart` for 10.5 s. First 2.5 s are
+Methodology: `woys run --autostart` for 10.5 s. First 2.5 s are
 discarded as warm-up (cudnn autotune settles by then). Rolling-32 average
 captured during the next 8 s.
 
@@ -77,7 +77,7 @@ from 60-250 ms. Below ~120 ms, kernel-launch overhead and minimum-input-frame
 constraints dominate over the actual matmul cost. Larger chunks give better
 realtime headroom but worse e2e latency in practice.
 
-**Sweet spot for vcclient-cachy:** `chunk_seconds = 0.10-0.15` (100-150 ms input
+**Sweet spot for woys:** `chunk_seconds = 0.10-0.15` (100-150 ms input
 buffering plus ~22 ms inference plus ~10 ms PipeWire I/O = ~132-182 ms total).
 
 The brief's <80 ms target requires chunks ≤ ~50 ms, which falls below contentvec's
@@ -89,7 +89,7 @@ inference at sustainable latency".
 ## 4. Acoustic loopback (one-way mic→sink)
 
 Source: `scripts/bench_loopback.py`. Methodology — `pacat` plays an impulse into
-`VCClientCachySink`; `parec --device=vcclient-mic` captures simultaneously; we
+`WoysSink`; `parec --device=vcclient-mic` captures simultaneously; we
 locate the impulse in the capture and report the wall-clock delta.
 
 This bench measures everything the user actually hears: PipeWire scheduling +

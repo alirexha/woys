@@ -27,7 +27,7 @@ if hasattr(ort, "preload_dlls"):
     ort.preload_dlls()
 
 ROOT = Path(__file__).resolve().parent.parent
-MODELS = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS = Path.home() / ".local" / "share" / "woys" / "models"
 WAV = ROOT / "tests" / "fixtures" / "sine_voiced_1s.wav"
 
 

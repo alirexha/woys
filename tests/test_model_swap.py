@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-MODELS_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 DEFAULT = MODELS_DIR / "amitaro_v2_16k.onnx"
 
 
@@ -173,15 +173,15 @@ def test_cli_models_use_falls_back_to_config_when_no_socket(
     def fake_save(cfg: AppConfig, *_args: object, **_kwargs: object) -> None:
         real_save(cfg, cfg_path)
 
-    monkeypatch.setattr("vcclient_cachy.models.load_config", fake_load, raising=False)
-    monkeypatch.setattr("vcclient_cachy.models.save_config", fake_save, raising=False)
+    monkeypatch.setattr("woys.models.load_config", fake_load, raising=False)
+    monkeypatch.setattr("woys.models.save_config", fake_save, raising=False)
     # Models module imports tui.config inside the function, so patch the
     # imported names there too (after the import happens once). The CLI
     # path imports lazily — easier to patch the source modules.
     monkeypatch.setattr("tui.config.load_config", fake_load)
     monkeypatch.setattr("tui.config.save_config", fake_save)
 
-    from vcclient_cachy.models import cli_models_use
+    from woys.models import cli_models_use
 
     with patch("tui.control.send_command", return_value="ERR control socket not found"):
         rc = cli_models_use(target.stem)

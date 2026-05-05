@@ -749,7 +749,90 @@ have been ~1300 ms — borderline-unusable for a real-time call.
 Synthetic-input tests pass. The user must test in Telegram before tag
 `v0.5.2` is cut. Same gate as v0.5.0 / v0.5.1: ears decide.
 
-## 14. The brief's "FORBIDDEN list" was load-bearing
+## 14. v0.6.0 retrospective — the rename to woys
+
+Mechanical change, not a feature release. The brief
+(`RENAME_TO_WOYS_BRIEF.md`) was clear: rename everything, lossless user
+migration, don't break any existing setup. ~90 minutes wall, exactly as
+budgeted.
+
+### Three pieces of leverage that paid off
+
+**1. Migrator first, code rename second.** The first commit was
+`scripts/migrate_to_woys.py` + `tests/test_migrate_to_woys.py` — 9 unit
+tests against a synthetic `$HOME` covering fresh install (no-op),
+full-move, partial install (missing share OR config OR cache), TOML
+path rewrite, idempotent re-run, half-finished prior migration, and
+`--dry-run`. **Writing the tests first surfaced the
+already-half-migrated edge case** (target dir exists from a previous
+crashed run) that I would have hit blind on the user's actual machine.
+The migrator goes to "skip" rather than "trample" — which is the
+right answer; if the user has half-finished state they should know
+about it, not have it silently overwritten.
+
+**2. Bulk rename via a Python script with explicit skip lists.** ~351
+replacements across 57 files in one pass, with file-level skips for
+the brief files (historical artifacts), `LESSONS.md` (this file),
+`CHANGELOG.md` (per-section rename happens in the v0.6.0 entry, prior
+sections preserve the historical name), `migrate_to_woys.py` and its
+test (must keep `OLD_NAME = "vcclient-cachy"` as a literal). Per-string
+Edit calls would have been ~100x more tool calls and easy to miss
+something. Per-file `sed -i` would have nuked the migration script's
+literals. The Python pass logged every file + count so the diff was
+auditable.
+
+**3. Backward-compat shim for the binary, not just for paths.**
+`~/.local/bin/vcclient-cachy` is now a wrapper that prints a yellow
+`[deprecation]` and exec's `woys`. Users with shell history, scripts,
+or muscle memory don't get a "command not found" the day after upgrade
+— they get a one-line nag, the command works, and they have until
+v0.7.0 to actually update their habits. Cost: ~10 lines of bash.
+Value: zero "you broke my workflow" reports.
+
+### What I deliberately did NOT change
+
+The PipeWire SOURCE name `vcclient-mic` stays the same. The brief gave
+me discretion ("Pick whichever is technically cleanest") — renaming
+the user-facing PipeWire device would have forced a re-selection in
+Discord / CS2 / Telegram, three apps, each with its own audio settings
+UI. The internal SINK name (`VCClientCachySink` → `WoysSink`) is fair
+game because nothing user-facing references it. v0.7.0 can revisit if
+"woys-mic" feels worth the disruption later.
+
+### What broke during the work
+
+Two GPU embedder tests
+(`test_engine_embedder_default_is_onnx`,
+`test_engine_embedder_fairseq_falls_back_to_onnx_when_missing`)
+failed in the post-rename test run because they directly try to load
+`contentvec-f.onnx` from the new path while the user's models still
+lived at the old path. Not a bug in the rename; the migration hadn't
+run yet. They re-pass after `install.sh` runs and moves the dir. I
+caught this in the lint/test gate before pushing the rename — running
+the install on the user's machine BEFORE pushing was the right order.
+
+### Lesson — rename-only releases are still releases
+
+The brief (§4) said "bump to v0.6.0, not a patch". That's the right
+call. Even if nothing in the runtime behavior changes, the package
+name + binary name + dirs + systemd unit are user-facing API. Patch
+versions don't ship breaking renames. The CHANGELOG entry has a
+**Breaking** subsection with explicit before/after for every
+relocated identifier — anyone bisecting a workflow that suddenly stops
+working can find this entry by version + grep.
+
+### Lesson — the migrator is a real piece of software
+
+Treating `scripts/migrate_to_woys.py` as throwaway "rename code" would
+have been a mistake. It uses `tomllib` (parse) + a hand-rolled TOML
+emitter (because the migrator runs BEFORE the venv exists, so we can't
+import `tomli_w`), atomic-renames via `os.rename`, falls back to
+copytree for cross-FS, atomic config-file write via `.tmp + replace`,
+and is idempotent. Plus 9 tests. That's the bar for code that touches
+a user's only copy of their config + 1 GB of voice models. If it
+crashes mid-migration, the user's data should be intact.
+
+## 15. The brief's "FORBIDDEN list" was load-bearing
 
 Section 12 of `PROJECT_BRIEF.md` says: do not rewrite RVC in C++/Rust, do
 not write custom CUDA kernels, do not replace ONNX Runtime, do not distill

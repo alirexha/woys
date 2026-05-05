@@ -1,4 +1,4 @@
-"""Phase C tests — `vcclient-cachy convert <pth>`.
+"""Phase C tests — `woys convert <pth>`.
 
 Heavy: actually exports a small RVC checkpoint to ONNX. Skipped when the
 fixture .pth is missing (no model download in CI / dry-runs).
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-PTH_FIXTURE = Path.home() / ".local" / "share" / "vcclient-cachy" / "models" / "amitaro_v2.pth"
+PTH_FIXTURE = Path.home() / ".local" / "share" / "woys" / "models" / "amitaro_v2.pth"
 
 
 @pytest.mark.gpu
@@ -28,7 +28,7 @@ def test_convert_amitaro_pth_to_onnx(tmp_path: Path) -> None:
         )
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-    from vcclient_cachy.convert import convert_pth_to_onnx
+    from woys.convert import convert_pth_to_onnx
 
     out = tmp_path / "amitaro_test.onnx"
     result = convert_pth_to_onnx(PTH_FIXTURE, out)
@@ -57,7 +57,7 @@ def test_convert_metadata_probe_v2() -> None:
         pytest.skip(f"{PTH_FIXTURE} missing")
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-    from vcclient_cachy.convert import _probe_pth_metadata
+    from woys.convert import _probe_pth_metadata
 
     meta = _probe_pth_metadata(PTH_FIXTURE)
     # The amitaro fixture is a v2 40 kHz f0 model.
@@ -71,7 +71,7 @@ def test_convert_metadata_probe_v2() -> None:
 def test_cli_convert_handles_missing_input(tmp_path: Path) -> None:
     """A clear error, exit code 1 — never silent failure."""
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-    from vcclient_cachy.convert import cli_convert
+    from woys.convert import cli_convert
 
     rc = cli_convert(str(tmp_path / "does-not-exist.pth"))
     assert rc == 1

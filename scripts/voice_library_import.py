@@ -23,7 +23,7 @@ SRC = REPO_ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 STAGE_DIR = Path("/tmp/vcclib-stage")
-MODELS_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 SOURCES_MD = REPO_ROOT / "voice-library" / "SOURCES.md"
 BLOCKERS_MD = REPO_ROOT / "BLOCKERS.md"
 
@@ -167,11 +167,11 @@ def _find_index(extracted: Path) -> Path | None:
 
 
 def _convert(pth: Path, output_onnx: Path) -> bool:
-    """Run `vcclient-cachy convert` as a subprocess so we exercise the same
+    """Run `woys convert` as a subprocess so we exercise the same
     code path the user would. fp32 only — fp16 only auto-promoted by
     `fp16-convert` for foundations, and contentvec fp16 quality concerns
     (LESSONS §8) make voice-model fp16 a per-user opt-in too."""
-    venv_bin = REPO_ROOT / ".venv" / "bin" / "vcclient-cachy"
+    venv_bin = REPO_ROOT / ".venv" / "bin" / "woys"
     cmd = [str(venv_bin), "convert", str(pth), "-o", str(output_onnx)]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if r.returncode != 0:
@@ -220,7 +220,7 @@ def _register_profile(slug: str, onnx_path: Path, display: str, source_url: str,
     `docs/07-audio-quality-bug.md`.
     """
     from tui.config import load_config, save_config
-    from vcclient_cachy.profiles import save_profile
+    from woys.profiles import save_profile
 
     cfg = load_config()
     cfg.rvc_model = str(onnx_path.resolve())
@@ -250,7 +250,7 @@ def _write_sources_doc(outcomes: list[Outcome]) -> None:
         "Audit trail for the starter voice library imported via `scripts/voice_library_import.py`.",
         "",
         "Models are NOT bundled in this repo (per `LICENSE` / brief §7). They live "
-        "in `~/.local/share/vcclient-cachy/models/` on the user's machine. This "
+        "in `~/.local/share/woys/models/` on the user's machine. This "
         "file documents the upstream HuggingFace URL + slug for each.",
         "",
         "| Slug | Display | Status | Upstream URL |",
