@@ -129,6 +129,16 @@ def _download(url: str, dest: Path, *, timeout: int = 120) -> bool:
 
 def _verify_zip(path: Path) -> bool:
     r = subprocess.run(["unzip", "-tq", str(path)], capture_output=True, text=True)
+    if r.returncode == 0:
+        return True
+    # v0.6.6 — Info-ZIP `unzip` (the system default on most distros) doesn't
+    # support newer compression methods like zstd. The Jennie zip from
+    # natanworkspace/Legacy_Core_Models hits this path. Fall back to `7z`,
+    # which handles the broader format surface.
+    p7z = shutil.which("7z")
+    if p7z is None:
+        return False
+    r = subprocess.run([p7z, "t", str(path)], capture_output=True, text=True)
     return r.returncode == 0
 
 
@@ -137,6 +147,18 @@ def _extract_zip(path: Path, dest: Path) -> bool:
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     r = subprocess.run(["unzip", "-q", str(path), "-d", str(dest)], capture_output=True, text=True)
+    if r.returncode == 0:
+        return True
+    # Same fallback as `_verify_zip` — try `7z` for archives whose
+    # compression `unzip` rejected.
+    p7z = shutil.which("7z")
+    if p7z is None:
+        return False
+    r = subprocess.run(
+        [p7z, "x", str(path), f"-o{dest}", "-y"],
+        capture_output=True,
+        text=True,
+    )
     return r.returncode == 0
 
 

@@ -4,6 +4,37 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.6.6] — 2026-05-05 — Polish round: stop bleeding state across boundaries
+
+A bundle of small bugs that had been quietly biting through the v0.6.x
+series. Each one was visible in earlier sessions but was being deferred
+as "out of scope". They aren't anymore.
+
+- `tests/test_audio_pipewire.py::test_virtual_mic_round_trip` now
+  snapshots the host's pre-test state and restores it in the outer
+  `finally`. Before this fix, running `pytest -m "not slow"` on a real
+  desktop wiped the user's loaded virtual mic — Discord / CS2 lost
+  their input device until the next `systemctl --user restart
+  woys-mic.service`.
+- `tui.control.send_command` catches `ConnectionRefusedError` and
+  `FileNotFoundError` for stale-socket scenarios (TUI killed by SIGKILL
+  / crashed / `kill -9`'d). Returns a clear `ERR ...` instead of
+  letting the exception escape to callers.
+- `tui.control.ControlServer.start` registers an `atexit` handler that
+  unlinks the socket file, plus a SIGTERM handler that converts the
+  signal into a clean `sys.exit(128 + SIGTERM)` so atexit fires. A
+  graceful `kill <tui-pid>` no longer leaves a stale socket behind.
+- `woys.convert.convert_pth_to_onnx` deletes the unused
+  `<stem>_simple.onnx` sibling that upstream's `_export2onnx` always
+  writes. Matches the existing voice-library convention (none of the
+  shipped voices have a `_simple` companion in the models dir) and
+  prevents `woys models list` from doubling.
+- `scripts.voice_library_import._verify_zip` /  `_extract_zip` fall
+  back to `7z` when system `unzip` rejects the archive (e.g. zstd-
+  compressed zips that Info-ZIP 6.x doesn't support — caught Jennie's
+  HF zip during v0.6.3).
+- `the project notes` test-count reference fixed (`14 fast tests` → `70+`).
+
 ## [0.6.5] — 2026-05-05 — Rename PipeWire mic `vcclient-mic` → `woys-mic`
 
 The user-facing PipeWire source was renamed from `vcclient-mic` to

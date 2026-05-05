@@ -20,6 +20,7 @@ Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -216,6 +217,15 @@ def convert_pth_to_onnx(
     print(f"[convert] wrote {output_path} ({output_path.stat().st_size / 1024 / 1024:.1f} MiB)")
     _validate_onnx_loads(output_path)
     print("[convert] ONNX validation OK — ready for the engine.")
+
+    # v0.6.6 — `_export2onnx` always writes a `<stem>_simple.onnx` sibling
+    # for upstream's stripped-down inference path, but the woys engine only
+    # ever loads the regular `.onnx`. Leaving the sibling around bloats the
+    # models dir and confuses `woys models list`. Drop it.
+    if output_simple.exists():
+        with contextlib.suppress(OSError):
+            output_simple.unlink()
+
     return output_path
 
 
