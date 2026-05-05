@@ -117,7 +117,16 @@ class EngineConfig:
     monitor: bool = False
     # Output latency in ms requested from pacat. Lower = tighter latency,
     # higher = more buffer headroom against scheduler jitter.
-    output_latency_ms: int = 30
+    # v0.5.2 raised 30 → 200 (Hypothesis E confirmed in
+    # docs/08-pacat-underrun-bug.md). With 250 ms chunks + ~30 ms infer,
+    # a 30 ms PulseAudio target buffer is drained by any ~5 ms scheduler
+    # hiccup, surfacing as the "برفک" TV-static crackle. 200 ms gives
+    # the daemon room to size a ~400 ms buffer with prebuf headroom.
+    output_latency_ms: int = 200
+    # Process-time hint to pacat: write callbacks granulate to this many
+    # ms. 20 ms keeps writes from coalescing into bursts that would
+    # alternately starve and overrun the buffer.
+    output_process_time_ms: int = 20
 
     # v0.5.1: software input pre-attenuation, in dB. Default 0.0 (passthrough).
     # Hot mics (HyperX QuadCast at high volume etc.) clip the signal which
@@ -798,6 +807,7 @@ class RealtimeEngine:
             f"--channels={self.cfg.channels}",
             "--format=float32le",
             f"--latency-msec={self.cfg.output_latency_ms}",
+            f"--process-time-msec={self.cfg.output_process_time_ms}",
             "--client-name=vcclient-cachy",
             "--stream-name=engine-out",
             "--raw",
