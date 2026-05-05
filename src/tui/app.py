@@ -79,17 +79,35 @@ class StatusPanel(Static):
 
 
 class LatencyPanel(Static):
-    """Mid latency block: avg total, avg inference."""
+    """Mid latency block: avg total, avg inference, v0.5.2 audio-health row."""
 
     DEFAULT_CSS = """
-    LatencyPanel { padding: 1 2; border: round $accent; height: 6; }
+    LatencyPanel { padding: 1 2; border: round $accent; height: 8; }
     """
 
-    def render_lat(self, total_ms: float, inf_ms: float, chunks: int) -> str:
+    def render_lat(
+        self,
+        total_ms: float,
+        inf_ms: float,
+        chunks: int,
+        xruns: int = 0,
+        queue_full: int = 0,
+        restarts: int = 0,
+        jitter_ms: float = 0.0,
+    ) -> str:
+        # v0.5.2: highlight any non-zero xrun count in red — the user
+        # listens to the audio in another window, this is their visual
+        # check that the session is clean.
+        xrun_color = "red" if xruns or queue_full else "green"
         return (
             f"avg total e2e : [bold]{total_ms:6.1f} ms[/]\n"
             f"avg inference : {inf_ms:6.1f} ms\n"
-            f"chunks done   : {chunks}"
+            f"chunks done   : {chunks}\n"
+            f"audio health  : "
+            f"[{xrun_color}]xruns={xruns}[/] "
+            f"qfull={queue_full} "
+            f"restarts={restarts} "
+            f"jitter={jitter_ms:.1f}ms"
         )
 
 
@@ -142,6 +160,7 @@ class VCClientApp(App[int]):
                 sink_name=self.cfg.sink_name,
                 monitor=self.cfg.monitor,
                 output_latency_ms=self.cfg.output_latency_ms,
+                output_process_time_ms=self.cfg.output_process_time_ms,
                 embedder=self.cfg.embedder,
                 sola_enabled=self.cfg.sola_enabled,
                 sola_crossfade_ms=self.cfg.sola_crossfade_ms,
@@ -447,7 +466,17 @@ class VCClientApp(App[int]):
                 )
             )
             lat = self.query_one("#latency", LatencyPanel)
-            lat.update(lat.render_lat(s.avg_total_ms, s.avg_inference_ms, s.chunks_processed))
+            lat.update(
+                lat.render_lat(
+                    s.avg_total_ms,
+                    s.avg_inference_ms,
+                    s.chunks_processed,
+                    xruns=s.xruns,
+                    queue_full=s.queue_full_events,
+                    restarts=s.pacat_restarts,
+                    jitter_ms=s.writer_jitter_ms,
+                )
+            )
             meter = self.query_one("#meter", ProgressBar)
             meter.update(progress=min(100, int(s.last_input_rms * 4 * 100)))
 

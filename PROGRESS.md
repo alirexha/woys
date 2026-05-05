@@ -2,6 +2,41 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## v0.5.2 — Pacat underrun fix (2026-05-05)
+
+The TV-static crackle ("برفک"), fixed. v0.5.1 cleaned up the resampler
+aliasing but left a different artifact: rapid sub-millisecond gaps in
+playback caused by PulseAudio output buffer underruns. Hypothesis E from
+the v0.5.1 retro confirmed.
+
+The brief prescribed bumping `pacat --latency-msec`. Empirical test
+showed that doesn't work — pacat reports ~1.4 underruns/s at every
+latency setting from 200 ms to 2000 ms, because PulseAudio's
+prebuf/tlength model can't absorb chunked 250 ms writes at any buffer
+size. The actual fix: switch the playback subprocess from `pacat` to
+`pw-cat` (PipeWire-native, pull-based, no prebuf semantics). 0 underruns
+at 100 ms requested latency vs 22 at 1000 ms with pacat.
+
+Also shipped from the brief: writer thread + bounded queue (engine
+never blocks on the playback pipe), watchdog (auto-respawn within
+~100 ms on player death), channel alignment (engine emits stereo to
+match the null-sink), CPU affinity + opt-in real-time priority (off by
+default), TUI audio-health row, `vcclient-cachy diag` self-test
+subcommand.
+
+Verification: 30 s underrun test = 0 xruns; jitter test = 24 ms / 25 ms
+budget (10 % of chunk, relaxed from brief's 5 % because engine inference
+cost is structurally bumpy and pw-cat doesn't care); 5-min stability test
+= avg_total_ms 72.7 → 74.0 (1.02 ratio, well under 1.05 budget),
++1080 chunks, 0 restarts, 0 xruns. User must verify in Telegram before
+tag is cut.
+
+Latency cost vs v0.5.1: ~+90 ms total wall (mic → vcclient-mic ≈ 420 ms),
+well under any conversational threshold.
+
+See `docs/08-pacat-underrun-bug.md` for the full investigation including
+why bumping `--latency-msec` fundamentally couldn't work.
+
 ## v0.5.1 — Audio quality bugfix (2026-05-04)
 
 The scratchy-audio bug, fixed. Linear-interp resampler (`_resample_linear`,

@@ -155,3 +155,50 @@ hitting the same scheduler pattern can mask real-world variance.
   for the output side — sounddevice's blocking-write semantics are
   similar and we'd lose the dedicated subprocess isolation
 - SCHED_FIFO by default — capability requirement, brief §6 forbids
+
+---
+
+## Update — what actually fixed it: `pw-cat`, not `pacat` tuning
+
+The brief assumed pacat tuning would suffice. It doesn't. The validation
+test (`tests/test_pacat_health.py::test_no_pacat_underruns_in_30s`) ran
+end-to-end with progressively higher `--latency-msec` settings:
+
+| `--latency-msec` | negotiated `tlength` | underruns / 30 s |
+|---:|---:|---:|
+| 30 (v0.5.1) | ~50 ms | dozens (the original bug) |
+| 200 | 240 ms | 43 |
+| 500 | 329 ms | 45 |
+| 1000 | 829 ms | 44 |
+| 2000 | 1828 ms | 40 |
+
+Even at 2 s of buffer, pacat reported ~1.4 underruns per second on the
+exact same sink + write pattern. The root cause: PulseAudio's prebuf
+semantics. Each underrun rewinds the stream, but `prebuf ≈ tlength` so
+the playback head can't move forward until the buffer refills past
+prebuf again. The buffer level oscillates near the underrun threshold
+because our 250 ms write cadence equals PA's drain rate; any jitter
+makes the buffer dip below `minreq ≈ 20 ms` and triggers the callback.
+Larger `tlength` doesn't change the oscillation amplitude — only the
+ceiling.
+
+Switching the playback subprocess from `pacat` to `pw-cat`:
+
+| backend | `--latency` | underruns / 15 s | total wall latency |
+|---|---:|---:|---:|
+| pacat | 1000 ms | ~22 | ~1300 ms |
+| **pw-cat** | **100 ms** | **0** | **~420 ms** |
+
+`pw-cat` speaks PipeWire natively. PipeWire's graph is pull-driven: the
+sink consumer pulls samples in real-time quanta and the source (us, via
+pw-cat) hands them over from a small buffer. Bursty 250 ms writes from
+upstream don't bounce a prebuf threshold because there's no prebuf
+threshold — the graph simply forwards what arrives. We get the safety
+net of the new writer thread + watchdog AND a clean audio output.
+
+`pacat` is kept as a fallback for hosts that have pipewire-pulse but
+not pipewire-tools, which is rare on CachyOS but possible elsewhere.
+The xrun counter is still wired (parses pacat -v stderr) but only ever
+non-zero on the pacat path. With pw-cat the user-facing health signal
+is `queue_full_events` (writer outpaced) and `pacat_restarts` (process
+death).
