@@ -12,7 +12,7 @@ Run through this once after install. ~10 minutes. Mark the boxes as you go.
 - [ ] `woys info` shows your GPU and PipeWire version
 - [ ] `woys pw status` exits 0 (both `True`)
 - [ ] `pactl list short sources | grep vcclient-mic` shows one line
-- [ ] `pactl list short sinks | grep VCClientCachy` shows one line
+- [ ] `pactl list short sinks | grep WoysSink` shows one line
 - [ ] `systemctl --user status woys-mic.service` is `active (exited)`
 
 If any of those fail, fix per `docs/TROUBLESHOOTING.md` before going on.
