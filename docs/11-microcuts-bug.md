@@ -119,6 +119,71 @@ buffer absorbs writer jitter without underrun → micro-cuts gone.
 4. If user still hears cuts: the residual is hypothesis (f) ORT
    CUDA sync OR voice-model artifact. Reopen with a wider trace.
 
+## Part 2 — v0.6.7 retro on v0.5.2's pw-cat preference
+
+User feedback after the first v0.6.7 ship: cuts reduced to
+"approximately 1-second intervals — periodic, not random."
+Better but still bad. Sustained "aaaa" vowel test in Telegram
+showed continuous flutter.
+
+### Reproduction without the engine
+
+Minimal harness — Python writes 250 ms float32 stereo chunks to
+pw-cat's stdin every 250 ms wall-clock (matches engine's writer
+cadence; no inference, no SOLA, no resampling). Capture
+`WoysSink.monitor` via `parec`:
+
+| Backend / latency        | Zero gaps in 23 s | Rate     |
+|--------------------------|-------------------|----------|
+| pw-cat at 100 ms         | 73                | 3.10 /s  |
+| pw-cat at 300 ms         | 76                | 2.65 /s  |
+| **pacat at 300 ms**      | **2**             | **0.08 /s** |
+| pacat at 500 ms          | 2                 | 0.08 /s  |
+
+Each gap is ~42.7 ms wide — exactly one PipeWire quantum at
+2048 samples / 48 kHz. **pw-cat returns silence for one full
+PipeWire quantum every ~3rd chunk**, irrespective of how big the
+ring buffer is. Larger buffer doesn't fix it because the bug is
+in the read-thread / audio-callback synchronisation, not in
+buffer size.
+
+### Why pacat is cleaner
+
+pacat goes through `pipewire-pulse` (the PulseAudio compatibility
+layer). Its stdin reader and audio thread are separately
+scheduled, and the buffer accounting uses PulseAudio's
+prebuf/tlength semantics that absorb bursty 250 ms writes
+without exposing the per-quantum read race.
+
+### v0.5.2 retro
+
+The v0.5.2 retro picked pw-cat because pacat at 30 ms latency
+had 1.4 underruns/s. That measurement was correct *at 30 ms*. At
+300 ms latency on bursty stdin writes, the rankings flip.
+
+### Fix (v0.6.7 part 2)
+
+Change `EngineConfig.prefer_pw_cat = False` (pacat is now the
+default backend) and `output_latency_ms = 300` (was 100). Both
+defaults bumped together — pw-cat at 100 ms was the symbiotic
+sweet spot, but pacat at 300 ms is the new floor.
+
+User's live config patched in place (10 entries `100 → 300`).
+Migrator's numeric bump rule updated `< 100 → 100` to
+`< 300 → 300`, with a new `test_migrate_bumps_intermediate_latency_to_300`
+covering the 100→300 path.
+
+### Residual
+
+Engine + pacat at 300 ms: ~1.0 zero-gap/s on the controlled
+sustained-vowel test (vs 0.08 /s for pure burst-write without the
+engine). The remaining ~1 cut/s is engine-specific and was not
+GC (verified via `gc.disable()` — no change). Suspect ORT CUDA
+stream sync or scheduler interaction. **Deferred** — already a
+~3× improvement over the v0.6.7 part-1 ship; user-verifiable in
+Telegram before deciding whether further investigation is
+warranted.
+
 ## What was *not* fixed
 
 - Writer jitter itself (29.6 ms vs target 12.5 ms). Tightening
@@ -127,3 +192,6 @@ buffer absorbs writer jitter without underrun → micro-cuts gone.
 - `bench_loopback.py` (the project notes notes it's broken). A working
   acoustic loopback would let us measure pw-cat underruns
   directly instead of inferring them from jitter math.
+- The residual ~1 Hz engine-specific cut rate (see Part 2 above).
+  Worth investigating only if the user still hears the bug after
+  the part-2 fix lands.

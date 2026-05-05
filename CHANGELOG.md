@@ -4,39 +4,61 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-## [0.6.7] — 2026-05-05 — Micro-cut fix (pending user confirmation)
+## [0.6.7] — 2026-05-05 — Micro-cut fix (pending user confirmation, two-part)
 
 User report: "voice is changed ok but its noisy and theres many tiny
 cuts between words and even letters of a word." Distinct from the
 v0.5.1 برفک bug (continuous static) and from v0.5.2 pacat-underrun
-storm — this is brief amplitude dips *inside* speech, between phonemes.
+storm — brief amplitude dips *inside* speech, between phonemes.
 
-Two changes ship together; full forensics in `docs/11-microcuts-bug.md`:
+Shipped in two passes; full forensics in `docs/11-microcuts-bug.md`:
 
+**Part 1** — output_latency_ms config migration + stateful soxr
+resampling. After ship, user feedback was "better but still bad,
+cuts now at ~1 sec intervals." Reduced random cuts but left a
+periodic residual.
+
+**Part 2** — root cause of the 1 sec residual: pw-cat returns one
+PipeWire quantum (~43 ms) of silence every ~3rd chunk under bursty
+250 ms stdin writes, regardless of buffer size. Reproduced without
+the engine: 73 zero-gaps in 23 s with pw-cat at 100 ms, vs 2 with
+pacat at 300 ms (40x cleaner). v0.5.2 picked pw-cat because pacat at
+30 ms latency had underrun storms; at 300 ms the rankings flip.
+
+Changes:
+
+- **`prefer_pw_cat = False`** by default (was True). pacat is now
+  the playback backend.
+- **`output_latency_ms = 300`** by default (was 100). Migrator's
+  numeric bump rule updated `< 300 → 300` (was `< 100 → 100`).
 - **Stateful soxr resampling.** New `_StreamResampler` class wraps
   `soxr.ResampleStream`. The realtime engine builds one for
   `mic_rate → 16k` and one for `model_sr → sink_rate`, replaced if
   the model SR changes during hot-swap. Stateless `soxr.resample()`
-  per chunk leaks a 4 Hz amplitude artifact via the filter
-  warm-up; the streaming variant carries filter state across calls.
-- **`output_latency_ms` migration.** EngineConfig has shipped at 100
-  ms since v0.5.2 but the user's stored config still had 30 ms (the
-  pre-v0.5.2 default). With pw-cat at 30 ms and engine writer jitter
-  at 29.6 ms, the playback buffer empties on every spike → audible
-  micro-cut. Migrator now bumps any stored `output_latency_ms < 100`
-  to 100 (idempotent on already-fixed configs). The user's live
-  config was rewritten in place at fix time.
+  per chunk leaks a 4 Hz amplitude artifact via the filter warm-up;
+  the streaming variant carries filter state across calls. Confirmed
+  contributor (-92 dBFS on stationary signal — below audibility but
+  fixed defensively).
 - **`_StreamResampler` tests** in `tests/test_stream_resampler.py`
-  (4 cases: identity passthrough, streamed-vs-one-shot RMSE, flush
-  drains buffer, zero-size chunk safety).
+  (4 cases). Migrator gets a new
+  `test_migrate_bumps_intermediate_latency_to_300` covering the
+  v0.5.2-default → v0.6.7-default migration path.
 
-Trade-off: mic-to-app wall-clock rises ~70 ms (30 → 100 ms playback
-buffer). Conversational latency stays well under any chat-app
-threshold. Stability gain outranks the latency cost.
+User's live config patched in place at fix time: 10 entries each of
+`output_latency_ms`, all bumped 30→100 then 100→300.
 
-Tag is held until the user confirms in Telegram that the cuts are
-gone. If residual cuts persist, the next suspect is ORT CUDA kernel
-sync gaps or voice-model artifacts — would warrant a wider trace.
+Trade-off: mic-to-app wall-clock rises ~270 ms total (was 30 ms
+buffer, now 300 ms). Conversational latency stays well under any
+chat-app threshold. Stability ranks above absolute latency for an
+audible quality bug.
+
+Residual after part 2: the controlled engine+pacat test still shows
+~1 cut/s vs 0.08/s for pure burst-write-to-pacat. GC ruled out via
+`gc.disable()` (no change). Suspect ORT/CUDA stream sync. Deferred
+to a follow-up; ship the 3× improvement, let the user judge whether
+further work is warranted.
+
+Tag is held until the user confirms in Telegram.
 
 ## [0.6.6] — 2026-05-05 — Polish round: stop bleeding state across boundaries
 
