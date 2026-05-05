@@ -168,6 +168,14 @@ class EngineConfig:
     # thread. Size 8 ≈ 2 s of slack at chunk_seconds=0.25; full-queue
     # events are exposed as `queue_full_events` (xrun proxy).
     pacat_writer_queue_size: int = 8
+    # v0.6.7 part 3 — initial silence written to the playback backend
+    # before any real engine output starts. Empirically didn't reduce
+    # xruns in our trials (in fact slightly increased them — pacat seems
+    # to apply its prebuf threshold to the silence and trip more
+    # frequently). Default 0 (off). Kept as a tunable for users whose
+    # backends (or future versions of pacat / pw-cat) might benefit.
+    # See `docs/11-microcuts-bug.md` part 3.
+    prime_silence_seconds: float = 0.0
     # Watchdog polls the pacat subprocess every N seconds; on death it
     # spawns a replacement and bumps `pacat_restarts`.
     pacat_watchdog_interval_s: float = 0.05
@@ -1211,6 +1219,23 @@ class RealtimeEngine:
             initial_proc = self._open_pacat()
             with self._pacat_lock:
                 self._pacat_proc = initial_proc
+            # v0.6.7 part 3 — prime the playback backend's stream buffer
+            # with `prime_silence_seconds` of zeros before any real audio.
+            # Without priming, the buffer steady-state oscillates 0 → chunk
+            # → 0 → chunk; engine writer jitter (~30 ms std) pushes the
+            # buffer to 0 frequently → pacat reports xruns and outputs one
+            # PipeWire quantum (~21-43 ms) of silence per underrun. With a
+            # 1x chunk pre-roll, the buffer floor lifts above 0 and only
+            # outsized jitter (>chunk_seconds) can underrun.
+            # Trade-off: this adds prime_silence_seconds to mic-to-app
+            # wall-clock latency. Default 0.25 s matches chunk_seconds —
+            # smallest pre-roll that fully bridges typical jitter.
+            prime_n = int(self.cfg.sink_rate * self.cfg.prime_silence_seconds)
+            if prime_n > 0 and initial_proc.stdin is not None:
+                silence = np.zeros(prime_n * self.cfg.output_channels, dtype=np.float32).tobytes()
+                with contextlib.suppress(BrokenPipeError, OSError):
+                    initial_proc.stdin.write(silence)
+                    initial_proc.stdin.flush()
             self._writer_queue = queue.Queue(maxsize=self.cfg.pacat_writer_queue_size)
             self._last_writer_ts = None
             self._pacat_dead_event.clear()
