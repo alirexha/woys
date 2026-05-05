@@ -1,4 +1,4 @@
-// vcclient-cachy mic-helper background service worker.
+// woys mic-helper background service worker.
 //
 // v0.4.0 deliverable: skeleton only. No tab-level injection, no message
 // passing yet. Lives here to satisfy Manifest v3's `background` slot;

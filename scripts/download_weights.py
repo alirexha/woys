@@ -8,7 +8,7 @@ Pulls (idempotent unless --force):
   - hubert_base.pt       — fairseq content encoder (current default)
   - amitaro_v2_16k.onnx  — small public RVC voice model for the smoke test
 
-Destination: ~/.local/share/vcclient-cachy/models/
+Destination: ~/.local/share/woys/models/
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import argparse
 import urllib.request
 from pathlib import Path
 
-CACHE = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+CACHE = Path.home() / ".local" / "share" / "woys" / "models"
 
 WEIGHTS: dict[str, str] = {
     "rmvpe.onnx": ("https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.onnx"),

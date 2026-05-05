@@ -1,4 +1,4 @@
-# vcclient-cachy mic-helper (browser extension skeleton)
+# woys mic-helper (browser extension skeleton)
 
 > **Status: skeleton only.** Manifest v3 + popup that detects whether
 > `vcclient-mic` is visible to the browser. No engine API integration yet
@@ -22,7 +22,7 @@ a one-click "reload tab to refresh device list" button.
 
 1. `chrome://extensions` → enable "Developer mode" (top-right toggle).
 2. Click "Load unpacked", point at `pkg/browser-extension/`.
-3. The toolbar gets a "vcclient-cachy mic helper" icon. Click it to test.
+3. The toolbar gets a "woys mic helper" icon. Click it to test.
 
 ### Firefox
 
@@ -51,7 +51,7 @@ pkg/browser-extension/
 ## What's missing (future work)
 
 - Real engine state probe: WebSocket / native messaging to the local
-  `vcclient-cachy run` process so the popup knows if the engine is up,
+  `woys run` process so the popup knows if the engine is up,
   what model is loaded, and current pitch.
 - Auto-pick: detect content scripts on supported voice apps; click the
   device dropdown for the user.

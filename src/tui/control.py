@@ -1,7 +1,7 @@
 """Unix-socket control channel.
 
 Lets a running TUI (or headless engine) be poked from outside by a small CLI
-client — `vcclient-cachy toggle`, `vcclient-cachy pitch +1`, etc. Wired here
+client — `woys toggle`, `woys pitch +1`, etc. Wired here
 instead of D-Bus to avoid running a GLib mainloop alongside Textual's asyncio
 loop. KDE/GNOME WM shortcuts call the CLI; the CLI talks to this socket.
 
@@ -28,7 +28,7 @@ state is `done` or `error <msg>`. Older clients that only spoke MODEL get
 back the same OK reply but never poll — on a cache-cold swap they may see
 the new voice up to ~600 ms later, but no error.
 
-Path: $XDG_RUNTIME_DIR/vcclient-cachy/control.sock (falls back to /tmp).
+Path: $XDG_RUNTIME_DIR/woys/control.sock (falls back to /tmp).
 """
 
 from __future__ import annotations
@@ -44,13 +44,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-logger = logging.getLogger("vcclient_cachy.control")
+logger = logging.getLogger("woys.control")
 
 
 def control_socket_path() -> Path:
     base = os.environ.get("XDG_RUNTIME_DIR")
-    root = Path(base) if base else Path("/tmp") / f"vcclient-cachy-{os.getuid()}"
-    out = (Path(root) / "vcclient-cachy" / "control.sock") if base else (root / "control.sock")
+    root = Path(base) if base else Path("/tmp") / f"woys-{os.getuid()}"
+    out = (Path(root) / "woys" / "control.sock") if base else (root / "control.sock")
     out.parent.mkdir(parents=True, exist_ok=True)
     return out
 

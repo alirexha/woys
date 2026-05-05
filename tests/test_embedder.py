@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-MODELS_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 CONTENTVEC_PATH = MODELS_DIR / "contentvec-f.onnx"
 
 

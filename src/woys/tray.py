@@ -1,7 +1,7 @@
 """Optional system-tray icon (KDE Plasma 6 / GNOME via libappindicator).
 
 Talks to a *running* TUI through its Unix-domain control socket — same
-protocol as `vcclient-cachy toggle`. The tray therefore *requires* a TUI
+protocol as `woys toggle`. The tray therefore *requires* a TUI
 to already be running; if not, it offers to launch one.
 
 Install path
@@ -13,7 +13,7 @@ runtime install. Pull them via the optional extra:
 
 Then:
 
-    vcclient-cachy tray   # spawns the icon
+    woys tray   # spawns the icon
 
 Stays in the background until the user clicks "Quit" in the menu.
 
@@ -92,9 +92,9 @@ def run_tray() -> int:
     # Initial icon state from the engine.
     running, _ = _engine_status()
     icon = pystray.Icon(
-        "vcclient-cachy",
+        "woys",
         icon=_make_icon_image(running),
-        title="vcclient-cachy",
+        title="woys",
         menu=pystray.Menu(
             pystray.MenuItem("Toggle engine", _on_toggle, default=True),
             pystray.MenuItem("Print status", _on_status),

@@ -1,7 +1,7 @@
-"""Minimal Textual TUI for vcclient-cachy.
+"""Minimal Textual TUI for woys.
 
 Shows live engine state (running, mic RMS, latency), exposes pitch shift via
-keys, persists changes to `~/.config/vcclient-cachy/config.toml`.
+keys, persists changes to `~/.config/woys/config.toml`.
 
 Keys
 ----
@@ -30,7 +30,7 @@ from audio.engine import DEFAULT_RVC_MODEL
 from audio.pipewire import PipeWireError, VirtualMic
 from tui.config import AppConfig, load_config, save_config
 from tui.control import ControlServer, JobRegistry
-from vcclient_cachy.profiles import apply_profile, cycle_profile, list_profiles
+from woys.profiles import apply_profile, cycle_profile, list_profiles
 
 
 class StatusPanel(Static):
@@ -230,7 +230,7 @@ class VCClientApp(App[int]):
             )
         if cmd.startswith("MODEL "):
             arg = cmd[len("MODEL ") :].strip()
-            from vcclient_cachy.models import find_by_name
+            from woys.models import find_by_name
 
             new_path = find_by_name(arg)
             if new_path is None:
@@ -353,7 +353,7 @@ class VCClientApp(App[int]):
         names = list_profiles(self.cfg)
         if not names:
             self.notify(
-                "no saved profiles. Use `vcclient-cachy profile save <name>` first.",
+                "no saved profiles. Use `woys profile save <name>` first.",
                 severity="warning",
                 timeout=4,
             )

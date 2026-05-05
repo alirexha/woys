@@ -1,4 +1,4 @@
-"""`vcclient-cachy convert <pth>` — real RVC .pth → .onnx exporter.
+"""`woys convert <pth>` — real RVC .pth → .onnx exporter.
 
 The upstream voice-changer repo ships an `export2onnx` function but expects
 to be called from inside its own Pipeline / FastAPI server context. This
@@ -13,7 +13,7 @@ module is a thin original-work wrapper that:
      I/O signature our engine expects (feats, p_len, pitch?, pitchf?, sid).
 
 Cache: HuggingFace-derived inputs are downloaded into
-`~/.local/share/vcclient-cachy/converted/<repo>/` so re-conversion is free.
+`~/.local/share/woys/converted/<repo>/` so re-conversion is free.
 
 Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
@@ -24,7 +24,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-CACHE_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "converted"
+CACHE_DIR = Path.home() / ".local" / "share" / "woys" / "converted"
 
 
 @dataclass
@@ -227,5 +227,5 @@ def cli_convert(pth: str, output: str | None = None, opset: int = 17, fp16: bool
     except Exception as e:
         print(f"[convert] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
-    print(f"\nLoad it from `~/.config/vcclient-cachy/config.toml`:\n  rvc_model = {str(out)!r}\n")
+    print(f"\nLoad it from `~/.config/woys/config.toml`:\n  rvc_model = {str(out)!r}\n")
     return 0

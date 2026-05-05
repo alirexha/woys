@@ -12,7 +12,7 @@ in the environment is also ignored, because there's no Pulse host API for
 PortAudio to consult.
 
 The fix: instead of `sd.OutputStream`, the engine spawns
-`pacat --playback --device=VCClientCachySink …` as a subprocess and pipes
+`pacat --playback --device=WoysSink …` as a subprocess and pipes
 raw float32 PCM to its stdin. `pacat` is the canonical PulseAudio client; it
 talks to pipewire-pulse natively, takes an explicit `--device=` argument, and
 never auto-routes to the system default. This is the same path that the
@@ -62,7 +62,7 @@ if hasattr(ort, "preload_dlls"):
     ort.preload_dlls()
 
 
-MODELS_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 
 # Defaults pulled from Phase 1 inventory.
 DEFAULT_RVC_MODEL = MODELS_DIR / "amitaro_v2_16k.onnx"
@@ -111,9 +111,9 @@ class EngineConfig:
     embedder: str = "onnx"
 
     # Routing
-    sink_name: str = "VCClientCachySink"
+    sink_name: str = "WoysSink"
     input_device: str | int | None = None  # None = default mic
-    # When False (default): output goes ONLY to VCClientCachySink → vcclient-mic.
+    # When False (default): output goes ONLY to WoysSink → vcclient-mic.
     # When True: ALSO write a best-effort copy to the host's default output
     # (laptop speakers / headphones) for self-monitoring.
     monitor: bool = False
@@ -160,7 +160,7 @@ class EngineConfig:
 
     # v0.5.2 — pacat underrun mitigations (see docs/08-pacat-underrun-bug.md).
     # Channels emitted by the engine. The PipeWire null-sink loaded by
-    # `vcclient-cachy pw setup` defaults to 2 channels; emitting 2 here
+    # `woys pw setup` defaults to 2 channels; emitting 2 here
     # avoids an in-graph 1→2 upmix on every chunk.
     output_channels: int = 2
     # Bounded queue between the engine main loop and the pacat writer
@@ -486,7 +486,7 @@ class RealtimeEngine:
         self._pacat_proc: subprocess.Popen[bytes] | None = None
         self._pacat_lock = threading.Lock()
         # Set by `_open_pacat` to either "pw-cat" or "pacat" — surfaced in
-        # `vcclient-cachy diag` so the user can see which backend is live.
+        # `woys diag` so the user can see which backend is live.
         self._player_backend: str = ""
 
         # v0.5.2 — pacat writer / watchdog / stderr-reader threads.
@@ -913,7 +913,7 @@ class RealtimeEngine:
             "--format=float32le",
             f"--latency-msec={self.cfg.output_latency_ms}",
             f"--process-time-msec={self.cfg.output_process_time_ms}",
-            "--client-name=vcclient-cachy",
+            "--client-name=woys",
             "--stream-name=engine-out",
             "--raw",
             "-v",

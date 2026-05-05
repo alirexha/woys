@@ -1,4 +1,4 @@
-"""PipeWire audio integration for vcclient-cachy."""
+"""PipeWire audio integration for woys."""
 
 from audio.engine import EngineConfig, EngineStats, RealtimeEngine
 from audio.pipewire import PipeWireError, VirtualMic, VirtualMicState, ensure_pipewire, get_state

@@ -1,6 +1,6 @@
 # Voice models — finding, converting, swapping
 
-vcclient-cachy ships **no bundled voice models**. The `install.sh` step pulls
+woys ships **no bundled voice models**. The `install.sh` step pulls
 foundation weights (contentvec, RMVPE, hubert) and a single small public RVC
 voice model (`amitaro_v2_16k.onnx`) for the smoke test. Everything else you
 add yourself.
@@ -10,7 +10,7 @@ add yourself.
 All weights cache under:
 
 ```
-~/.local/share/vcclient-cachy/models/
+~/.local/share/woys/models/
 ```
 
 | File                      | Role                                                | Size  |
@@ -41,24 +41,24 @@ License rules:
 If you already have an `.onnx`:
 
 ```
-cp /path/to/your-voice.onnx ~/.local/share/vcclient-cachy/models/
+cp /path/to/your-voice.onnx ~/.local/share/woys/models/
 ```
 
-To switch the engine to it, edit `~/.config/vcclient-cachy/config.toml`:
+To switch the engine to it, edit `~/.config/woys/config.toml`:
 
 ```toml
-rvc_model = "/home/<you>/.local/share/vcclient-cachy/models/your-voice.onnx"
+rvc_model = "/home/<you>/.local/share/woys/models/your-voice.onnx"
 ```
 
-Restart the TUI (`q` then `vcclient-cachy run --autostart`) — the new model
+Restart the TUI (`q` then `woys run --autostart`) — the new model
 loads on engine start.
 
 ## Converting `.pth` → `.onnx`
 
-As of v0.2.0, `vcclient-cachy convert` is the one-liner path:
+As of v0.2.0, `woys convert` is the one-liner path:
 
 ```
-vcclient-cachy convert /path/to/your-voice.pth
+woys convert /path/to/your-voice.pth
 # → writes /path/to/your-voice.onnx (and your-voice_simple.onnx)
 # → validates the result loads in the engine before exiting
 ```
@@ -102,7 +102,7 @@ the model's flavor first** — that's `RVC v1`, `v2`, with-f0 / without-f0, and
 / with-f0; weights.gg metadata usually mentions it.
 
 ```python
-# convert_pth_to_onnx.py — drop into vcclient-cachy root and run
+# convert_pth_to_onnx.py — drop into woys root and run
 import sys, torch
 sys.path.insert(0, "src/server")  # so upstream-style imports resolve
 
@@ -163,7 +163,7 @@ inputs.
   is ideal for testing latency; for production-quality voice, 40k is better.
 - **Pitch shift should match speaker pitch.** A male-to-female voice usually
   needs `+12` semitones; female-to-male `-12`. Start at 0 and tweak with `+`/`-`.
-- **Use the model's index file** (`.index`) when available. vcclient-cachy
+- **Use the model's index file** (`.index`) when available. woys
   doesn't use it yet (Phase 5+ enhancement); upstream's UI does.
 
 ## Removing a model
@@ -172,5 +172,5 @@ Just delete the `.onnx` file. If it was the active model, the engine falls
 back to the configured default on next start.
 
 ```
-rm ~/.local/share/vcclient-cachy/models/old-voice.onnx
+rm ~/.local/share/woys/models/old-voice.onnx
 ```

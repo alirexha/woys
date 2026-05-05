@@ -4,6 +4,68 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-05-05 — Renamed to **woys**
+
+The project is now called **woys** (pronounced like "woyz", rhymes with
+"boys"). Same engine, same features, new name.
+
+### Breaking
+
+- **Package name**: `vcclient-cachy` → `woys`
+- **Binary**: `vcclient-cachy` → `woys`. The old name is kept as a
+  deprecated shim through the v0.6.x line — running it prints a yellow
+  `[deprecation]` warning and delegates to `woys`. Removed in v0.7.0.
+- **Python module**: `vcclient_cachy` → `woys`. All imports updated.
+- **Config dir**: `~/.config/vcclient-cachy/` → `~/.config/woys/`
+  (auto-migrated on `./install.sh` upgrade).
+- **App / models dir**: `~/.local/share/vcclient-cachy/` →
+  `~/.local/share/woys/` (auto-migrated; absolute paths inside
+  `config.toml` get rewritten by the migrator).
+- **systemd unit**: `vcclient-cachy-mic.service` → `woys-mic.service`
+  (old unit stopped + disabled + removed by the migrator).
+- **PipeWire sink** (internal): `VCClientCachySink` → `WoysSink`. Engine
+  + new systemd unit re-create it on start; no user action needed.
+
+### NOT changed (intentional)
+
+- **PipeWire mic name**: stays `vcclient-mic`. Discord / CS2 / Telegram
+  keep working without reconfiguration. A future v0.7.0 may alias it to
+  `woys-mic` for cleanliness, but the v0.6.0 priority is "no apps break".
+
+### Migration (lossless, automatic)
+
+Run `./install.sh` on the existing install. The installer detects
+`~/.config/vcclient-cachy/` or `~/.local/share/vcclient-cachy/` and
+delegates to `scripts/migrate_to_woys.py` before installing the new
+code. The migrator:
+
+1. Stops + disables the old `vcclient-cachy-mic.service`.
+2. Atomic-renames (`os.rename`) the share / config / cache dirs to the
+   new `woys` paths. Cross-FS fallback to copy + delete if needed.
+3. Parses `config.toml` and rewrites every `vcclient-cachy/models/`
+   path to `woys/models/`. Real TOML parse + emit, no sed.
+4. Idempotent + safe on fresh installs (no-op).
+
+The migration is covered by 9 unit tests against a synthetic `$HOME`
+tree (`tests/test_migrate_to_woys.py`).
+
+### Why
+
+- Cleaner brand. Easier to type. Easier to remember. The `-cachy`
+  suffix was an early "this is the CachyOS-targeted fork" hint that
+  outlived its usefulness — the project runs on any modern Linux with
+  PipeWire + NVIDIA, and the suffix only added typing friction.
+
+### Verification
+
+- `tests/test_migrate_to_woys.py` (9 tests) — fresh install no-op,
+  full move + path rewrite, idempotent re-run, partial-install
+  resilience, dry-run reports without changing anything.
+- All v0.5.2 fast tests still green after the package rename + import
+  sweep (58 passed).
+- GPU embedder tests reactivate after `install.sh` runs and migrates
+  the user's models to the new path.
+
 ## [0.5.2] — 2026-05-05 — Pacat underrun fix ("برفک" / TV-static crackle)
 
 ### The TV-static crackle

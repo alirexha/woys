@@ -3,8 +3,8 @@
 If something's broken, the order to check things in:
 
 1. Audio daemon: `pactl info | head -1` should mention PipeWire.
-2. The mic exists: `vcclient-cachy pw status` should report `True / True`.
-3. The engine starts: `vcclient-cachy run --autostart` should show RUNNING.
+2. The mic exists: `woys pw status` should report `True / True`.
+3. The engine starts: `woys run --autostart` should show RUNNING.
 4. Apps see the mic: `pactl list short sources` should include `vcclient-mic`.
 5. Discord/CS2 are pointed at it (see DISCORD-SETUP.md / CS2-SETUP.md).
 
@@ -14,7 +14,7 @@ If those five are all green, the rest is probably model or anti-cheat related.
 
 ## "pactl info" says PulseAudio, not PipeWire
 
-You're on classic PulseAudio. vcclient-cachy needs PipeWire (the modern
+You're on classic PulseAudio. woys needs PipeWire (the modern
 PulseAudio-compatible audio daemon).
 
 ```
@@ -26,7 +26,7 @@ systemctl --user --now enable pipewire.socket pipewire-pulse.socket
 
 Then log out and log back in. Re-check with `pactl info | head -1`.
 
-## "vcclient-cachy: command not found"
+## "woys: command not found"
 
 `~/.local/bin/` isn't on your `$PATH`. On fish (CachyOS default):
 
@@ -50,7 +50,7 @@ which is called automatically. If you see this error, your venv is probably
 out of date:
 
 ```
-cd ~/ai/vcclient-cachy
+cd ~/ai/woys
 .venv/bin/python -m pip install --upgrade onnxruntime-gpu
 ```
 
@@ -69,13 +69,13 @@ If `nvidia-smi` works but the engine claims no GPU, the venv's `onnxruntime-gpu`
 isn't seeing CUDA. Check ORT version is **≥ 1.20**:
 
 ```
-~/.local/share/vcclient-cachy/venv/bin/python -c "import onnxruntime; print(onnxruntime.__version__)"
+~/.local/share/woys/venv/bin/python -c "import onnxruntime; print(onnxruntime.__version__)"
 ```
 
 If it's older, re-install:
 
 ```
-~/.local/share/vcclient-cachy/venv/bin/pip install -U "onnxruntime-gpu>=1.20"
+~/.local/share/woys/venv/bin/pip install -U "onnxruntime-gpu>=1.20"
 ```
 
 ## "vcclient-mic" doesn't appear in Discord/CS2
@@ -83,20 +83,20 @@ If it's older, re-install:
 The systemd unit may not have started. Check:
 
 ```
-systemctl --user status vcclient-cachy-mic.service
+systemctl --user status woys-mic.service
 ```
 
 If it's not running:
 
 ```
-systemctl --user start vcclient-cachy-mic.service
+systemctl --user start woys-mic.service
 ```
 
 If it errors out, run the underlying command manually to see the actual
 error:
 
 ```
-vcclient-cachy pw setup
+woys pw setup
 ```
 
 Also restart the app — Discord especially caches the device list at launch.
@@ -107,12 +107,12 @@ The engine's `EngineStats.last_error` will surface the underlying issue. Most
 common:
 
 - `OSError: ... vcclient-mic` — the mic was torn down externally. Run
-  `vcclient-cachy pw setup` and start the engine again.
+  `woys pw setup` and start the engine again.
 - `ModuleNotFoundError: contentvec` — the model files aren't in
-  `~/.local/share/vcclient-cachy/models/`. Run:
+  `~/.local/share/woys/models/`. Run:
 
   ```
-  ~/.local/share/vcclient-cachy/venv/bin/python scripts/download_weights.py
+  ~/.local/share/woys/venv/bin/python scripts/download_weights.py
   ```
 
 - `RuntimeError: ... CUDA out of memory` — close other GPU-using apps
@@ -124,7 +124,7 @@ This usually means the pipeline is dropping audio (running below realtime).
 
 1. Check the latency panel in the TUI. If `avg_total_ms` exceeds your
    `chunk_seconds × 1000`, the engine isn't keeping up.
-2. Increase `chunk_seconds` in `~/.config/vcclient-cachy/config.toml`:
+2. Increase `chunk_seconds` in `~/.config/woys/config.toml`:
 
    ```toml
    chunk_seconds = 0.5   # was 0.25
@@ -137,14 +137,14 @@ Check `nvidia-smi` for other CUDA processes.
 
 ## Voice is too quiet / too loud at the listener
 
-vcclient-cachy doesn't apply gain — output level matches the voice model's
-training distribution. To boost output, raise the **VCClientCachySink** sink
+woys doesn't apply gain — output level matches the voice model's
+training distribution. To boost output, raise the **WoysSink** sink
 volume in `pavucontrol` (Output Devices tab). The remap-source mirrors that
 volume into vcclient-mic.
 
 ```
 # Or via CLI:
-pactl set-sink-volume VCClientCachySink 150%
+pactl set-sink-volume WoysSink 150%
 ```
 
 ## Discord noise suppression eats the transformed voice
@@ -164,25 +164,25 @@ This is usually an ORT cudnn algo cache miss when the input shape varies.
 The engine uses fixed `chunk_seconds`, so shapes are stable in normal use.
 If you see this:
 
-1. Run `vcclient-cachy info` and confirm the GPU isn't thermal-throttling
+1. Run `woys info` and confirm the GPU isn't thermal-throttling
    (`nvidia-smi` GPU temp should be < 80°C).
 2. Lock the chunk size in config.toml — don't let it auto-vary.
 
 ## Can I make the global hotkey work without VAC banning me?
 
-The default vcclient-cachy build does **not** use evdev raw-grabbing — it
+The default woys build does **not** use evdev raw-grabbing — it
 exposes toggling via the TUI key (`t`) and the Unix socket
-(`vcclient-cachy toggle`). The latter is what you bind to a KDE/GNOME shortcut.
+(`woys toggle`). The latter is what you bind to a KDE/GNOME shortcut.
 
 If you need a system-wide hotkey *outside* of CS2, the opt-in evdev path:
 
 ```
-pip install -e ~/ai/vcclient-cachy[evdev]
+pip install -e ~/ai/woys[evdev]
 sudo usermod -aG input $USER
 # logout / login
 ```
 
-Then in `~/.config/vcclient-cachy/config.toml`:
+Then in `~/.config/woys/config.toml`:
 
 ```toml
 enable_evdev_hotkey = true
@@ -198,7 +198,7 @@ The TUI's latency panel shows `avg_total_ms` and `avg_inference_ms`. To run
 the inference-only benchmark used in `docs/05-perf.md`:
 
 ```
-cd ~/ai/vcclient-cachy
+cd ~/ai/woys
 .venv/bin/python scripts/smoke_rvc_onnx.py
 ```
 
@@ -213,12 +213,12 @@ Or via pytest:
 Wipe config and re-install:
 
 ```
-rm ~/.config/vcclient-cachy/config.toml
-cd ~/ai/vcclient-cachy
+rm ~/.config/woys/config.toml
+cd ~/ai/woys
 ./uninstall.sh
 ./install.sh
 ```
 
 This nukes the venv and re-creates it. Models cache is in
-`~/.local/share/vcclient-cachy/models/` and is preserved unless you also
+`~/.local/share/woys/models/` and is preserved unless you also
 remove that.

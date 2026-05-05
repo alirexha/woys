@@ -18,7 +18,7 @@ if hasattr(ort, "preload_dlls"):
     ort.preload_dlls()
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODELS = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS = Path.home() / ".local" / "share" / "woys" / "models"
 WAV = PROJECT_ROOT / "tests" / "fixtures" / "sine_voiced_1s.wav"
 
 LATENCY_FLOOR_MS = 80.0  # Phase 1 budget for inference-only.

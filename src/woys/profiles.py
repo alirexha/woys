@@ -1,15 +1,15 @@
 """Named profiles — full-state snapshots of pitch / model / chunk / monitor.
 
-Stored in `~/.config/vcclient-cachy/config.toml` under a `[profiles.<name>]`
+Stored in `~/.config/woys/config.toml` under a `[profiles.<name>]`
 section. The top-level keys mirror `AppConfig`; profile sections have the
 same key namespace, so applying a profile == copy fields into the top
 level + write.
 
 CLI:
-  vcclient-cachy profile save <name>
-  vcclient-cachy profile use <name>
-  vcclient-cachy profile list
-  vcclient-cachy profile delete <name>
+  woys profile save <name>
+  woys profile use <name>
+  woys profile list
+  woys profile delete <name>
 
 The TUI bindings (Phase 4 polish) cycle through the saved profiles.
 
@@ -144,7 +144,7 @@ def cli_profile_list() -> int:
     cfg = load_config()
     names = list_profiles(cfg)
     if not names:
-        print("no saved profiles. Use `vcclient-cachy profile save <name>` to create one.")
+        print("no saved profiles. Use `woys profile save <name>` to create one.")
         return 0
     print(f"{'name':24s}  {'pitch':>6s}  {'chunk_s':>8s}  rvc_model")
     bag = _profiles_bag(cfg)

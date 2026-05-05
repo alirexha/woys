@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tui.config import AppConfig, load_config, save_config
-from vcclient_cachy.profiles import (
+from woys.profiles import (
     apply_profile,
     cycle_profile,
     delete_profile,

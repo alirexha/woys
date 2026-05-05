@@ -1,4 +1,4 @@
-# Phase 0 — Recon: `upstream/` for `vcclient-cachy`
+# Phase 0 — Recon: `upstream/` for `woys`
 
 Scope: trace exactly which code in `upstream/` (a clone of `w-okada/voice-changer`)
 implements the **RVC inference path on ONNX Runtime CUDA EP for Linux/PipeWire**,

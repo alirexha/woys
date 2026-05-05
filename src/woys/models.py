@@ -2,13 +2,13 @@
 
 Backing store
 -------------
-Models live in `~/.local/share/vcclient-cachy/models/`. Anything matching
+Models live in `~/.local/share/woys/models/`. Anything matching
 `*.onnx` (and not already a foundation file) is treated as an RVC voice.
 Foundation files (contentvec, rmvpe, hubert) are filtered out by name.
 
 Hugging Face download
 ---------------------
-`vcclient-cachy models download <repo>` uses `huggingface_hub`'s snapshot
+`woys models download <repo>` uses `huggingface_hub`'s snapshot
 API to fetch all `.onnx` (and any `.index`) files from a repo into the
 cache. Re-runs are free thanks to HF's content-addressable cache.
 
@@ -21,7 +21,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-MODELS_DIR = Path.home() / ".local" / "share" / "vcclient-cachy" / "models"
+MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 
 # Foundation files — these are infrastructure, not user voices. Hide from `list`
 # and skip when picking a default `use` target.
@@ -172,7 +172,7 @@ def cli_models_list(models_dir: Path = MODELS_DIR) -> int:
     active = _read_active_model()
     if not entries:
         print(f"no RVC voice models found under {models_dir}")
-        print("hint: drop a .onnx in there, or run `vcclient-cachy models download <hf-repo>`")
+        print("hint: drop a .onnx in there, or run `woys models download <hf-repo>`")
         return 0
     print(f"{'  ':2}{'name':32s} {'size':>9s} {'sr':>6s} {'v':>3s} {'f0':>3s}")
     for e in entries:
@@ -221,7 +221,7 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
     path = find_by_name(name, models_dir)
     if path is None:
         print(f"[models] no such model: {name!r}", file=sys.stderr)
-        print("  use `vcclient-cachy models list` to see what's available", file=sys.stderr)
+        print("  use `woys models list` to see what's available", file=sys.stderr)
         return 1
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -249,13 +249,13 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
         print(f"[models] hot-swapped → {path.name}")
         return 0
     if reply.startswith("ERR control socket not found"):
-        # Engine not running — write config so the next `vcclient-cachy run`
+        # Engine not running — write config so the next `woys run`
         # picks it up.
         cfg = load_config()
         cfg.rvc_model = str(path.resolve())
         save_config(cfg)
         print(f"[models] config updated → {path.name}")
-        print("         (engine not running; the next `vcclient-cachy run` will load it)")
+        print("         (engine not running; the next `woys run` will load it)")
         return 0
     print(f"[models] swap reply: {reply}", file=sys.stderr)
     return 1

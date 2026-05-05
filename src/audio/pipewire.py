@@ -1,13 +1,13 @@
 """PipeWire integration: persistent virtual mic via `pactl` modules.
 
 Architecture (matches Q6 — persistent vcclient-mic):
-  Boot/login → systemd user unit `vcclient-cachy-mic.service` runs
-  `vcclient-cachy pw setup`, which loads two PipeWire modules:
-    1. module-null-sink  →  VCClientCachySink (apps see it as an audio output)
-    2. module-remap-source master=VCClientCachySink.monitor → vcclient-mic
+  Boot/login → systemd user unit `woys-mic.service` runs
+  `woys pw setup`, which loads two PipeWire modules:
+    1. module-null-sink  →  WoysSink (apps see it as an audio output)
+    2. module-remap-source master=WoysSink.monitor → vcclient-mic
        (Discord/CS2 see it as a microphone)
 
-  The engine writes transformed audio to VCClientCachySink; everyone listening
+  The engine writes transformed audio to WoysSink; everyone listening
   on vcclient-mic hears it. The modules persist across engine start/stop —
   Discord can lock onto vcclient-mic once and forget about it.
 
@@ -27,12 +27,12 @@ import subprocess
 from dataclasses import dataclass
 
 # Names that survive across runs and uninstalls.
-SINK_NAME = "VCClientCachySink"
+SINK_NAME = "WoysSink"
 SOURCE_NAME = "vcclient-mic"
 # pactl prop strings: replace spaces with `\_` (pactl's escape) so the value
 # survives shell-style tokenization inside pipewire-pulse's argument parser.
-SINK_DESC = "vcclient-cachy_(sink)"
-SOURCE_DESC = "vcclient-mic_(vcclient-cachy)"
+SINK_DESC = "woys_(sink)"
+SOURCE_DESC = "vcclient-mic_(woys)"
 _SINK_DESC_ESCAPED = SINK_DESC
 _SOURCE_DESC_ESCAPED = SOURCE_DESC
 
@@ -77,7 +77,7 @@ def ensure_pipewire() -> None:
         )
     if "PipeWire" not in out.stdout:
         raise PipeWireError(
-            "vcclient-cachy requires PipeWire (with pipewire-pulse).\n"
+            "woys requires PipeWire (with pipewire-pulse).\n"
             f"  Detected: {out.stdout.splitlines()[0] if out.stdout else 'unknown'}\n"
             "  On Arch/CachyOS: `paru -S pipewire pipewire-pulse pipewire-alsa`"
         )

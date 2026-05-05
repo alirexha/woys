@@ -2,7 +2,7 @@
 
 A `.vcprofile` is just a TOML file with three top-level tables:
 
-  [meta]              — format version, vcclient-cachy version, author hint
+  [meta]              — format version, woys version, author hint
   [profile]           — full snapshot of the profile fields (same keys as
                         the `[profiles.<name>]` section in config.toml)
   [model]             — file name (basename) + SHA-256 of the .onnx the
@@ -55,7 +55,7 @@ def export_profile(name: str, output: Path, *, config_path: Path | None = None) 
     """Write the named saved profile (from config.toml) to a .vcprofile file."""
     _ensure_path()
     from tui.config import CONFIG_FILE, load_config
-    from vcclient_cachy.profiles import _profiles_bag
+    from woys.profiles import _profiles_bag
 
     cfg = load_config(config_path or CONFIG_FILE)
     bag = _profiles_bag(cfg)
@@ -86,12 +86,12 @@ def export_profile(name: str, output: Path, *, config_path: Path | None = None) 
     snap.pop("rvc_model", None)
 
     # Late import for version string.
-    import vcclient_cachy
+    import woys
 
     payload = {
         "meta": {
             "format_version": VCPROFILE_VERSION,
-            "vcclient_cachy_version": vcclient_cachy.__version__,
+            "woys_version": woys.__version__,
             "profile_name": name,
         },
         "profile": snap,
@@ -126,9 +126,9 @@ def import_profile(
     import tomllib
 
     from tui.config import CONFIG_FILE, load_config, save_config
-    from vcclient_cachy.models import MODELS_DIR as DEFAULT_MODELS_DIR
-    from vcclient_cachy.models import discover_models
-    from vcclient_cachy.profiles import save_profile
+    from woys.models import MODELS_DIR as DEFAULT_MODELS_DIR
+    from woys.models import discover_models
+    from woys.profiles import save_profile
 
     with path.open("rb") as f:
         raw = tomllib.load(f)
@@ -191,7 +191,7 @@ def import_profile(
     bag = dict(cfg._extras.get("profiles", {}))
     bag[name] = {k: v for k, v in asdict(tmp_cfg).items() if k in snap_in or k == "rvc_model"}
     # Make sure all profile fields land in the snapshot.
-    from vcclient_cachy.profiles import _PROFILE_FIELDS
+    from woys.profiles import _PROFILE_FIELDS
 
     full_snap: dict[str, Any] = {}
     for k in _PROFILE_FIELDS:
@@ -232,5 +232,5 @@ def cli_profile_import(path: str, name: str | None = None) -> int:
         print(f"[profile import] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
     print(f"[profile import] saved profile {new_name!r}.")
-    print(f"  apply with: vcclient-cachy profile use {new_name}")
+    print(f"  apply with: woys profile use {new_name}")
     return 0

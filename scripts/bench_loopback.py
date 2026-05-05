@@ -2,7 +2,7 @@
 
 Methodology
 -----------
-Per Q4 (the README's headline number). Sends a click through `VCClientCachySink`
+Per Q4 (the README's headline number). Sends a click through `WoysSink`
 and listens on `vcclient-mic` via `parec`; measures wall-clock delay between
 playback time and capture time using cross-correlation.
 
@@ -83,7 +83,7 @@ def run() -> int:
         time.sleep(0.05)  # let parec stabilize
         # Play to the SINK (where the engine writes).
         play = subprocess.Popen(
-            ["pacat", "--device=VCClientCachySink", "--rate=48000", str(click_path)],
+            ["pacat", "--device=WoysSink", "--rate=48000", str(click_path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

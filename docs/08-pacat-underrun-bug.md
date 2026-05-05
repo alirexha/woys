@@ -130,7 +130,7 @@ and lose the signal entirely.
 
 v0.5.2 captures stderr to a `subprocess.PIPE` and runs a daemon reader
 thread that increments `EngineStats.xruns` on every `Underrun` token.
-The TUI shows the counter live; the new `vcclient-cachy diag`
+The TUI shows the counter live; the new `woys diag`
 subcommand prints it after a 10 s self-test.
 
 That's the closest thing to a true xrun count we can get without

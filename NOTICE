@@ -1,4 +1,4 @@
-vcclient-cachy — file-by-file provenance and license boundary
+woys — file-by-file provenance and license boundary
 ==============================================================
 
 This NOTICE file establishes the legal boundary between two bodies of code
@@ -29,8 +29,8 @@ ORIGINAL WORK — Copyright 2026 Alireza Hamayeli, All Rights Reserved
 ----------------------------------------------------------------------
 
 Source code (Python):
-  src/vcclient_cachy/__init__.py
-  src/vcclient_cachy/cli.py
+  src/woys/__init__.py
+  src/woys/cli.py
   src/audio/__init__.py
   src/audio/engine.py
   src/audio/pipewire.py
@@ -59,7 +59,7 @@ Packaging:
   install.sh
   uninstall.sh
   pkg/PKGBUILD
-  pkg/vcclient-cachy-mic.service
+  pkg/woys-mic.service
 
 Configuration & metadata:
   pyproject.toml

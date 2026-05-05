@@ -1,11 +1,11 @@
-# vcclient-cachy
+# woys
 
 > **Status: private alpha — All Rights Reserved. Not for redistribution.**
 > This repository is private and proprietary pending a commercial decision.
 > See `LICENSE` and `NOTICE` for the boundary between original work and the
 > upstream `w-okada/voice-changer` MIT-licensed code.
 
-Linux-native, CachyOS-optimized real-time voice changer. RVC-only, ONNX Runtime CUDA, PipeWire-native, terminal-controlled.
+Linux-native real-time voice changer. RVC-only, ONNX Runtime CUDA, PipeWire-native, terminal-controlled. Originally targeted CachyOS; runs on any modern Linux with PipeWire + an NVIDIA GPU.
 
 ## What it is
 
@@ -26,10 +26,10 @@ currently missed; the path to closing the gap is documented).
 See `docs/INSTALL.md`. Short version:
 
 ```
-git clone https://github.com/alirexha/vcclient-cachy.git
-cd vcclient-cachy
+git clone https://github.com/alirexha/woys.git
+cd woys
 ./install.sh
-vcclient-cachy run --autostart
+woys run --autostart
 ```
 
 Then point Discord (`docs/DISCORD-SETUP.md`) or CS2 (`docs/CS2-SETUP.md`)
@@ -39,7 +39,7 @@ at the `vcclient-mic` device that appears in their input-device pickers.
 
 `pkg/PKGBUILD` and `pkg/.SRCINFO` are submission-ready. Once the GitHub
 repo is public, follow `pkg/README-AUR.md` to push to
-`aur.archlinux.org/packages/vcclient-cachy`. Until then, `./install.sh`
+`aur.archlinux.org/packages/woys`. Until then, `./install.sh`
 is the supported install path.
 
 ## Credits
@@ -48,7 +48,7 @@ This fork is built on the work of **[w-okada](https://github.com/w-okada)**
 and the original [voice-changer](https://github.com/w-okada/voice-changer)
 project. The portions of this repository under `upstream/` and any code
 within `src/server/` that descends from upstream remain under the original
-MIT license (`upstream/LICENSE`). All original work in `src/vcclient_cachy/`,
+MIT license (`upstream/LICENSE`). All original work in `src/woys/`,
 `src/audio/`, `src/tui/`, `tests/`, `scripts/`, `pkg/`, and `docs/` is the
 proprietary work of Alireza Hamayeli.
 
@@ -60,7 +60,7 @@ This repository contains code under **two distinct licenses**:
 |-----------------------------------------------|--------------------------|-------------------|
 | `upstream/`                                   | MIT                      | w-okada/voice-changer |
 | `src/server/` (vendored, trimmed)             | MIT (derivative)         | w-okada/voice-changer |
-| `src/{vcclient_cachy,audio,tui}/`             | **All Rights Reserved**  | Alireza Hamayeli  |
+| `src/{woys,audio,tui}/`             | **All Rights Reserved**  | Alireza Hamayeli  |
 | `tests/`, `scripts/`, `pkg/`, `docs/`, `*.sh` | **All Rights Reserved**  | Alireza Hamayeli  |
 | Top-level configuration & metadata            | **All Rights Reserved**  | Alireza Hamayeli  |
 

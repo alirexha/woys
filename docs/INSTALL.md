@@ -1,4 +1,4 @@
-# Installing vcclient-cachy
+# Installing woys
 
 This guide assumes you've never installed Python software on Linux before.
 Every command is copy-paste-able; every step says **what** it does and **why**.
@@ -33,13 +33,13 @@ Then log out and log back in.
 
 ```
 cd ~/ai
-git clone https://github.com/alirexha/vcclient-cachy.git
-cd vcclient-cachy
+git clone https://github.com/alirexha/woys.git
+cd woys
 ```
 
 `cd ~/ai` puts you in the AI workspace folder.
 `git clone …` copies the source tree from GitHub to disk.
-`cd vcclient-cachy` walks into the freshly-cloned directory.
+`cd woys` walks into the freshly-cloned directory.
 
 ## Step 2 — run install.sh
 
@@ -51,16 +51,16 @@ What this does, in order:
 
 1. Checks for `pactl` (pipewire-pulse) and `nvidia-smi` (GPU). Warns if missing.
 2. Installs `uv` (a fast Python package installer) into `~/.local/bin/` if absent.
-3. Creates an isolated Python 3.11 environment under `~/.local/share/vcclient-cachy/venv/`.
-4. Installs `vcclient-cachy` and all its dependencies into that environment.
+3. Creates an isolated Python 3.11 environment under `~/.local/share/woys/venv/`.
+4. Installs `woys` and all its dependencies into that environment.
    This is the slow step — it pulls ~3.5 GB of Python wheels (torch, onnxruntime-gpu, etc.).
-5. Symlinks `~/.local/bin/vcclient-cachy` to the venv's binary so you can run it from anywhere.
-6. Downloads the foundation ONNX weights into `~/.local/share/vcclient-cachy/models/`:
+5. Symlinks `~/.local/bin/woys` to the venv's binary so you can run it from anywhere.
+6. Downloads the foundation ONNX weights into `~/.local/share/woys/models/`:
    - `contentvec-f.onnx` (~360 MB — content encoder)
    - `rmvpe_wrapped.onnx` (~345 MB — pitch detector)
    - `hubert_base.pt` (~180 MB — fallback embedder)
    - `amitaro_v2_16k.onnx` (~64 MB — sample voice for testing)
-7. Registers `vcclient-cachy-mic.service` as a systemd user unit, then enables and starts it.
+7. Registers `woys-mic.service` as a systemd user unit, then enables and starts it.
 
 If `~/.local/bin` isn't on your `$PATH`, the installer prints how to add it.
 On fish (CachyOS default):
@@ -78,13 +78,13 @@ export PATH="$HOME/.local/bin:$PATH"
 ## Step 3 — sanity-check the install
 
 ```
-vcclient-cachy info
+woys info
 ```
 
 You should see something like:
 
 ```
-vcclient-cachy 0.1.0
+woys 0.1.0
   python: 3.11.15
   Server Name: PulseAudio (on PipeWire 1.6.4)
   gpu: NVIDIA GeForce RTX 2070, 595.71.05, 8192 MiB
@@ -93,7 +93,7 @@ vcclient-cachy 0.1.0
 Then check the persistent virtual mic is loaded:
 
 ```
-vcclient-cachy pw status
+woys pw status
 ```
 
 Expected:
@@ -108,7 +108,7 @@ source_present: True  (module 536870917)
 ## Step 4 — run the TUI
 
 ```
-vcclient-cachy run --autostart
+woys run --autostart
 ```
 
 Hotkeys inside the TUI:
@@ -125,13 +125,13 @@ Hotkeys inside the TUI:
 From outside the TUI (e.g. from a KDE/GNOME global shortcut), use:
 
 ```
-vcclient-cachy toggle
-vcclient-cachy pitch +2
-vcclient-cachy status
+woys toggle
+woys pitch +2
+woys status
 ```
 
 These talk to the running TUI over a Unix socket at
-`$XDG_RUNTIME_DIR/vcclient-cachy/control.sock`.
+`$XDG_RUNTIME_DIR/woys/control.sock`.
 
 ## Step 5 — wire it into Discord / CS2
 
@@ -141,7 +141,7 @@ apps' input-device selector, pick `vcclient-mic`. That's it.
 ## Updating
 
 ```
-cd ~/ai/vcclient-cachy
+cd ~/ai/woys
 git pull
 ./install.sh --skip-models
 ```
@@ -151,10 +151,10 @@ git pull
 ## Uninstalling
 
 ```
-cd ~/ai/vcclient-cachy
+cd ~/ai/woys
 ./uninstall.sh
 ```
 
 Or `./uninstall.sh --keep-models` to keep the ~1 GB ONNX cache around.
-Your config at `~/.config/vcclient-cachy/config.toml` is always preserved;
+Your config at `~/.config/woys/config.toml` is always preserved;
 delete it manually if you want a fully clean slate.

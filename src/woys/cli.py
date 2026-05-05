@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from vcclient_cachy import __version__
+from woys import __version__
 
 # Upstream-style imports (from voice_changer.X) require src/server/ on sys.path.
 _SERVER_ROOT = Path(__file__).resolve().parent.parent / "server"
@@ -22,7 +22,7 @@ if _SRC_ROOT.is_dir() and str(_SRC_ROOT) not in sys.path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="vcclient-cachy",
+        prog="woys",
         description="Linux-native real-time voice changer (RVC + ONNX + PipeWire).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -56,14 +56,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=None,
         help="also play transformed audio to your default output (self-monitor). "
-        "OFF by default — engine writes only to VCClientCachySink.",
+        "OFF by default — engine writes only to WoysSink.",
     )
 
     sub.add_parser("toggle", help="toggle a running TUI's engine on/off")
     sub.add_parser("status", help="ask a running TUI for its status")
     pitch_p = sub.add_parser(
         "pitch",
-        help="bump pitch shift in a running TUI (e.g. `vcclient-cachy pitch +2`)",
+        help="bump pitch shift in a running TUI (e.g. `woys pitch +2`)",
     )
     pitch_p.add_argument("delta", help="signed integer or `0` to reset")
 
@@ -150,7 +150,7 @@ def cmd_info() -> int:
     import shutil
     import subprocess
 
-    print(f"vcclient-cachy {__version__}")
+    print(f"woys {__version__}")
     print(f"  python: {sys.version.split()[0]}")
     pactl = shutil.which("pactl")
     if pactl:
@@ -210,7 +210,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     """
     import time
 
-    print(f"vcclient-cachy diag — {__version__}")
+    print(f"woys diag — {__version__}")
     print("---- environment ----")
     cmd_info()  # cuda + pipewire-server versions, gpu
 
@@ -317,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
             monitor=args.monitor,
         )
     if args.cmd == "convert":
-        from vcclient_cachy.convert import cli_convert
+        from woys.convert import cli_convert
 
         return cli_convert(
             args.pth,
@@ -326,14 +326,14 @@ def main(argv: list[str] | None = None) -> int:
             fp16=getattr(args, "fp16", False),
         )
     if args.cmd == "fp16-convert":
-        from vcclient_cachy.fp16_convert import cli_fp16_convert
+        from woys.fp16_convert import cli_fp16_convert
 
         targets = ["rmvpe"]
         if args.include_contentvec:
             targets.append("contentvec")
         return cli_fp16_convert(targets, force=args.force)
     if args.cmd == "models":
-        from vcclient_cachy.models import cli_models_download, cli_models_list, cli_models_use
+        from woys.models import cli_models_download, cli_models_list, cli_models_use
 
         if args.models_cmd == "list":
             return cli_models_list()
@@ -342,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.models_cmd == "use":
             return cli_models_use(args.name)
     if args.cmd == "profile":
-        from vcclient_cachy.profiles import (
+        from woys.profiles import (
             cli_profile_delete,
             cli_profile_list,
             cli_profile_save,
@@ -358,15 +358,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.profile_cmd == "delete":
             return cli_profile_delete(args.name)
         if args.profile_cmd == "export":
-            from vcclient_cachy.vcprofile import cli_profile_export
+            from woys.vcprofile import cli_profile_export
 
             return cli_profile_export(args.name, args.output)
         if args.profile_cmd == "import":
-            from vcclient_cachy.vcprofile import cli_profile_import
+            from woys.vcprofile import cli_profile_import
 
             return cli_profile_import(args.path, args.name)
     if args.cmd == "tray":
-        from vcclient_cachy.tray import cli_tray
+        from woys.tray import cli_tray
 
         return cli_tray()
     if args.cmd == "diag":
