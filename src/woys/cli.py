@@ -299,6 +299,14 @@ def cmd_pw_status() -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    # `woys` with no subcommand launches the TUI with autostart — same as
+    # `woys run --autostart`. Helpful for "type the app name to open it"
+    # ergonomics. `woys --help` and `woys --version` still work because
+    # argparse intercepts those before reaching this dispatch.
+    if args.cmd is None:
+        from tui.app import run_tui
+
+        return run_tui(no_pw_setup=False, autostart=True, monitor=None)
     if args.cmd == "info":
         return cmd_info()
     if args.cmd == "pw":
