@@ -33,10 +33,13 @@ Path: $XDG_RUNTIME_DIR/woys/control.sock (falls back to /tmp).
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import logging
 import os
+import signal
 import socket
+import sys
 import threading
 import time
 import uuid
@@ -155,9 +158,22 @@ class ControlServer:
         self._sock.settimeout(0.5)
         os.chmod(self.path, 0o600)
 
+        # v0.6.6 — guarantee the socket file gets unlinked even if stop()
+        # never runs (e.g. `kill <tui-pid>`). Without this, the next
+        # `woys status` / `woys toggle` finds a stale path that exists()
+        # but refuses connect — the test_send_command_when_no_server case.
+        atexit.register(self._unlink_path)
+        if signal.getsignal(signal.SIGTERM) in (signal.SIG_DFL, signal.SIG_IGN):
+            signal.signal(signal.SIGTERM, _exit_on_signal)
+
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="vcclient-control", daemon=True)
         self._thread.start()
+
+    def _unlink_path(self) -> None:
+        """atexit-safe socket file unlink (idempotent)."""
+        with contextlib.suppress(OSError):
+            self.path.unlink(missing_ok=True)
 
     def stop(self) -> None:
         self._stop.set()
@@ -190,21 +206,35 @@ class ControlServer:
                     logger.warning("control conn error: %s", e)
 
 
+def _exit_on_signal(signum: int, _frame: object) -> None:
+    """SIGTERM → clean exit so atexit handlers (incl. socket unlink) fire."""
+    sys.exit(128 + signum)
+
+
 def send_command(cmd: str, timeout: float = 30.0) -> str:
     """Client side: connect once, send `cmd`, return reply.
 
     v0.5.0: default timeout bumped from 1 s to 30 s. Slow commands (MODEL,
     PROFILE) return a job id within milliseconds; the JOB poll happens
     inside the timeout window, so even cold-cache swaps fit comfortably.
+
+    v0.6.6: handles stale socket files. If the TUI was killed without a
+    clean shutdown (kill -9, crash, etc.), the socket path can exist as a
+    file with no listener. We catch ConnectionRefusedError / FileNotFoundError
+    and return a clear ERR string instead of letting the exception escape.
     """
     path = control_socket_path()
     if not path.exists():
         return "ERR control socket not found — TUI not running?"
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-        s.settimeout(timeout)
-        s.connect(str(path))
-        s.sendall((cmd + "\n").encode("utf-8"))
-        return s.recv(512).decode("utf-8", errors="replace").strip()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            s.connect(str(path))
+            s.sendall((cmd + "\n").encode("utf-8"))
+            return s.recv(512).decode("utf-8", errors="replace").strip()
+    except (ConnectionRefusedError, FileNotFoundError):
+        # Stale socket file — server crashed or was kill -9'd.
+        return "ERR control socket stale — TUI not running?"
 
 
 def submit_and_wait(
