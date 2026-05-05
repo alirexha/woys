@@ -844,3 +844,139 @@ to fixing it.
 
 If you're tempted to delete that list "because the targets aren't met yet" —
 don't. Read this section back to yourself.
+
+## 16. v0.6.7 retrospective — the micro-cut chase (and where it ended)
+
+Six fix releases on a single bug class. User report: "voice is changed
+ok but its noisy and theres many tiny cuts between words and even
+letters of a word." Three rounds of fixes shipped under v0.6.7. The
+arc, and the floor we hit.
+
+### Three real fixes (each closed a distinct mechanism)
+
+**Part 1 — `output_latency_ms` config migration.** User's
+`~/.config/woys/config.toml` had `output_latency_ms = 30` (10
+entries: 1 global + 9 profiles) left over from before v0.5.2's
+default-bump to 100. Same shape as the v0.6.4 `sink_name` bug — a
+default changed but stored configs override forever. Migrator gained
+a numeric-bump rule that was bumped twice during this release
+(< 100 → 100, then < 300 → 300 in part 2).
+
+**Part 1 — stateful soxr resampling.** New `_StreamResampler` class
+wraps `soxr.ResampleStream` to carry filter state across chunks.
+Stateless `soxr.resample()` per chunk leaks a 4 Hz amplitude artifact
+via the per-call filter warm-up. Confirmed contributor at -92 dBFS
+(below audibility) but fixed defensively because the realtime
+playback amplifies subtle artifacts.
+
+**Part 2 — pacat instead of pw-cat.** v0.5.2 picked pw-cat because
+pacat at 30 ms latency had underrun storms. **At 300 ms latency on
+bursty 250 ms-chunk stdin writes, the rankings flip.** Bench (no
+engine, just Python writing to stdin):
+
+| Backend / latency | Zero-gaps in 23 s | Rate    |
+|-------------------|-------------------|---------|
+| pw-cat at 100 ms  | 73                | 3.10 /s |
+| pw-cat at 300 ms  | 76                | 2.65 /s |
+| pacat at 300 ms   |  2                | 0.08 /s |
+| pacat at 500 ms   |  2                | 0.08 /s |
+
+**40× cleaner.** pw-cat returns one PipeWire quantum (~43 ms) of
+silence every ~3rd chunk under bursty stdin writes, regardless of
+buffer size — bug is in pw-cat's stdin-reader / audio-callback
+synchronisation, not buffer depth.
+
+### What part 3 *didn't* fix
+
+User feedback after part 2: "still has random cuts, not every second
+but randomly." Sweep tests across `(chunk_seconds × output_latency_ms
+× prime_silence_seconds)`:
+
+- Priming silence at startup (0.25–0.5 s): didn't help, slightly
+  worse — pacat applies its prebuf threshold to the silence and
+  rebuffers more aggressively. Kept as a config knob, default 0.
+- Smaller chunks (0.10 / 0.05 s): much worse (3.5–4.3 cuts/s). 0.25 s
+  is a local minimum.
+- Larger latency (500 / 1000 ms): no improvement.
+- `gc.disable()`: no change. Not Python GC.
+- `sd.OutputStream(device='pipewire')`: routed to default sink (laptop
+  speakers), not WoysSink. PortAudio ALSA host API doesn't propagate
+  `PIPEWIRE_NODE_TARGET`. Bypass-pacat needs deeper plumbing.
+
+### The honest root cause
+
+**The residual ~1 cut / s with pacat at 300 ms is engine-driven
+jitter the playback backend can't fully absorb.** Engine inference
+variance is ~30 ms std-dev (avg 80 ms, occasional spikes to 110-120
+ms). Each spike means the writer thread's next stdin write is late.
+Pacat's tlength=300 ms buffer can absorb most of that, but stacked
+spikes within a 250 ms window drain the buffer to 0 → one PipeWire
+quantum (~21-43 ms) of silence reported as a `Stream underrun` on
+pacat's stderr.
+
+Pacat reports 7-14 xruns per 8 s of `woys diag`. Matches the user's
+"random cuts" perception exactly. The bottleneck is *engine
+inference variance*, not pacat config.
+
+### Why we lived with it
+
+User's own call after seeing the data: "The ~0.7-0.9 cuts/sec is
+acceptable for me to test in real CS2 / Discord conversation, since
+cuts will land in word silences during normal speech. The
+sustained-vowel worst case is acoustically misleading." Tagged
+v0.6.7 with the residual documented. **If real-world conversation is
+fine, the bigger fix can wait for v0.7.x — possibly forever.**
+
+### Three v0.7.x options for breaking the floor (ranked by predictability)
+
+**1. Pre-rendering ring buffer (most predictable).** Engine writes to
+an in-process software ring buffer (Python threading.Queue is fine).
+A separate thread feeds pacat at *exact* 250 ms cadence regardless of
+engine variance, padding with the previous chunk's tail or with
+silence if the queue runs dry. Trade-off: +250 ms wall latency
+(engine has to lead the playback by one chunk). **Almost certain to
+eliminate the residual.** ~1-2 days work; one new module + 2-3 tests.
+
+**2. ORT IOBinding + explicit CUDA stream control (most ambitious).**
+Replace `session.run()` calls with `IOBinding` + manual stream
+synchronisation. Lets us defer/pipeline GPU sync that's likely the
+dominant jitter source. Could reduce jitter from 30 ms to <5 ms,
+which would also let us drop `output_latency_ms` back toward 100 ms
+(net latency *decrease* of ~150 ms). High risk, days of work, easy
+to break correctness. ~3-5 days; significant new test surface.
+
+**3. Native PipeWire output path (longest tail).** Replace pacat
+subprocess with a Python-PipeWire binding (pw-python is unmaintained
+but viable as a rewrite target) or a small C extension. Eliminates
+the stdin-pipe bottleneck entirely. Fragile dependency choice —
+either we adopt pw-python and risk it bit-rotting, or we maintain a
+C extension long-term. ~1 week; new dependency, packaging work,
+platform fragility (pacat works on every PA-compatible system; pw
+binding is PipeWire-only).
+
+**Recommended order if v0.6.7 turns out unusable in real CS2 use:**
+go straight to option 1 (the ring buffer). It's the most predictable
+fix with the smallest blast radius. Option 2 is a real optimization
+but could regress correctness. Option 3 is a rewrite — only worth it
+if PipeWire wins enough on Linux that the dependency lock-in becomes
+acceptable.
+
+### Lesson — knowing when to stop
+
+Six release cycles deep on one bug class is a signal. The user said
+yes to shipping the residual and testing in real conversation
+because the worst-case acoustic test (sustained vowel) was
+overstating the perceived problem. **Sometimes the right move is to
+ship the 3× improvement, document the floor honestly, and let real
+usage decide whether the next 5× is worth a week of work.**
+
+### Lesson — proactive-fix discipline got tested
+
+After v0.6.6 the user pushed back on me listing pre-existing bugs
+under "Worth flagging" instead of fixing them. v0.6.7 honoured that:
+the stale-socket fix in v0.6.6, the SIGTERM cleanup, the config
+migrator's numeric bump, the prime_silence_seconds knob — all small
+adjacent fixes that landed in the same release as the main work
+without being asked. **Save the "Worth flagging" footer for things
+that genuinely need user judgment.** If you'd fix it anyway, just
+fix it.

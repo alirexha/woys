@@ -4,86 +4,92 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-## [0.6.7] — 2026-05-05 — Micro-cut fix (pending user confirmation, two-part)
+## [0.6.7] — 2026-05-05 — Micro-cut fix
 
 User report: "voice is changed ok but its noisy and theres many tiny
 cuts between words and even letters of a word." Distinct from the
-v0.5.1 برفک bug (continuous static) and from v0.5.2 pacat-underrun
+v0.5.1 برفک bug (continuous static) and from the v0.5.2 pacat-underrun
 storm — brief amplitude dips *inside* speech, between phonemes.
 
-Shipped in two passes; full forensics in `docs/11-microcuts-bug.md`:
+Investigation took three rounds (see `LESSONS.md §16` for the full
+arc). Aggregate change set:
 
-**Part 1** — output_latency_ms config migration + stateful soxr
-resampling. After ship, user feedback was "better but still bad,
-cuts now at ~1 sec intervals." Reduced random cuts but left a
-periodic residual.
+### Backend switch — pw-cat → pacat
 
-**Part 2** — root cause of the 1 sec residual: pw-cat returns one
-PipeWire quantum (~43 ms) of silence every ~3rd chunk under bursty
-250 ms stdin writes, regardless of buffer size. Reproduced without
-the engine: 73 zero-gaps in 23 s with pw-cat at 100 ms, vs 2 with
-pacat at 300 ms (40x cleaner). v0.5.2 picked pw-cat because pacat at
-30 ms latency had underrun storms; at 300 ms the rankings flip.
+`prefer_pw_cat = False` by default (was `True`). v0.5.2 picked pw-cat
+because pacat at 30 ms latency had underrun storms. At 300 ms latency
+on bursty 250 ms-chunk stdin writes, the rankings flip — pw-cat
+returns one PipeWire quantum (~43 ms) of silence every ~3rd chunk
+regardless of buffer size, because of a stdin-reader / audio-callback
+race inside pw-cat. Reproducer (no engine, just Python writing to
+stdin):
 
-Changes:
+| Backend / latency | Zero-gaps in 23 s | Rate    |
+|-------------------|-------------------|---------|
+| pw-cat at 100 ms  | 73                | 3.10 /s |
+| pw-cat at 300 ms  | 76                | 2.65 /s |
+| pacat at 300 ms   |  2                | 0.08 /s |
 
-- **`prefer_pw_cat = False`** by default (was True). pacat is now
-  the playback backend.
-- **`output_latency_ms = 300`** by default (was 100). Migrator's
-  numeric bump rule updated `< 300 → 300` (was `< 100 → 100`).
-- **Stateful soxr resampling.** New `_StreamResampler` class wraps
-  `soxr.ResampleStream`. The realtime engine builds one for
-  `mic_rate → 16k` and one for `model_sr → sink_rate`, replaced if
-  the model SR changes during hot-swap. Stateless `soxr.resample()`
-  per chunk leaks a 4 Hz amplitude artifact via the filter warm-up;
-  the streaming variant carries filter state across calls. Confirmed
-  contributor (-92 dBFS on stationary signal — below audibility but
-  fixed defensively).
-- **`_StreamResampler` tests** in `tests/test_stream_resampler.py`
-  (4 cases). Migrator gets a new
-  `test_migrate_bumps_intermediate_latency_to_300` covering the
-  v0.5.2-default → v0.6.7-default migration path.
+40× cleaner on the same write cadence.
 
-User's live config patched in place at fix time: 10 entries each of
-`output_latency_ms`, all bumped 30→100 then 100→300.
+### Latency bump — 100 ms → 300 ms
 
-Trade-off: mic-to-app wall-clock rises ~270 ms total (was 30 ms
-buffer, now 300 ms). Conversational latency stays well under any
-chat-app threshold. Stability ranks above absolute latency for an
-audible quality bug.
+`output_latency_ms = 300` by default (was 100). Pacat needs more
+headroom than pw-cat did. Migrator's numeric-bump rule updated:
+`output_latency_ms < 300 → 300` (was `< 100 → 100`). User's stored
+config was patched in place: 10 entries each, all stale at 30 ms or
+100 ms, all rewritten to 300. Two new migrator tests pin the rule;
+old configs survive `./install.sh` cleanly.
 
-Residual after part 2: the controlled engine+pacat test still shows
-~1 cut/s vs 0.08/s for pure burst-write-to-pacat. GC ruled out via
-`gc.disable()` (no change). Suspect ORT/CUDA stream sync. Deferred
-to a follow-up; ship the 3× improvement, let the user judge whether
-further work is warranted.
+Trade-off: mic-to-app wall-clock rises ~270 ms compared to v0.5.2's
+30 ms buffer. Conversational latency stays well under any chat-app
+threshold; stability ranks above absolute latency for an audible
+quality bug.
 
-**Part 3** — user reported "still has random cuts, not every second
-but randomly" after part 2. Sweep tests across
-`(chunk_seconds × output_latency_ms × prime_silence_seconds)` to
-hunt the residual:
+### Stateful soxr resampling
 
-- `prime_silence_seconds` config knob added (default 0). Tested
-  values 0.0, 0.25, 0.5 at latency 300/500/1000 ms. Priming did
-  *not* help — slightly increased xruns in repeated trials, likely
-  because pacat applies its prebuf threshold to the silence and
-  trips re-buffering more often. Kept the knob for future tuning.
-- `chunk_seconds = 0.10` and `0.05` tested. Both *worse* than 0.25
-  (3.5–4.3 cuts/s vs 0.7–1.1 at 0.25 s). Smaller chunks → more
-  frequent writes → more chances for pacat-internal race
-  conditions. 0.25 s is the local minimum.
-- `sd.OutputStream(device='pipewire')` tried as a pacat-bypass.
-  Routed to default sink (laptop speakers), not WoysSink, because
-  PortAudio's ALSA host API doesn't honour `PIPEWIRE_NODE_TARGET`.
-  Would need a deeper plumbing change to use; deferred.
+New `_StreamResampler` class wraps `soxr.ResampleStream`. The
+realtime engine builds one for `mic_rate → 16 k` and one for
+`model_sr → sink_rate`, replaced if model SR changes during
+hot-swap. Stateless `soxr.resample()` per chunk leaks a 4 Hz
+amplitude artifact via the per-call filter warm-up. Confirmed
+contributor at -92 dBFS (below audibility) — fixed defensively.
+Four new unit tests (`tests/test_stream_resampler.py`).
 
-Net: the v0.6.7-part-2 defaults are the pareto frontier for this
-backend. Residual ~1 cut/s is engine-driven jitter the playback
-backend can't fully absorb. Likely fixable only by reducing engine
-inference variance (ORT/CUDA scheduler) or switching to a non-stdin
-output path. Both are larger projects deferred to v0.7.x.
+### `prime_silence_seconds` config knob
 
-Tag is held until the user confirms in Telegram.
+Optional initial silence written to the playback backend at startup
+to lift the steady-state buffer floor above zero. Empirically
+*didn't* help in trials (pacat applies its prebuf threshold to the
+silence and rebuffers more aggressively) — default `0.0`, kept as a
+tunable for users on backends that might benefit.
+
+### Honest residual
+
+After all three rounds, the controlled engine + pacat + 300 ms test
+still shows ~0.7-1.0 zero-gaps/s vs 0.08/s for pure burst-write-to-
+pacat without the engine. **The residual is engine inference
+variance** (~30 ms std-dev) propagating into pacat's buffer
+accounting. GC ruled out via `gc.disable()`. Sweep across
+`chunk_seconds`, `latency_ms`, `prime_silence_seconds` confirmed
+the v0.6.7 defaults are the pareto frontier for the current
+stdin-pipe-to-pacat output path.
+
+Tagged anyway — user opted to ship and test in real CS2 / Discord
+use because cuts land in word silences during normal speech, and
+the sustained-vowel worst case overstates perceived impact. If
+real-world conversation is unusable, three v0.7.x options are
+documented in `LESSONS.md §16` (ranked: pre-rendering ring buffer >
+ORT IOBinding > native PipeWire output).
+
+### Files
+
+Engine (`src/audio/engine.py`): `_StreamResampler`, default-config
+changes, `prime_silence_seconds`. Migrator
+(`scripts/migrate_to_woys.py`): numeric-bump rule. Tests:
+`test_stream_resampler.py` (new), three new migrator tests. Docs:
+`docs/11-microcuts-bug.md` (forensic trail), `LESSONS.md §16`
+(retrospective + v0.7.x option ranking).
 
 ## [0.6.6] — 2026-05-05 — Polish round: stop bleeding state across boundaries
 
