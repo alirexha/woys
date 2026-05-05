@@ -103,7 +103,7 @@ sink_present  : True  (module 536870916)
 source_present: True  (module 536870917)
 ```
 
-`pactl list short sources` should now include a line containing `vcclient-mic`.
+`pactl list short sources` should now include a line containing `woys-mic`.
 
 ## Step 4 — run the TUI
 
@@ -136,7 +136,7 @@ These talk to the running TUI over a Unix socket at
 ## Step 5 — wire it into Discord / CS2
 
 See `docs/DISCORD-SETUP.md` and `docs/CS2-SETUP.md`. The short version: in those
-apps' input-device selector, pick `vcclient-mic`. That's it.
+apps' input-device selector, pick `woys-mic`. That's it.
 
 ## Updating
 

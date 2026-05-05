@@ -1,15 +1,19 @@
 """PipeWire integration: persistent virtual mic via `pactl` modules.
 
-Architecture (matches Q6 — persistent vcclient-mic):
+Architecture (matches Q6 — persistent woys-mic):
   Boot/login → systemd user unit `woys-mic.service` runs
   `woys pw setup`, which loads two PipeWire modules:
     1. module-null-sink  →  WoysSink (apps see it as an audio output)
-    2. module-remap-source master=WoysSink.monitor → vcclient-mic
+    2. module-remap-source master=WoysSink.monitor → woys-mic
        (Discord/CS2 see it as a microphone)
 
   The engine writes transformed audio to WoysSink; everyone listening
-  on vcclient-mic hears it. The modules persist across engine start/stop —
-  Discord can lock onto vcclient-mic once and forget about it.
+  on woys-mic hears it. The modules persist across engine start/stop —
+  Discord can lock onto woys-mic once and forget about it.
+
+v0.6.5 — the source name was renamed `vcclient-mic` → `woys-mic`. Probe
+and teardown also recognise the legacy name so users upgrading from
+v0.6.4 or earlier get the orphan module cleared on next setup.
 
 We do NOT use `object.linger=true`: pactl-loaded modules already persist past
 the loading client's lifetime (modules are server-side state). Linger would
@@ -28,11 +32,16 @@ from dataclasses import dataclass
 
 # Names that survive across runs and uninstalls.
 SINK_NAME = "WoysSink"
-SOURCE_NAME = "vcclient-mic"
+SOURCE_NAME = "woys-mic"
 # pactl prop strings: replace spaces with `\_` (pactl's escape) so the value
 # survives shell-style tokenization inside pipewire-pulse's argument parser.
 SINK_DESC = "woys_(sink)"
-SOURCE_DESC = "vcclient-mic_(woys)"
+SOURCE_DESC = "woys-mic_(woys)"
+
+# v0.6.5 — pre-rename source name. Probe / teardown still recognise it so
+# v0.6.4-and-earlier users can be cleanly upgraded on next `woys pw setup`.
+# Safe to remove in a future major when no in-the-wild install can have it.
+LEGACY_SOURCE_NAME = "vcclient-mic"
 _SINK_DESC_ESCAPED = SINK_DESC
 _SOURCE_DESC_ESCAPED = SOURCE_DESC
 
@@ -125,7 +134,7 @@ def _destroy_orphan_nodes() -> None:
     if out.returncode != 0:
         return
 
-    targets = {SINK_NAME, SOURCE_NAME}
+    targets = {SINK_NAME, SOURCE_NAME, LEGACY_SOURCE_NAME}
     current_id: str | None = None
     ids_to_destroy: list[str] = []
     for line in out.stdout.splitlines():
@@ -165,9 +174,29 @@ def get_state() -> VirtualMicState:
     )
 
 
+def _find_legacy_source_module_id() -> int | None:
+    """v0.6.5 — module id of any pre-rename `vcclient-mic` remap-source, or
+    None. Used to clear orphans during upgrade."""
+    for mod_id, name, args in _list_modules():
+        if name == "module-remap-source" and f"source_name={LEGACY_SOURCE_NAME}" in args:
+            return mod_id
+    return None
+
+
+def _unload_legacy_source() -> None:
+    """v0.6.5 — best-effort unload of any pre-rename source module.
+
+    Safe to call on fresh installs (no-op if nothing matches). Failures
+    are silently ignored — the worst case is one orphan module that
+    pactl's next `unload-module` invocation would catch."""
+    legacy_id = _find_legacy_source_module_id()
+    if legacy_id is not None:
+        _run_pactl(["unload-module", str(legacy_id)])
+
+
 @dataclass
 class VirtualMic:
-    """Idempotent setup/teardown of the vcclient-mic node pair.
+    """Idempotent setup/teardown of the woys-mic node pair.
 
     `linger` defaults to False because PipeWire modules persist across pactl
     client disconnects natively — modules are server-side state, not client
@@ -182,10 +211,15 @@ class VirtualMic:
     def ensure(self) -> VirtualMicState:
         """Load both modules if they aren't already present.
 
+        v0.6.5: also clears any pre-rename `vcclient-mic` remap-source
+        before checking state, so an upgrade from v0.6.4 or earlier can't
+        end up with both old and new sources side-by-side.
+
         Also clears orphan nodes (left by a prior `linger=true` run, or by
         a borked pactl invocation) before loading.
         """
         ensure_pipewire()
+        _unload_legacy_source()
         state = get_state()
         if state.fully_present:
             return state
@@ -200,13 +234,18 @@ class VirtualMic:
         return get_state()
 
     def teardown(self) -> None:
-        """Unload both modules. Idempotent — silent if nothing to do."""
+        """Unload both modules. Idempotent — silent if nothing to do.
+
+        v0.6.5: also unloads any orphan `vcclient-mic` remap-source from
+        pre-rename installs.
+        """
         state = get_state()
         # Unload source first; it depends on the sink's monitor.
         if state.source_module_id is not None:
             _run_pactl(["unload-module", str(state.source_module_id)])
         if state.sink_module_id is not None:
             _run_pactl(["unload-module", str(state.sink_module_id)])
+        _unload_legacy_source()
         # Sweep orphans (defensive — should be a no-op when linger=False).
         _destroy_orphan_nodes()
 

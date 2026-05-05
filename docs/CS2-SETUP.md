@@ -1,6 +1,6 @@
 # Using woys with Counter-Strike 2
 
-Same idea as Discord: point CS2 at `vcclient-mic`. CS2 itself doesn't have
+Same idea as Discord: point CS2 at `woys-mic`. CS2 itself doesn't have
 "noise suppression" toggles you need to fiddle with — its in-game voice
 chat reads from the OS audio input you select.
 
@@ -24,13 +24,13 @@ opt-in evdev setup, but understand it's at your own risk.
 ## Step 1 — start the engine
 
 ```
-woys pw status         # confirm vcclient-mic is loaded
+woys pw status         # confirm woys-mic is loaded
 woys run --autostart    # start the TUI with engine running
 ```
 
 Leave the TUI open in a terminal — Alt-Tab back to your game.
 
-## Step 2 — point CS2 at vcclient-mic
+## Step 2 — point CS2 at woys-mic
 
 CS2 picks up the system's *default* recording device. The cleanest path:
 
@@ -46,13 +46,13 @@ CS2 picks up the system's *default* recording device. The cleanest path:
 3. Make sure your real microphone (e.g. HyperX QuadCast) is set to a profile
    that captures audio.
 4. Hop to the **Input Devices** tab.
-5. Click the **Set as fallback** button (a gray check) on **vcclient-mic**.
+5. Click the **Set as fallback** button (a gray check) on **woys-mic**.
    That makes CS2 prefer it next time it picks an input.
 
 Alternatively, set it from the CLI:
 
 ```
-pactl set-default-source vcclient-mic
+pactl set-default-source woys-mic
 ```
 
 ## Step 3 — check in CS2
@@ -60,7 +60,7 @@ pactl set-default-source vcclient-mic
 1. Launch Counter-Strike 2.
 2. **Settings → Audio → Voice → Voice Input Device**.
 3. The dropdown will show what PipeWire reports as the default. With the
-   fallback set above, it should be `vcclient-mic`.
+   fallback set above, it should be `woys-mic`.
 4. Hit **Open Mic Test**, speak — you should see the meter respond.
 
 If CS2 stubbornly clings to your old mic, restart Steam — Source 2 caches the
@@ -100,8 +100,8 @@ in `~/.config/woys/config.toml`:
   latency at slightly worse pitch quality.
 - `mic_rate = 48000` matches CS2's expected rate; don't change it.
 
-## Optional — separate vcclient-mic for game vs. Discord
+## Optional — separate woys-mic for game vs. Discord
 
 If you only want the voice changer in CS2 but real voice in Discord, set
-**Discord** to your real mic (e.g. HyperX) and **CS2** to vcclient-mic.
+**Discord** to your real mic (e.g. HyperX) and **CS2** to woys-mic.
 Different apps can use different mics on PipeWire — that's the whole point.

@@ -1,10 +1,10 @@
 # Using woys with Discord
 
-You'll point Discord at `vcclient-mic` (the virtual microphone woys
+You'll point Discord at `woys-mic` (the virtual microphone woys
 publishes), then turn off Discord's noise suppression so it doesn't fight the
 voice changer's output.
 
-## Step 0 — verify vcclient-mic exists
+## Step 0 — verify woys-mic exists
 
 ```
 woys pw status
@@ -29,10 +29,10 @@ woys run --autostart
 `--autostart` flips the engine on the moment the TUI launches. Once you see
 `status: RUNNING` and the latency panel updates, the audio path is live.
 
-## Step 2 — point Discord at vcclient-mic
+## Step 2 — point Discord at woys-mic
 
 1. Open Discord → **User Settings** (cog icon next to your name) → **Voice & Video**.
-2. **Input Device** dropdown → pick **`vcclient-mic`**.
+2. **Input Device** dropdown → pick **`woys-mic`**.
 3. **Output Device** can stay on your headphones — woys doesn't
    touch playback, only input.
 
@@ -69,13 +69,13 @@ with low latency.
 | Discord says "no input"                    | Check `woys status` — is the engine RUNNING?                     |
 | Voice sounds robotic / clipped             | Lower input gain in your mic; the engine handles up to ~0.7 RMS cleanly    |
 | Heavy delay (>500 ms)                      | Reduce `chunk_seconds` in `~/.config/woys/config.toml` to 0.25   |
-| Mic level meter is dead in Discord         | Try `pavucontrol` → **Recording** tab → confirm Discord is reading vcclient-mic |
+| Mic level meter is dead in Discord         | Try `pavucontrol` → **Recording** tab → confirm Discord is reading woys-mic |
 | Pitch shift sounds wrong                   | Hit `0` in the TUI to reset, then `+`/`-` one semitone at a time           |
 | Engine errors out after model load         | Check `~/.local/share/woys/models/` — re-run `scripts/download_weights.py` |
 
 If Discord auto-detects "another device" each call and switches off
-vcclient-mic, lock the input device in Discord's settings (the dropdown shows
-"vcclient-mic" with a lock icon when remembered).
+woys-mic, lock the input device in Discord's settings (the dropdown shows
+"woys-mic" with a lock icon when remembered).
 
 ## Pro tip — KDE/GNOME shortcut for toggle
 

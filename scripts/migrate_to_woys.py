@@ -20,15 +20,22 @@ Systemd:
     that's where the new file lives.
 
 PipeWire:
-    The user-facing SOURCE name (`vcclient-mic`) is intentionally NOT
-    renamed in v0.6.0 so Discord / CS2 / Telegram don't need
-    re-configuration. The internal SINK name DID change
-    (`VCClientCachySink` → `WoysSink`); this migrator rewrites the
-    `sink_name` key in `config.toml` accordingly so the engine targets
-    the sink that v0.6.0+ actually loads. v0.6.4 fix — without this
-    rewrite, `pw-cat --target=VCClientCachySink` silently falls back
-    to the default sink (laptop speakers) since the legacy sink no
-    longer exists. See `docs/10-monitor-leak-diag.md`.
+    v0.6.0 to v0.6.4: the user-facing SOURCE name (`vcclient-mic`) was
+    deliberately preserved across the rename so Discord / CS2 / Telegram
+    didn't need re-configuration.
+    v0.6.5: that compromise was retired — the source is now `woys-mic`
+    too. Apps need to re-select their input device once. The remap-source
+    rename is handled by `pipewire.VirtualMic.ensure()` (it unloads any
+    legacy `vcclient-mic` module before loading the new one), not by this
+    migrator.
+
+    The internal SINK name changed in v0.6.0 (`VCClientCachySink` →
+    `WoysSink`). This migrator rewrites the `sink_name` key in
+    `config.toml` accordingly so the engine targets the sink that
+    v0.6.0+ actually loads. v0.6.4 fix — without this rewrite,
+    `pw-cat --target=VCClientCachySink` silently falls back to the
+    default sink (laptop speakers) since the legacy sink no longer
+    exists. See `docs/10-monitor-leak-diag.md`.
 
 Usage:
     python3 scripts/migrate_to_woys.py [--dry-run]

@@ -33,7 +33,7 @@ woys run --autostart
 ```
 
 Then point Discord (`docs/DISCORD-SETUP.md`) or CS2 (`docs/CS2-SETUP.md`)
-at the `vcclient-mic` device that appears in their input-device pickers.
+at the `woys-mic` device that appears in their input-device pickers.
 
 ### AUR (pending repo de-privatisation)
 

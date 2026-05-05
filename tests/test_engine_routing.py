@@ -5,7 +5,7 @@ device (laptop speakers) instead of WoysSink. v0.1.1 spawns
 `pacat --device=WoysSink` directly, which is what this test asserts.
 
 If this test fails, Discord/Telegram/CS2 will receive silence even though
-they're correctly pointed at `vcclient-mic`. That's the user-visible
+they're correctly pointed at `woys-mic`. That's the user-visible
 symptom of the v0.1.0 bug.
 """
 
@@ -34,7 +34,7 @@ def test_engine_writes_to_vcclientcachysink_within_3s() -> None:
     VirtualMic().ensure()
     state = get_state()
     if not state.fully_present:
-        pytest.skip("WoysSink + vcclient-mic not loaded — `woys pw setup`")
+        pytest.skip("WoysSink + woys-mic not loaded — `woys pw setup`")
 
     eng = RealtimeEngine(EngineConfig(chunk_seconds=0.5))
     eng.start()
@@ -92,7 +92,7 @@ def test_engine_does_not_open_default_alsa_output_when_monitor_off() -> None:
     VirtualMic().ensure()
     state = get_state()
     if not state.fully_present:
-        pytest.skip("WoysSink + vcclient-mic not loaded")
+        pytest.skip("WoysSink + woys-mic not loaded")
 
     eng = RealtimeEngine(EngineConfig(chunk_seconds=0.5, monitor=False))
     eng.start()

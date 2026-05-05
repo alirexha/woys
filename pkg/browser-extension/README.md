@@ -1,19 +1,19 @@
 # woys mic-helper (browser extension skeleton)
 
 > **Status: skeleton only.** Manifest v3 + popup that detects whether
-> `vcclient-mic` is visible to the browser. No engine API integration yet
+> `woys-mic` is visible to the browser. No engine API integration yet
 > — that's future work.
 
 ## Why an extension?
 
-When the engine is running and `vcclient-mic` exists, every web app that
+When the engine is running and `woys-mic` exists, every web app that
 records audio (Google Meet, Discord web, Zoom web, web SIP, etc.) can pick
 it up — but only after the user manually selects it from a device dropdown.
 Browsers also cache the device list per tab, so opening a call before
 starting the engine means the user has to refresh.
 
 This extension's eventual job: detect the engine's state, prompt the user
-to pick `vcclient-mic` when they're on a known voice/call site, and offer
+to pick `woys-mic` when they're on a known voice/call site, and offer
 a one-click "reload tab to refresh device list" button.
 
 ## Loading the unpacked extension
@@ -42,7 +42,7 @@ For permanent install, package + sign through addons.mozilla.org.
 pkg/browser-extension/
 ├── manifest.json    Manifest v3 declaration
 ├── popup.html       320×~150px popup
-├── popup.js         enumerates audio devices, surfaces vcclient-mic state
+├── popup.js         enumerates audio devices, surfaces woys-mic state
 ├── background.js    service-worker stub (no-op for skeleton)
 ├── icons/           required by manifest; placeholders if generic
 └── README.md        this file
@@ -56,7 +56,7 @@ pkg/browser-extension/
 - Auto-pick: detect content scripts on supported voice apps; click the
   device dropdown for the user.
 - Per-tab override: remember user's preference per origin so the helper
-  doesn't pop up on sites where they don't want vcclient-mic active.
+  doesn't pop up on sites where they don't want woys-mic active.
 - Icon assets at 16/48/128 px. Skeleton ships with placeholder paths;
   drop real PNGs into `icons/` before submitting to the Chrome Web Store
   / addons.mozilla.org.

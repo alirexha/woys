@@ -4,6 +4,53 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-05-05 — Rename PipeWire mic `vcclient-mic` → `woys-mic`
+
+The user-facing PipeWire source was renamed from `vcclient-mic` to
+`woys-mic`, finishing the v0.6.0 rename that had deliberately
+preserved the legacy source name to spare users a one-time
+re-configuration. Consensus: stop deferring it, take the hit once.
+
+**Users will need to re-select their input device in Discord / CS2 /
+Telegram / Zoom / browser apps once.** Anything that pinned the input
+by name will see the old `vcclient-mic` disappear from device lists
+and need to pick `woys-mic` instead.
+
+The engine handles the upgrade cleanly: `woys pw setup` (and the
+systemd unit's `ExecStart`) now unloads any orphan `vcclient-mic`
+remap-source before loading the new one, so an upgrade can't end up
+with both side-by-side. `install.sh` also sweeps any stale legacy
+modules during install. `pkg/browser-extension/popup.js` flags the
+legacy device with a "re-run setup" hint if it spots one mid-upgrade.
+
+Files renamed: prose in README, INSTALL, DISCORD-SETUP, CS2-SETUP, QA,
+TROUBLESHOOTING (with a new section explicitly walking through the
+re-selection migration), 05-perf. Test skip messages and CLI help text.
+Historical docs (CHANGELOG, LESSONS, v0_5_0 retro, 10-monitor-leak-diag)
+left verbatim — they describe past state.
+
+## [0.6.4] — 2026-05-05 — Plug audio leak from stale sink_name
+
+A v0.5.x → v0.6.x upgrade left `sink_name = "VCClientCachySink"` in
+config.toml. v0.6.0+ loads the sink as `WoysSink`, so `pw-cat` asked
+for a sink that no longer existed and PipeWire silently fell back to
+the default sink (laptop speakers). Three fixes: migrator now rewrites
+the legacy sink name; engine pre-flights `cfg.sink_name` against
+`pactl list short sinks` and refuses to start with a clear error if
+absent (no more silent fallback); TROUBLESHOOTING.md gets a one-liner
+sed for users who can't reinstall. Diagnostic forensics in
+`docs/10-monitor-leak-diag.md`.
+
+## [0.6.3] — 2026-05-05 — Add jennie voice to library
+
+Added Jennie (BLACKPINK) to the curated voice library. Source:
+natanworkspace/Legacy_Core_Models on HuggingFace, RVC v2, 32 kHz,
+230 epochs / 31280 steps. Verified via the existing
+`scripts/voice_library_import.py` machinery — download + 7z integrity
+check + extract + convert + engine validation + profile registration.
+The system `unzip` couldn't verify the archive (zstd compression);
+flagged for a future fallback in the batch importer.
+
 ## [0.6.2] — 2026-05-05 — Trim default voice library
 
 Removed `alfred_pennyworth` and `batman_troy_baker` from default voice
