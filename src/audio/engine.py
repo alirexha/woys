@@ -117,30 +117,31 @@ class EngineConfig:
     # When True: ALSO write a best-effort copy to the host's default output
     # (laptop speakers / headphones) for self-monitoring.
     monitor: bool = False
-    # Output latency in ms requested from the playback backend. With
-    # pw-cat (default), this is sized via PipeWire's pull-based graph and
-    # 100 ms is comfortable. With pacat fallback the request maps to
-    # PulseAudio's tlength + prebuf and 1000 ms is needed to keep the PA
-    # buffer above the underrun threshold under chunked 250 ms writes
-    # (see docs/08-pacat-underrun-bug.md for the measurement trail).
-    # v0.5.2: 30 → 100. The 100 ms default is for pw-cat; pacat fallback
-    # automatically negotiates a higher actual latency.
-    output_latency_ms: int = 100
+    # Output latency in ms requested from the playback backend.
+    # v0.6.7: 100 → 300 (default backend is pacat now; see prefer_pw_cat
+    # comment). At 300 ms pacat absorbs the engine's 250 ms-chunk
+    # writer cadence without ring-buffer underruns. At 100 ms (the
+    # v0.5.2 pw-cat sweet spot) pacat *also* runs clean; at <100 ms
+    # pacat returns to underrun storms. 300 ms gives a comfortable
+    # safety margin without measurable user-perceived latency cost.
+    output_latency_ms: int = 300
     # Process-time hint to pacat: write callbacks granulate to this many
     # ms. 20 ms keeps writes from coalescing into bursts that would
     # alternately starve and overrun the buffer. Ignored by pw-cat, which
     # uses PipeWire's quantum negotiation instead.
     output_process_time_ms: int = 20
 
-    # v0.5.2: prefer `pw-cat` over `pacat` for playback. pw-cat speaks
-    # PipeWire natively, uses pull-based scheduling, and tolerates bursty
-    # 250 ms chunked writes without underrunning. pacat goes through
-    # pipewire-pulse's PulseAudio compatibility layer, which exposes
-    # PulseAudio's prebuf/tlength semantics — those don't match our
-    # write cadence and produce underruns at any reasonable latency
-    # setting (see docs/08). Auto-falls-back to pacat if pw-cat is
-    # missing (rare on CachyOS where pipewire ships both).
-    prefer_pw_cat: bool = True
+    # v0.6.7 retro on v0.5.2 — pw-cat is no longer preferred. With bursty
+    # 250 ms chunk writes, pw-cat's stdin reader thread / PipeWire
+    # callback thread fall out of phase: every PipeWire callback that
+    # fires while pw-cat is mid-stdin-read sees an empty ring buffer and
+    # outputs ~43 ms (one PipeWire quantum at default settings) of
+    # silence. The captured WoysSink.monitor for a 25 s sustained-vowel
+    # test shows ~3 zero-gaps/s with pw-cat at 100 ms. Switching to
+    # pacat at 300 ms drops it to 0.08/s (40x cleaner) on the same
+    # write cadence. Reproducer:  /tmp/controlled_engine_test.py
+    # in the v0.6.7 retro. See `docs/11-microcuts-bug.md` part 2.
+    prefer_pw_cat: bool = False
 
     # v0.5.1: software input pre-attenuation, in dB. Default 0.0 (passthrough).
     # Hot mics (HyperX QuadCast at high volume etc.) clip the signal which
