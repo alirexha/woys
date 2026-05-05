@@ -4,6 +4,40 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.6.7] — 2026-05-05 — Micro-cut fix (pending user confirmation)
+
+User report: "voice is changed ok but its noisy and theres many tiny
+cuts between words and even letters of a word." Distinct from the
+v0.5.1 برفک bug (continuous static) and from v0.5.2 pacat-underrun
+storm — this is brief amplitude dips *inside* speech, between phonemes.
+
+Two changes ship together; full forensics in `docs/11-microcuts-bug.md`:
+
+- **Stateful soxr resampling.** New `_StreamResampler` class wraps
+  `soxr.ResampleStream`. The realtime engine builds one for
+  `mic_rate → 16k` and one for `model_sr → sink_rate`, replaced if
+  the model SR changes during hot-swap. Stateless `soxr.resample()`
+  per chunk leaks a 4 Hz amplitude artifact via the filter
+  warm-up; the streaming variant carries filter state across calls.
+- **`output_latency_ms` migration.** EngineConfig has shipped at 100
+  ms since v0.5.2 but the user's stored config still had 30 ms (the
+  pre-v0.5.2 default). With pw-cat at 30 ms and engine writer jitter
+  at 29.6 ms, the playback buffer empties on every spike → audible
+  micro-cut. Migrator now bumps any stored `output_latency_ms < 100`
+  to 100 (idempotent on already-fixed configs). The user's live
+  config was rewritten in place at fix time.
+- **`_StreamResampler` tests** in `tests/test_stream_resampler.py`
+  (4 cases: identity passthrough, streamed-vs-one-shot RMSE, flush
+  drains buffer, zero-size chunk safety).
+
+Trade-off: mic-to-app wall-clock rises ~70 ms (30 → 100 ms playback
+buffer). Conversational latency stays well under any chat-app
+threshold. Stability gain outranks the latency cost.
+
+Tag is held until the user confirms in Telegram that the cuts are
+gone. If residual cuts persist, the next suspect is ORT CUDA kernel
+sync gaps or voice-model artifacts — would warrant a wider trace.
+
 ## [0.6.6] — 2026-05-05 — Polish round: stop bleeding state across boundaries
 
 A bundle of small bugs that had been quietly biting through the v0.6.x

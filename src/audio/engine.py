@@ -274,14 +274,14 @@ def _resample_linear(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArray
 
 
 def _resample(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArrayF32:
-    """High-quality resampler using soxr. Production path for v0.5.1+.
+    """High-quality stateless resampler — used for one-shot tests + tail flushes.
 
-    Cost: ~0.5 ms for a 100 ms chunk on this CPU. Worth it: linear interp
-    introduces ~-21 dB of high-frequency noise on a 48 k -> 40 k -> 48 k
-    round-trip; soxr HQ stays below the noise floor (~-87 dB RMSE).
+    The realtime engine path uses `_StreamResampler` instead so the
+    anti-aliasing filter state survives across chunks. See
+    `docs/11-microcuts-bug.md` for why per-chunk stateless resampling
+    leaks a 4 Hz envelope artifact.
 
-    See `docs/07-audio-quality-bug.md` for the measurement that motivated
-    this swap.
+    Cost: ~0.5 ms for a 100 ms chunk on this CPU.
     """
     if src_rate == dst_rate:
         return audio.astype(np.float32, copy=False)
@@ -291,6 +291,50 @@ def _resample(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArrayF32:
 
     out = soxr.resample(audio, src_rate, dst_rate, quality="HQ")
     return np.asarray(out, dtype=np.float32)
+
+
+class _StreamResampler:
+    """Stateful soxr resampler — preserves filter state across chunks.
+
+    Per-call `soxr.resample(...)` resets the anti-aliasing filter every
+    invocation; concatenating the resampled chunks introduces a brief
+    filter-transient amplitude dip at every chunk boundary, audible as
+    a 4 Hz flutter on sustained content (`docs/11-microcuts-bug.md`).
+    `soxr.ResampleStream` carries the filter buffer across calls and
+    eliminates the per-chunk warm-up.
+
+    Identity case (`src_rate == dst_rate`) is a passthrough — no soxr
+    object created.
+    """
+
+    def __init__(self, src_rate: int, dst_rate: int, *, quality: str = "HQ") -> None:
+        self.src_rate = src_rate
+        self.dst_rate = dst_rate
+        if src_rate == dst_rate:
+            self._stream = None
+            return
+        import soxr  # type: ignore[import-untyped]
+
+        self._stream = soxr.ResampleStream(src_rate, dst_rate, num_channels=1, quality=quality)
+
+    def process(self, audio: NDArrayF32) -> NDArrayF32:
+        """Consume `audio` (1-D float32 mono); return whatever soxr emits
+        for this chunk. Output length will lag input length slightly while
+        the internal buffer fills — flush() drains the rest."""
+        if self._stream is None:
+            return audio.astype(np.float32, copy=False)
+        if audio.size == 0:
+            return np.zeros(0, dtype=np.float32)
+        out = self._stream.resample_chunk(audio, last=False)
+        return np.asarray(out, dtype=np.float32).reshape(-1)
+
+    def flush(self) -> NDArrayF32:
+        """Drain any audio held in soxr's internal buffer. Call once before
+        discarding (engine stop / model swap when output rate changes)."""
+        if self._stream is None:
+            return np.zeros(0, dtype=np.float32)
+        out = self._stream.resample_chunk(np.zeros(0, dtype=np.float32), last=True)
+        return np.asarray(out, dtype=np.float32).reshape(-1)
 
 
 class _FairseqEmbedder:
@@ -509,6 +553,12 @@ class RealtimeEngine:
         # swap. Keys are resolved Paths.
         self._rvc_sr_cache: dict[Path, int] = {}
 
+        # v0.6.7 — stateful per-(src,dst) resamplers. Created in `_run_loop`
+        # before the first chunk, replaced when the model output rate
+        # changes during hot-swap. See `docs/11-microcuts-bug.md`.
+        self._resampler_in: _StreamResampler | None = None
+        self._resampler_out: _StreamResampler | None = None
+
     # ---- model loading ------------------------------------------------------
 
     def _ensure_sessions(self) -> None:
@@ -718,16 +768,26 @@ class RealtimeEngine:
         if self._sola is not None:
             with contextlib.suppress(Exception):
                 tail = self._sola.flush()
-                if tail.size > 0:
-                    tail48 = _resample(tail, self._rvc_output_sr, self.cfg.sink_rate)
-                    self._enqueue_chunk(self._to_sink_bytes(tail48))
+                if tail.size > 0 and self._resampler_out is not None:
+                    tail48 = self._resampler_out.process(tail)
+                    flush48 = self._resampler_out.flush()
+                    full = np.concatenate([tail48, flush48]) if flush48.size else tail48
+                    if full.size > 0:
+                        self._enqueue_chunk(self._to_sink_bytes(full))
         # Replace the session. Existing _cv (contentvec) and _rmvpe stay
         # — they're foundation models, not voice-specific.
         # v0.5.0: pool-cached. Cache hit ≈ 10 ms; cache miss ≈ 600 ms.
         self.cfg.rvc_model = target
         self._rvc = self._rvc_pool.get_or_create(target)
         self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
-        self._rvc_output_sr = self._cached_rvc_sr(target)
+        new_sr = self._cached_rvc_sr(target)
+        # v0.6.7 — rebuild the output resampler if the new model has a
+        # different native rate. Identity ratios (e.g. 16k → 16k → 48k stays
+        # the same) won't reset state, so swaps between same-rate voices
+        # don't introduce a chunk-boundary artifact.
+        if new_sr != self._rvc_output_sr:
+            self._resampler_out = _StreamResampler(new_sr, self.cfg.sink_rate)
+        self._rvc_output_sr = new_sr
         self.reset_streaming_state()
 
     # ---- inference ----------------------------------------------------------
@@ -1132,6 +1192,11 @@ class RealtimeEngine:
         chunk_mic = int(self.cfg.mic_rate * self.cfg.chunk_seconds)
         # Reset SOLA buffers so a stop/start cycle doesn't leak stale audio.
         self.reset_streaming_state()
+        # v0.6.7 — fresh stateful resamplers. Built per `(src, dst)` pair so
+        # filter state survives across chunks; hot-swapped if the model SR
+        # changes mid-session (see `_maybe_swap_model`).
+        self._resampler_in = _StreamResampler(self.cfg.mic_rate, 16_000)
+        self._resampler_out = _StreamResampler(self._rvc_output_sr, self.cfg.sink_rate)
 
         # v0.5.2: pin engine main thread + bump priority if requested.
         self._apply_thread_priority(label="engine")
@@ -1205,7 +1270,11 @@ class RealtimeEngine:
                     self.stats.last_input_rms = rms
 
                     t_total = time.perf_counter()
-                    audio16 = _resample(audio, self.cfg.mic_rate, 16_000)
+                    audio16 = (
+                        self._resampler_in.process(audio)
+                        if self._resampler_in is not None
+                        else _resample(audio, self.cfg.mic_rate, 16_000)
+                    )
 
                     t_inf = time.perf_counter()
                     # Streaming path uses SOLA + input history (Phase B). When
@@ -1221,9 +1290,19 @@ class RealtimeEngine:
 
                     # `out_native` is at the loaded RVC model's native sample
                     # rate (16k for amitaro, 40k for most v2 voices, etc.).
-                    # Resample from THAT rate to the sink rate. v0.4.x bug
-                    # was treating every voice as 16 kHz output.
-                    out48 = _resample(out_native, self._rvc_output_sr, self.cfg.sink_rate)
+                    # v0.6.7: stream resampling preserves filter state across
+                    # chunks so consecutive chunks splice without the 4 Hz
+                    # warm-up artifact (`docs/11-microcuts-bug.md`).
+                    out48 = (
+                        self._resampler_out.process(out_native)
+                        if self._resampler_out is not None
+                        else _resample(out_native, self._rvc_output_sr, self.cfg.sink_rate)
+                    )
+                    if out48.size == 0:
+                        # Soxr stream might emit nothing on the very first
+                        # chunk while the internal buffer fills. Skip the
+                        # write — the next chunk will produce extra samples.
+                        continue
 
                     # v0.5.2: hand off to writer thread (non-blocking enqueue).
                     # The watchdog respawns pacat if it dies — main loop
@@ -1258,9 +1337,12 @@ class RealtimeEngine:
             if self._sola is not None:
                 with contextlib.suppress(Exception):
                     tail = self._sola.flush()
-                    if tail.size > 0:
-                        tail48 = _resample(tail, self._rvc_output_sr, self.cfg.sink_rate)
-                        self._enqueue_chunk(self._to_sink_bytes(tail48))
+                    if tail.size > 0 and self._resampler_out is not None:
+                        tail48 = self._resampler_out.process(tail)
+                        flush48 = self._resampler_out.flush()
+                        full = np.concatenate([tail48, flush48]) if flush48.size else tail48
+                        if full.size > 0:
+                            self._enqueue_chunk(self._to_sink_bytes(full))
             # Wait briefly for the writer to drain its queue.
             if self._writer_queue is not None:
                 deadline = time.perf_counter() + 1.0
