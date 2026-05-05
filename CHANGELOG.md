@@ -4,6 +4,24 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-05-05 — Trim default voice library
+
+Removed `alfred_pennyworth` and `batman_troy_baker` from default voice
+library — user opted out of these voices. Library now ships with 7
+character voices + amitaro.
+
+Also dropped: their `.onnx` model files from `~/.local/share/woys/models/`,
+their test fixture WAVs in `tests/fixtures/voice_qa/`, their entries in
+`voice-library/SOURCES.md`, their saved profiles in `config.toml`. The
+`test_voices_produce_distinguishable_outputs` candidate list in
+`tests/test_voice_quality.py` shrank from 4 to 3 voices (still spans
+the three sample-rate buckets that matter: 16 / 40 / 48 kHz).
+
+`tests/test_model_swap.py::_have_two_models` was updated to also exclude
+`amitaro_v2_16k.onnx` from the candidate set — with alfred removed,
+amitaro became the alphabetically-first voice and the
+`target != DEFAULT_RVC_MODEL` assertion would have been vacuously false.
+
 ## [0.6.1] — 2026-05-05 — `woys` (no args) launches the TUI
 
 Tiny ergonomic change: typing `woys` with no subcommand now launches the

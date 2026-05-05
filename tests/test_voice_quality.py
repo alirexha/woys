@@ -228,15 +228,15 @@ def test_voices_produce_distinguishable_outputs() -> None:
     that differ by at least 5%. Catches "swap is cosmetic" regressions
     (the v0.4.0 bug we shipped).
 
-    We pick 4 voices spaced across sample-rate buckets:
-      amitaro_v2_16k (16 kHz), donald_trump (40 kHz),
-      e_girl (48 kHz), alfred_pennyworth (32 kHz)
+    We pick 3 voices spaced across sample-rate buckets:
+      amitaro_v2_16k (16 kHz), donald_trump (40 kHz), e_girl (48 kHz)
     so the test catches both audio-path bugs and same-rate same-voice issues.
+    (v0.6.2 dropped alfred_pennyworth + batman_troy_baker from the library.)
     """
     voices = _all_voice_paths()
     if len(voices) < 2:
         pytest.skip("need ≥ 2 voices for distinguishability test")
-    candidates = ["amitaro_v2_16k", "donald_trump", "e_girl", "alfred_pennyworth"]
+    candidates = ["amitaro_v2_16k", "donald_trump", "e_girl"]
     selected = [v for v in voices if v.stem in candidates][:4]
     if len(selected) < 2:
         # Fallback: pick first 2 voices alphabetically.

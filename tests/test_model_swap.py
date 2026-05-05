@@ -22,7 +22,9 @@ DEFAULT = MODELS_DIR / "amitaro_v2_16k.onnx"
 
 def _have_two_models() -> tuple[Path, Path] | None:
     """Find two distinct RVC ONNX files in the user's library so we have
-    a real source / target pair to swap between."""
+    a real source / target pair to swap between. Excludes amitaro (the
+    engine's hardcoded default) so the "didn't fall back to Amitaro"
+    assertion in `test_engine_honors_cfg_rvc_model_on_init` is meaningful."""
     if not MODELS_DIR.exists():
         return None
     voices = sorted(
@@ -36,6 +38,8 @@ def _have_two_models() -> tuple[Path, Path] | None:
             "rmvpe_wrapped.onnx",
             "rmvpe_wrapped-fp16.onnx",
             "hubert_base.onnx",
+            "amitaro_v2_16k.onnx",  # the engine's default — picking it as
+            # `target` would make the `target != DEFAULT` assertion meaningless.
         }
     )
     return (voices[0], voices[1]) if len(voices) >= 2 else None
