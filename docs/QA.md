@@ -72,7 +72,8 @@ woys pitch 0
    second device.
 
 - [ ] Latency between speaking and remote-side hearing feels usable
-      (around 300 ms typical with default `chunk_seconds=0.5`)
+      (around 350 ms typical with default `chunk_seconds=0.25` and
+      `output_latency_ms=300` — see `docs/11-microcuts-bug.md`)
 - [ ] No audible chunk-boundary clicks or dropouts during continuous speech
 
 ## Test 3 — CS2 receives transformed voice (DoD #3)

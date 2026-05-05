@@ -980,3 +980,102 @@ adjacent fixes that landed in the same release as the main work
 without being asked. **Save the "Worth flagging" footer for things
 that genuinely need user judgment.** If you'd fix it anyway, just
 fix it.
+
+## 17. v0.6.8 retrospective — defaults must have one canonical owner
+
+The v0.6.7 ship landed with a latent bug that nobody noticed because
+the box that shipped it had been migrated. **`AppConfig.output_latency_ms
+= 100` and `EngineConfig.output_latency_ms = 300`** lived in two
+different dataclasses across two modules. A user with an existing
+config got the migrator's bump (300, correct). A *fresh* install — no
+prior config, AppConfig() called for the first time — got 100, the
+exact value the rest of v0.6.7 was engineered to escape. Found in the
+v0.6.8 audit, fixed in the v0.6.8 polish release.
+
+### The class of bug — mirrored defaults are time-bombs
+
+Same field, same intent, two source-of-truth declarations. Whenever
+either side moves and the other doesn't, you've shipped a regression
+that only manifests on one of the two install paths. Audits don't
+catch it because both numbers are individually defensible — neither
+file is "wrong" in isolation. The bug is in the gap *between* the
+files.
+
+This was the third instance of the same shape in the v0.6.x cycle:
+
+- **v0.6.4** — `sink_name` config key drifted `VCClientCachySink` →
+  `WoysSink` in code, but stored configs kept the old name and the
+  engine fell back to the default sink. Caught by user complaint of
+  voice playing through laptop speakers.
+- **v0.6.7** — `output_latency_ms` default bumped 30 → 100 in v0.5.2,
+  stored configs kept 30, fresh installs hit underrun storms. Caught
+  by user complaint of micro-cuts.
+- **v0.6.8** — `output_latency_ms` mirrored across `AppConfig` and
+  `EngineConfig`, only one got bumped 100 → 300 in v0.6.7. Caught in
+  audit before user-perceptible symptom.
+
+The first two were "stored config beats new default." The third was
+"two new defaults, only one moved." Different *direction*, same
+underlying failure mode: **a setting's value lives in two places and
+they're allowed to disagree.**
+
+### The principle — one canonical owner per default
+
+Every runtime default has exactly one declaration. Anything that
+needs to consume it imports the owning value rather than declaring
+its own copy.
+
+- For `EngineConfig` defaults: `tui.config.AppConfig` field defaults
+  reference `_E = EngineConfig()` at module-import time, so a future
+  bump in `EngineConfig.foo = 7` propagates automatically into
+  `AppConfig.foo` without a second edit. The dataclass-level test
+  (`test_app_config_forwards_engine_config_defaults`) catches drift if
+  it sneaks back in via a hand-typed default.
+- For migrator's numeric-bump rule: `output_latency_ms < 300 → 300`
+  references the same threshold the engine uses. If we ever bump again,
+  one search-and-replace touches all sites.
+
+Forwarding has a cost — `tui.config` now imports `audio.engine` at
+module-load time, which pulls ONNX Runtime even for tests that only
+need config plumbing. Acceptable: ORT preload is idempotent and the
+import is cached after the first hit. The cost is small; the cost of
+*not* forwarding has shipped 3 user-visible bugs in 4 releases.
+
+### The principle — drift tests are cheap insurance
+
+The `test_app_config_forwards_engine_config_defaults` test iterates
+`dataclasses.fields()` on both classes, finds shared field names,
+asserts the defaults match. ~12 lines. It catches every future
+instance of this bug class without any maintenance — adding a new
+shared field automatically becomes a tested invariant.
+
+There's an analogous test we should write any time two pieces of
+configuration overlap. The shape is always: "for every (key, value)
+that appears on both sides, assert equality." Cheap to write, free
+to maintain, and it pays for itself the first time someone hand-edits
+one side.
+
+### The principle — fresh-install tests are not the same as upgrade tests
+
+Both v0.6.7 and v0.6.8 exposed bugs that lived only in the
+fresh-install path. Migration tests covered upgrades exhaustively
+(idempotency, partial-state, every numeric-bump permutation), but
+nobody had run `rm -rf ~/.config/woys && woys` to verify that the
+*starting* state was correct. Now that we have it as a verification
+gate (`load_config()` against an empty CONFIG_DIR, assert
+`output_latency_ms == 300`), it's a one-line check. **Any release
+that changes a default value should run this gate.**
+
+### Lesson — periodic codebase audits catch drift earlier than user reports
+
+The v0.6.8 polish release was driven by `/review` of the whole
+repo after v0.6.7 tagged. The audit found 5 P0s, 12 P1s, 8 P2s. Of
+those, the AppConfig/EngineConfig drift was the highest-impact —
+*latent* (would trip every fresh user) and *invisible to all
+existing tests*. Without the audit, the next user feedback cycle
+would have been "I freshly installed and the cuts are back."
+
+Audits are a forcing function for asking "what would a new pair of
+eyes see?" The answer, this time, was "you have a default declared
+twice." Worth doing again before any tagged release with non-trivial
+config or behaviour changes.

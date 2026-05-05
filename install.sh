@@ -141,6 +141,22 @@ if [ "$NO_SYSTEMD" -eq 0 ]; then
     systemctl --user enable --now woys-mic.service || true
     say "woys-mic.service enabled (Discord/CS2 see woys-mic at boot)."
 
+    # v0.6.8 — prune accumulated config backups left by prior in-place
+    # patches (.bak-leak, .bak-microcut-*, .bak-pacat-*). Keep the single
+    # most recent for rollback; delete the rest. Best-effort.
+    config_dir="$HOME/.config/woys"
+    if [ -d "$config_dir" ]; then
+        bak_files=$(find "$config_dir" -maxdepth 1 -name 'config.toml.bak-*' 2>/dev/null | sort)
+        bak_count=$(printf '%s\n' "$bak_files" | sed '/^$/d' | wc -l)
+        if [ "$bak_count" -gt 1 ]; then
+            kept=$(printf '%s\n' "$bak_files" | sed '/^$/d' | tail -1)
+            say "pruning $((bak_count - 1)) old config backups (kept latest: $(basename "$kept"))"
+            printf '%s\n' "$bak_files" | sed '/^$/d' | head -n -1 | while read -r f; do
+                rm -f "$f"
+            done
+        fi
+    fi
+
     # Migration cleanup — if any legacy module is still loaded from a prior
     # install (sink: VCClientCachySink, source: vcclient-mic), drop it now
     # so PipeWire doesn't carry old and new side-by-side. Best-effort.

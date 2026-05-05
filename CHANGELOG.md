@@ -4,6 +4,90 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.6.8] — 2026-05-06 — Polish release — drift, decode safety, resilience
+
+Fallout from the post-v0.6.7 full-project audit (`/review`).
+Seven discrete fixes; no new features. Full audit triage on `main`
+right before the cut.
+
+### Fixed AppConfig / EngineConfig drift (the real headline)
+
+`AppConfig.output_latency_ms = 100` lived in `tui/config.py` while
+`EngineConfig.output_latency_ms = 300` lived in `audio/engine.py`.
+Existing users got the migrator's bump (300, correct). **Fresh
+installs got 100** — the exact value v0.6.7 was engineered to escape.
+Verified by deleting `~/.config/woys/`, calling `load_config()`, and
+checking the resulting file shipped with 100.
+
+Fix: `AppConfig`'s field defaults forward from a module-level
+`EngineConfig()` instance. Future default bumps in `EngineConfig`
+propagate automatically. Drift test (`tests/test_v068_polish.py::
+test_app_config_forwards_engine_config_defaults`) iterates
+`dataclasses.fields()` and asserts every shared name has the same
+default — catches a future hand-typed re-divergence without
+maintenance. See `LESSONS.md §17`.
+
+### Malformed `config.toml` no longer crashes the app
+
+`tui/config.py:load_config` and `woys/vcprofile.py:import_profile`
+both did `tomllib.load(f)` with no error handling. A typo in a
+user's config or a corrupted `.vcprofile` produced an uncaught
+`TOMLDecodeError` and a stack-trace startup. v0.6.8 catches both
+`TOMLDecodeError` and `OSError`, prints a clear stderr message
+naming the file and the parse error, and falls back to in-memory
+defaults. The bad file is left in place for the user to inspect.
+
+### Engine resilience to per-chunk inference failures
+
+`_run_loop` previously had no try/except around `_process_streaming_16k`.
+A single transient ORT / CUDA / numerical exception would propagate
+to the outer handler at `engine.py:1356`, set `running=False`, and
+end the audio session permanently. v0.6.8: pulled the call into
+`_safe_process_streaming_16k`, which on exception increments a new
+`stats.dropped_chunks` counter and continues. SOLA's held-back tail
+covers the gap. First three failures log to `stats.last_error`;
+subsequent ones increment silently except every 100th, so a
+sustained failure mode still surfaces in the TUI without spamming.
+
+### Doc accuracy
+
+- `the project notes:102`, `docs/QA.md:75` — both said `chunk_seconds=0.5`.
+  Real default is `0.25` (since v0.5.1). Updated.
+- `docs/08-pacat-underrun-bug.md:23` — the `# 30 ← engine default`
+  comment in a code excerpt now reads `# 30 ← engine default
+  *as of v0.5.2* (now 300; see v0.6.7)` to disambiguate the
+  historical retro from current state.
+
+### File permissions + housekeeping
+
+- `~/.config/woys/config.toml` is now written with mode 0600 (was
+  inheriting umask, typically 0644). Atomic `.tmp + replace` write.
+- `install.sh` prunes accumulated `config.toml.bak-*` backups,
+  keeping only the most recent. Three were sitting in the user's
+  config dir from v0.6.4 / v0.6.7 in-place patches.
+
+### Migrator log message
+
+`scripts/migrate_to_woys.py:184` log line said
+`"output_latency_ms < 100 → 100"`. Code did `< 300 → 300` since
+v0.6.7. Audit-trail wording now matches the rule.
+
+### Tests
+
+`tests/test_v068_polish.py` — 8 new tests covering all three
+fix categories. Total fast-suite count: 85 (was 77).
+
+### Verification gates met
+
+- ✅ All previously-passing tests still pass (85 / 0 fail).
+- ✅ New regression tests added for AppConfig/EngineConfig drift,
+  TOML decode error path, chunk-skip on inference failure.
+- ✅ Fresh-install simulation: deleted `~/.config/woys/`, loaded the
+  config from defaults, verified `output_latency_ms = 300` in the
+  written file. Mode 0600 confirmed.
+- ✅ `woys diag --seconds 6` with the freshly-defaulted config:
+  pacat backend, 22 chunks, no crashes.
+
 ## [0.6.7] — 2026-05-05 — Micro-cut fix
 
 User report: "voice is changed ok but its noisy and theres many tiny

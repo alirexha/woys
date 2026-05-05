@@ -20,7 +20,7 @@ cmd = [
     f"--rate={self.cfg.sink_rate}",            # 48000
     f"--channels={self.cfg.channels}",         # 1  ← engine default
     "--format=float32le",
-    f"--latency-msec={self.cfg.output_latency_ms}",   # 30  ← engine default
+    f"--latency-msec={self.cfg.output_latency_ms}",   # 30  ← engine default *as of v0.5.2* (now 300; see v0.6.7)
     ...
 ]
 ```

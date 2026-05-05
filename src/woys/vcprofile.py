@@ -130,8 +130,15 @@ def import_profile(
     from woys.models import discover_models
     from woys.profiles import save_profile
 
-    with path.open("rb") as f:
-        raw = tomllib.load(f)
+    # v0.6.8 — guard against malformed .vcprofile so a single bad export
+    # file doesn't crash the import flow with a stack trace.
+    try:
+        with path.open("rb") as f:
+            raw = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"{path} is malformed TOML — cannot import. Parse error: {e}") from e
+    except OSError as e:
+        raise ValueError(f"cannot read {path} ({type(e).__name__}: {e})") from e
 
     if raw.get("meta", {}).get("format_version") != VCPROFILE_VERSION:
         raise ValueError(

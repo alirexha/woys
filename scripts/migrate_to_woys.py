@@ -181,7 +181,7 @@ def _rewrite_config_toml(config_path: Path, *, dry_run: bool, log: list[str]) ->
         f"  config.toml: rewrote legacy values "
         f"({OLD_NAME}/models/ → {NEW_NAME}/models/, "
         f"{LEGACY_SINK_NAME} → {NEW_SINK_NAME}, "
-        "output_latency_ms < 100 → 100)"
+        "output_latency_ms < 300 → 300)"
     )
     if dry_run:
         return
