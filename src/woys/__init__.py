@@ -1,3 +1,3 @@
 """woys: Linux-native real-time voice changer (RVC-only on ONNX Runtime CUDA)."""
 
-__version__ = "0.6.4"
+__version__ = "0.6.5"

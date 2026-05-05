@@ -24,7 +24,7 @@ correct (host mic → 48 kHz capture).
 Optional local monitoring
 -------------------------
 By default, **the engine writes the transformed audio to ONLY the virtual
-sink** (which `vcclient-mic` reads from). Nothing plays out of the laptop
+sink** (which `woys-mic` reads from). Nothing plays out of the laptop
 speakers — your housemates / streamers / phone calls don't hear what you're
 processing. Pass `monitor=True` to additionally play to the host's default
 output for self-monitoring.
@@ -113,7 +113,7 @@ class EngineConfig:
     # Routing
     sink_name: str = "WoysSink"
     input_device: str | int | None = None  # None = default mic
-    # When False (default): output goes ONLY to WoysSink → vcclient-mic.
+    # When False (default): output goes ONLY to WoysSink → woys-mic.
     # When True: ALSO write a best-effort copy to the host's default output
     # (laptop speakers / headphones) for self-monitoring.
     monitor: bool = False

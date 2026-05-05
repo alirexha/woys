@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "woys mic helper",
   "version": "0.0.1",
-  "description": "One-click reminder to wire Discord / web apps to the vcclient-mic virtual microphone published by woys.",
+  "description": "One-click reminder to wire Discord / web apps to the woys-mic virtual microphone published by woys.",
   "author": "Alireza Hamayeli",
   "homepage_url": "https://github.com/alirexha/woys",
   "icons": {

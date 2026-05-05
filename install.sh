@@ -9,8 +9,9 @@
 #
 # v0.6.0: detects an existing vcclient-cachy install and migrates it
 # losslessly before installing the new code (config + models + systemd
-# unit all move). The PipeWire mic name (`vcclient-mic`) is unchanged so
-# Discord / CS2 / Telegram don't need re-configuration.
+# unit all move).
+# v0.6.5: PipeWire mic name renamed `vcclient-mic` → `woys-mic`. Apps
+# (Discord / CS2 / Telegram) need to re-select their input device once.
 #
 # Pre-reqs (the script checks):
 #   - PipeWire + pipewire-pulse running
@@ -138,16 +139,20 @@ if [ "$NO_SYSTEMD" -eq 0 ]; then
     install -m 0644 "$REPO_DIR/pkg/woys-mic.service" "$SYSTEMD_USER_DIR/"
     systemctl --user daemon-reload || true
     systemctl --user enable --now woys-mic.service || true
-    say "woys-mic.service enabled (Discord/CS2 see vcclient-mic at boot)."
+    say "woys-mic.service enabled (Discord/CS2 see woys-mic at boot)."
 
-    # v0.6.0 migration cleanup — if a legacy VCClientCachySink module is
-    # still loaded (the old systemd ExecStop didn't always unload it
-    # during the rename), drop it now so PipeWire doesn't carry both the
-    # old and new sinks side-by-side. Best-effort, ignore failures.
+    # Migration cleanup — if any legacy module is still loaded from a prior
+    # install (sink: VCClientCachySink, source: vcclient-mic), drop it now
+    # so PipeWire doesn't carry old and new side-by-side. Best-effort.
     if command -v pactl >/dev/null; then
         for mod_id in $(pactl list short modules 2>/dev/null \
             | awk -F'\t' '/sink_name=VCClientCachySink/ {print $1}'); do
             say "removing orphan VCClientCachySink module ($mod_id)…"
+            pactl unload-module "$mod_id" 2>/dev/null || true
+        done
+        for mod_id in $(pactl list short modules 2>/dev/null \
+            | awk -F'\t' '/source_name=vcclient-mic/ {print $1}'); do
+            say "removing orphan vcclient-mic source module ($mod_id)…"
             pactl unload-module "$mod_id" 2>/dev/null || true
         done
     fi
@@ -169,9 +174,9 @@ cat <<EOF
 
   next steps:
     woys info            # sanity check
-    woys pw status       # confirm vcclient-mic exists
+    woys pw status       # confirm woys-mic exists
     woys run             # launch the TUI
 
-  PipeWire mic name is still 'vcclient-mic' — your Discord/CS2/Telegram
-  setup keeps working without re-configuration.
+  v0.6.5 — PipeWire mic name is now 'woys-mic' (was 'vcclient-mic').
+  Re-select the input device once in Discord / CS2 / Telegram / etc.
 EOF

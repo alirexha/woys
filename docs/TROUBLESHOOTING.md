@@ -5,7 +5,7 @@ If something's broken, the order to check things in:
 1. Audio daemon: `pactl info | head -1` should mention PipeWire.
 2. The mic exists: `woys pw status` should report `True / True`.
 3. The engine starts: `woys run --autostart` should show RUNNING.
-4. Apps see the mic: `pactl list short sources` should include `vcclient-mic`.
+4. Apps see the mic: `pactl list short sources` should include `woys-mic`.
 5. Discord/CS2 are pointed at it (see DISCORD-SETUP.md / CS2-SETUP.md).
 
 If those five are all green, the rest is probably model or anti-cheat related.
@@ -78,7 +78,33 @@ If it's older, re-install:
 ~/.local/share/woys/venv/bin/pip install -U "onnxruntime-gpu>=1.20"
 ```
 
-## "vcclient-mic" doesn't appear in Discord/CS2
+## After upgrading to v0.6.5, my apps lost the input device
+
+In v0.6.5 the PipeWire source was renamed `vcclient-mic` → `woys-mic`.
+Discord / CS2 / Telegram / Zoom / browsers — anything that pinned the
+input device by name — needs to be re-pointed at `woys-mic` once.
+
+What to do:
+
+1. Confirm the new mic is loaded: `pactl list short sources | grep woys-mic`.
+2. In each app's audio settings, open the input-device dropdown and pick
+   **`woys-mic`**. The pre-rename device (`vcclient-mic`) won't be in the
+   list anymore.
+3. Discord caches the device list per launch — restart it after step 2.
+
+If the `vcclient-mic` row is still showing in `pactl list short sources`
+after upgrading, you have a stale module from the old install. Clear it:
+
+```
+pactl unload-module $(pactl list short modules \
+    | awk -F'\t' '/source_name=vcclient-mic/ {print $1}')
+systemctl --user restart woys-mic.service
+```
+
+The v0.6.5+ engine pre-flights this on every `woys pw setup` so it
+shouldn't recur.
+
+## "woys-mic" doesn't appear in Discord/CS2
 
 The systemd unit may not have started. Check:
 
@@ -105,7 +131,7 @@ Also restart the app — Discord especially caches the device list at launch.
 
 Symptom: `monitor = false` in `~/.config/woys/config.toml`, but the
 engine output is still audible on the system default sink (laptop
-speakers / headphones). Discord / CS2 also report `vcclient-mic` as
+speakers / headphones). Discord / CS2 also report `woys-mic` as
 silent.
 
 Cause: a stale `sink_name` in your config from before the v0.6.0
@@ -141,7 +167,7 @@ this failure mode can't recur silently.
 The engine's `EngineStats.last_error` will surface the underlying issue. Most
 common:
 
-- `OSError: ... vcclient-mic` — the mic was torn down externally. Run
+- `OSError: ... woys-mic` — the mic was torn down externally. Run
   `woys pw setup` and start the engine again.
 - `ModuleNotFoundError: contentvec` — the model files aren't in
   `~/.local/share/woys/models/`. Run:
@@ -175,7 +201,7 @@ Check `nvidia-smi` for other CUDA processes.
 woys doesn't apply gain — output level matches the voice model's
 training distribution. To boost output, raise the **WoysSink** sink
 volume in `pavucontrol` (Output Devices tab). The remap-source mirrors that
-volume into vcclient-mic.
+volume into woys-mic.
 
 ```
 # Or via CLI:

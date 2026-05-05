@@ -89,7 +89,7 @@ inference at sustainable latency".
 ## 4. Acoustic loopback (one-way mic→sink)
 
 Source: `scripts/bench_loopback.py`. Methodology — `pacat` plays an impulse into
-`WoysSink`; `parec --device=vcclient-mic` captures simultaneously; we
+`WoysSink`; `parec --device=woys-mic` captures simultaneously; we
 locate the impulse in the capture and report the wall-clock delta.
 
 This bench measures everything the user actually hears: PipeWire scheduling +

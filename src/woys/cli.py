@@ -33,18 +33,18 @@ def build_parser() -> argparse.ArgumentParser:
     pw = sub.add_parser("pw", help="manage the persistent PipeWire virtual mic")
     pw_sub = pw.add_subparsers(dest="pw_cmd", required=True, metavar="ACTION")
 
-    pw_setup = pw_sub.add_parser("setup", help="create vcclient-mic (idempotent)")
+    pw_setup = pw_sub.add_parser("setup", help="create woys-mic (idempotent)")
     pw_setup.add_argument("--rate", type=int, default=48_000, help="sample rate (Hz)")
     pw_setup.add_argument("--channels", type=int, default=2, help="channel count")
 
-    pw_sub.add_parser("teardown", help="remove vcclient-mic and the sink")
+    pw_sub.add_parser("teardown", help="remove woys-mic and the sink")
     pw_sub.add_parser("status", help="report whether the mic is currently loaded")
 
     run = sub.add_parser("run", help="launch the TUI engine controller")
     run.add_argument(
         "--no-pw-setup",
         action="store_true",
-        help="skip the auto-creation of vcclient-mic (use pavucontrol manually)",
+        help="skip the auto-creation of woys-mic (use pavucontrol manually)",
     )
     run.add_argument(
         "--autostart",
@@ -181,7 +181,7 @@ def cmd_pw_setup(rate: int, channels: int) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     print(
-        f"vcclient-mic ready  "
+        f"woys-mic ready  "
         f"(sink_module={state.sink_module_id}, source_module={state.source_module_id})"
     )
     return 0
@@ -195,7 +195,7 @@ def cmd_pw_teardown() -> int:
     except PipeWireError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    print("vcclient-mic removed.")
+    print("woys-mic removed.")
     return 0
 
 

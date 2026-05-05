@@ -3,7 +3,7 @@
 Methodology
 -----------
 Per Q4 (the README's headline number). Sends a click through `WoysSink`
-and listens on `vcclient-mic` via `parec`; measures wall-clock delay between
+and listens on `woys-mic` via `parec`; measures wall-clock delay between
 playback time and capture time using cross-correlation.
 
 This bench is intentionally separate from the in-process timestamp test
@@ -67,11 +67,11 @@ def run() -> int:
     expected_click_idx = make_click_wav(click_path)
     print(f"  click WAV: {click_path}  (impulse @ sample {expected_click_idx})")
 
-    # Capture vcclient-mic for 600 ms.
+    # Capture woys-mic for 600 ms.
     cap = subprocess.Popen(
         [
             "parec",
-            "--device=vcclient-mic",
+            "--device=woys-mic",
             "--rate=48000",
             "--channels=1",
             "--format=s16le",

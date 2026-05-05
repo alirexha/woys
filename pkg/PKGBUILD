@@ -51,7 +51,7 @@ package() {
     # Install the wheel system-wide.
     python -m installer --destdir="$pkgdir" dist/*.whl
 
-    # Systemd user unit for the persistent vcclient-mic.
+    # Systemd user unit for the persistent woys-mic.
     install -Dm644 pkg/woys-mic.service \
         "$pkgdir/usr/lib/systemd/user/woys-mic.service"
 

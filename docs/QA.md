@@ -11,7 +11,7 @@ Run through this once after install. ~10 minutes. Mark the boxes as you go.
 
 - [ ] `woys info` shows your GPU and PipeWire version
 - [ ] `woys pw status` exits 0 (both `True`)
-- [ ] `pactl list short sources | grep vcclient-mic` shows one line
+- [ ] `pactl list short sources | grep woys-mic` shows one line
 - [ ] `pactl list short sinks | grep WoysSink` shows one line
 - [ ] `systemctl --user status woys-mic.service` is `active (exited)`
 
@@ -56,8 +56,8 @@ woys pitch 0
 
 1. Open Discord (closed before? launch it now so it picks up the new mic list).
 2. **User Settings → Voice & Video**:
-   - [ ] **Input Device** dropdown contains `vcclient-mic`
-   - [ ] Set **Input Device** to `vcclient-mic`
+   - [ ] **Input Device** dropdown contains `woys-mic`
+   - [ ] Set **Input Device** to `woys-mic`
    - [ ] Under **Voice Processing**, set **Noise Suppression: None**
    - [ ] Set **Echo Cancellation: OFF**
    - [ ] Set **Automatic Gain Control: OFF**
@@ -77,17 +77,17 @@ woys pitch 0
 
 ## Test 3 — CS2 receives transformed voice (DoD #3)
 
-1. Set the system default input source to `vcclient-mic`:
+1. Set the system default input source to `woys-mic`:
 
    ```
-   pactl set-default-source vcclient-mic
+   pactl set-default-source woys-mic
    ```
 
 2. Launch Steam, then CS2 (Source 2 caches the audio device list at launch
    — close and re-open if it was running).
 3. **Settings → Audio → Voice**:
    - [ ] **Voice Input Device** shows the system default (which is now
-         `vcclient-mic`)
+         `woys-mic`)
 4. Hit **Open Mic Test**.
 
 - [ ] Mic test meter responds as you speak
@@ -108,7 +108,7 @@ Leave the TUI running with the engine on for 10+ minutes.
 - [ ] `avg_total_ms` stays roughly constant — no slow degradation
 - [ ] `nvidia-smi` shows VCClient-cachy's process around 1.3-1.4 GiB stable
 
-If you see `last_error: OSError ... vcclient-mic`, the systemd unit may have
+If you see `last_error: OSError ... woys-mic`, the systemd unit may have
 restarted; check `journalctl --user -u woys-mic.service`.
 
 ## Test 5 — clean shutdown
@@ -117,7 +117,7 @@ In the TUI: press `q`.
 
 - [ ] TUI exits within 1-2 seconds
 - [ ] Config saved (mtime on `~/.config/woys/config.toml` updates)
-- [ ] `pactl list short sources | grep vcclient-mic` *still* shows the mic
+- [ ] `pactl list short sources | grep woys-mic` *still* shows the mic
       (the systemd unit owns it; engine quit didn't tear it down — that's
       intentional per Q6)
 

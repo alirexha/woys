@@ -1,5 +1,5 @@
 [Unit]
-Description=woys persistent virtual microphone (vcclient-mic)
+Description=woys persistent virtual microphone (woys-mic)
 Documentation=https://github.com/alirexha/woys
 # We need the user PipeWire daemon up; sound.target is its anchor.
 After=pipewire.socket pipewire-pulse.socket sound.target

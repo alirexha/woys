@@ -103,7 +103,7 @@ def _ensure_test_prereqs() -> Path:
     VirtualMic().ensure()
     state = get_state()
     if not state.fully_present:
-        pytest.skip("WoysSink + vcclient-mic not loaded")
+        pytest.skip("WoysSink + woys-mic not loaded")
     return voices[0]
 
 
