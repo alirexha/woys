@@ -78,11 +78,19 @@ fi
 
 mkdir -p "$APP_HOME" "$BIN_DIR" "$SYSTEMD_USER_DIR"
 
-say "creating Python 3.11 venv at $VENV…"
 "$UV_BIN" python install 3.11 >/dev/null
-"$UV_BIN" venv --python 3.11 "$VENV" >/dev/null
+if [ -x "$VENV/bin/python" ]; then
+    say "reusing existing venv at $VENV (skip 5 GB re-download)…"
+    # Drop the old vcclient-cachy wheel before installing the woys wheel —
+    # the v0.6.0 rename means the old console script is dead and needs to
+    # not shadow the new one.
+    "$VENV/bin/python" -m pip uninstall -y vcclient-cachy >/dev/null 2>&1 || true
+else
+    say "creating Python 3.11 venv at $VENV…"
+    "$UV_BIN" venv --python 3.11 "$VENV" >/dev/null
+fi
 
-say "installing woys + runtime deps (this is the long step — torch + ORT-GPU)…"
+say "installing woys + runtime deps (long step on fresh installs — torch + ORT-GPU)…"
 "$UV_BIN" pip install --python "$VENV/bin/python" -e "$REPO_DIR" >/dev/null
 "$UV_BIN" pip install --python "$VENV/bin/python" -r "$REPO_DIR/requirements.txt" >/dev/null
 
@@ -94,7 +102,10 @@ say "linked launcher: $LINK -> $VENV/bin/woys"
 
 # v0.6.0 — backward-compat shim. `vcclient-cachy` keeps working but prints
 # a deprecation warning, then exec's the new binary with the same args.
+# Remove any stale symlink first — the old install pointed it at
+# venv/bin/vcclient-cachy which no longer exists.
 SHIM="$BIN_DIR/vcclient-cachy"
+rm -f "$SHIM"
 cat > "$SHIM" <<'SHIM_EOF'
 #!/usr/bin/env bash
 # Deprecated shim — `vcclient-cachy` was renamed to `woys` in v0.6.0.
@@ -128,6 +139,18 @@ if [ "$NO_SYSTEMD" -eq 0 ]; then
     systemctl --user daemon-reload || true
     systemctl --user enable --now woys-mic.service || true
     say "woys-mic.service enabled (Discord/CS2 see vcclient-mic at boot)."
+
+    # v0.6.0 migration cleanup — if a legacy VCClientCachySink module is
+    # still loaded (the old systemd ExecStop didn't always unload it
+    # during the rename), drop it now so PipeWire doesn't carry both the
+    # old and new sinks side-by-side. Best-effort, ignore failures.
+    if command -v pactl >/dev/null; then
+        for mod_id in $(pactl list short modules 2>/dev/null \
+            | awk -F'\t' '/sink_name=VCClientCachySink/ {print $1}'); do
+            say "removing orphan VCClientCachySink module ($mod_id)…"
+            pactl unload-module "$mod_id" 2>/dev/null || true
+        done
+    fi
 else
     say "skipping systemd unit registration (--no-systemd)"
 fi
