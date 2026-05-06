@@ -64,10 +64,11 @@ def test_app_config_forwards_engine_config_defaults() -> None:
 
 def test_app_config_output_latency_ms_is_engine_default() -> None:
     """Pin the current expected value explicitly so a future re-bump in
-    EngineConfig is visible at this level too. v0.6.8 pinned 300; v0.7.0
-    dropped to 80 (paired with prefer_pw_cat=True). The test now pins
-    80 so a future drift in either direction is caught."""
-    assert AppConfig().output_latency_ms == 80
+    EngineConfig is visible at this level too. v0.6.8 pinned 300; v0.7.0-rc1
+    dropped to 80 (user-rejected); v0.7.0-rc2 bumped to 220 based on the
+    automated sweep harness. The test pins 220 so a future drift in either
+    direction is caught."""
+    assert AppConfig().output_latency_ms == 220
 
 
 # ---- 2. TOML decode safety ------------------------------------------------
@@ -87,8 +88,9 @@ def test_load_config_handles_malformed_toml(
     # We got a working AppConfig back, not a crash.
     assert isinstance(cfg, AppConfig)
     # And the values are EngineConfig-forwarded defaults, not garbage.
-    # v0.7.0 — 300/0.25 → 80/0.15.
-    assert cfg.output_latency_ms == 80
+    # v0.7.0-rc2 — output_latency 80 → 220 (rc1's 80 was user-rejected),
+    # chunk_seconds 0.25 → 0.15.
+    assert cfg.output_latency_ms == 220
     assert cfg.chunk_seconds == 0.15
 
     err = capsys.readouterr().err

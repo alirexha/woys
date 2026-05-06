@@ -27,6 +27,11 @@ models/
 *.flac
 !tests/fixtures/*.wav
 
+# Sweep capture directories — large, regeneratable, voice-content
+# (privacy + size). The summary JSON + PNG next to them is small and
+# useful as a record so it stays.
+docs/sweep_*/
+
 # Logs / profiling
 *.log
 *.prof

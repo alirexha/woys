@@ -4,6 +4,82 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc2] — 2026-05-06 — Pull rc1's output buffer back from too-aggressive 80 ms
+
+User audibly confirmed rc1's `output_latency_ms = 80` produced a
+noticeable cut increase in real CS2 + Discord use, even though the
+synthetic engine-stats sweep at the time showed
+`queue_full_events = 0`. Real-speech RVC inference variance (p99 spikes
+to 130–200 ms vs the 150 ms chunk budget) needs more output buffer
+than the rc1 metrics exposed.
+
+rc2 introduces an automated sweep harness so future latency tuning
+doesn't require manual mic testing across seven candidate values.
+
+### Changed default
+
+- `output_latency_ms`: **80 → 220.** Picked from the cleanest position
+  in the rc2 synthetic sweep (cuts/min ~80, flat across 180–320 ms)
+  with a 70 ms safety margin above the engine's worst observed
+  per-chunk budget overage. Saves 80 ms wall-clock vs v0.6.x's 300 ms
+  while keeping a comfortable buffer over rc1's user-rejected 80 ms.
+
+### Total mic-to-app wall-clock
+
+| Stage | v0.6.10 | rc1 | rc2 |
+|---|---|---|---|
+| chunk wait | 250 ms | 150 ms | 150 ms |
+| inference | ~80 ms | ~80 ms | ~80 ms |
+| output buffer | 300 ms | 80 ms | 220 ms |
+| Discord codec | ~30 ms | ~30 ms | ~30 ms |
+| **total** | **~660 ms** | **~340 ms** | **~480 ms** |
+| **vs v0.6.10** |  | −320 ms (−48 %) | **−180 ms (−27 %)** |
+
+### Migration
+
+`config_schema_version` bumped 7 → 8. Users on rc1 with
+`output_latency_ms = 80` (either as the rc1 default or after the rc1
+migration of a v0.6.x file) are bumped to 220 on first load under rc2.
+Explicit overrides — values that don't match the rc1 default sentinel
+— are preserved.
+
+### New scripts
+
+- `scripts/gen_sweep_fixture.py` — generates the deterministic 60 s
+  synthetic speech-like fixture WAV (`tests/fixtures/auto_sweep_input.wav`)
+  matching woys-diag's PROTOCOL_60S block layout.
+- `scripts/sweep_latency.py` — automated sweep harness. Patches
+  `sd.InputStream` with a wall-clock-paced fixture reader, starts the
+  engine for each candidate `output_latency_ms`, captures
+  WoysSink.monitor via parec, runs woys-diag analyze, plots
+  cuts/min vs latency.
+
+### Documentation
+
+- `docs/15-auto-sweep-methodology.md` — explains the harness, the
+  fixture, the synthetic-vs-real cuts/min correlation gap (~5–7×
+  over-count on synthetic vs real-mic captures, dominated by RVC's
+  out-of-distribution output dropouts), and the rule for when this
+  is enough vs when ONE real-mic test is still required.
+
+### What rc2 still requires
+
+A single real-mic `woys-diag run --duration 60 --source woys-mic
+--voice catwoman` at the rc2 default to confirm cuts/min < 18 in
+real-world conditions. If it passes, tag v0.7.0. If it fails, bump
+`output_latency_ms` by 50 ms and re-test (the harness already ruled
+out underruns at lower values; a single targeted re-test is the
+right loop).
+
+### Tests
+
+- `tests/test_v070_migration.py::test_rc1_users_pulled_forward_to_rc2` —
+  covers the schema-7 → schema-8 transition with an explicit
+  `output_latency_ms = 80` in both top-level and profile sections.
+- All previous v0.7.0-rc1 migration tests updated to the rc2
+  values (220 ms, schema_version=8).
+- `tests/test_v068_polish.py` pin updated 80 → 220.
+
 ## [0.7.0rc1] — 2026-05-06 — Push the latency floor
 
 User-perceived mic-to-app latency drops from ~660 ms to ~340 ms (−320 ms,
