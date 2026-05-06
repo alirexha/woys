@@ -226,8 +226,36 @@ class VCClientApp(App[int]):
                 f"profile={self._active_profile or '-'} "
                 f"model={model_name} "
                 f"avg_total_ms={s.avg_total_ms:.1f} "
-                f"avg_inf_ms={s.avg_inference_ms:.1f}"
+                f"avg_inf_ms={s.avg_inference_ms:.1f} "
+                f"max_total_ms={s.max_total_ms:.1f} "
+                f"late_chunks={s.late_chunks}/{s.chunks_processed}"
             )
+        if cmd == "SLOW":
+            # v0.6.9 round 5 — dump slow_chunk_log to a file the user can cat.
+            # Socket reply stays small; full breakdown lives on disk so multi-
+            # line output isn't truncated by the recv buffer.
+            from pathlib import Path as _P
+
+            log = list(self.engine.stats.slow_chunk_log)
+            out_path = _P("/tmp/woys-slow-chunks.txt")
+            lines = [
+                "# slow chunk log — chunks where total_ms > chunk_seconds * 1000",
+                f"# session count: {len(log)} late, "
+                f"chunks_processed={self.engine.stats.chunks_processed}",
+                "# columns: chunk_idx total_ms inf_ms cv_ms rmvpe_ms rvc_ms input_rms",
+            ]
+            for r in log:
+                lines.append(
+                    f"#{int(r['chunk_idx'])}: "
+                    f"total={r['total_ms']:.1f}ms "
+                    f"inf={r['inf_ms']:.1f}ms "
+                    f"cv={r['cv_ms']:.1f}ms "
+                    f"rmvpe={r['rmvpe_ms']:.1f}ms "
+                    f"rvc={r['rvc_ms']:.1f}ms "
+                    f"input_rms={r['input_rms']:.4f}"
+                )
+            out_path.write_text("\n".join(lines) + "\n")
+            return f"OK wrote {len(log)} entries to {out_path}"
         if cmd.startswith("MODEL "):
             arg = cmd[len("MODEL ") :].strip()
             from woys.models import find_by_name

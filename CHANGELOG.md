@@ -4,6 +4,112 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.6.9] — 2026-05-06 — Micro-cut fix — five engine fixes against a calibrated diagnostic baseline
+
+The "micro white-cuts are still present randomly" complaint that survived
+the v0.6.7 / v0.6.8 ladder turned out to be **five distinct issues**,
+identified by stacking fixes against a new diagnostic harness
+([`woys-diag`](https://github.com/alirexha/woys-diag), released alongside
+as v0.1.1).
+
+The original v0.7.0 ring-buffer plan was **cancelled** mid-investigation
+when the diagnostic showed cuts were not aligning to chunk boundaries —
+the bug was not chunk-stitching at all. See `docs/12-vad-misfire-investigation.md`
+for the full investigation log and `docs/13-detector-calibration.md` for
+the zero-cut control runs that anchor the numbers below.
+
+### Fixes — all in `src/audio/engine.py` (the realtime path)
+
+The first iteration patched `src/server/voice_changer/RVC/pipeline/Pipeline.py`
+based on a static read of "the inference pipeline." Two rounds of fixes
+produced no live behavior change because **the realtime engine's
+`_infer()` does not call `Pipeline.exec()` from upstream** — it implements
+its own ONNX dispatch directly. Caught and reapplied in the right file.
+The Pipeline.py edits remain as defensive guards in case the upstream
+class is ever wired in.
+
+1. **Input-level gate** (`input_gate_dbfs = -55.0`, configurable). The
+   vocoder reconstructs a baseline "voicing floor" on near-silent input —
+   the diagnostic showed ~−24.7 dBFS phantom emission throughout
+   user-silent blocks. When mic RMS is below the threshold the engine
+   emits zeros directly instead of running RVC. Lead silence dropped from
+   −33 dBFS to −240 dBFS (synthetic noise floor on `np.zeros`).
+
+2. **Pitchf NaN/zero interpolation in `engine._infer()`** (new
+   `_interpolate_voiced_gaps_np()` module helper). The NSF SineGen
+   vocoder zeroes the harmonic source whenever `f0 ≤ voiced_threshold`,
+   so a single-frame NaN or zero from RMVPE/FCPE produces an audible
+   mid-utterance dropout. We linearly interpolate runs ≤ 8 frames between
+   two voiced frames; longer unvoiced runs are left as zeros so true
+   silence still decodes as silence.
+
+3. **NaN sanitization on feats and on the model output**. Partial-NaN
+   bursts from the embedder used to slip past upstream's `.all()` guard
+   and become NaN samples in the float32 output, which pacat (configured
+   for `float32le`) feeds straight to PipeWire's mixer chain —
+   undefined-behavior territory. Now sanitized at both the embedder
+   boundary and the post-RVC boundary.
+
+4. **Pipeline pre-warm at engine.start()** (`_warmup_realtime_pipeline`).
+   `RvcSessionPool.warmup` only warms the rvc session; the cv
+   (contentvec) and rmvpe sessions still cold-started on the first real
+   chunks. Now we run four synthetic chunks through the full
+   `cv → rmvpe → rvc` chain before launching the audio thread, so cuDNN's
+   algo cache is populated for the actual runtime shapes.
+   `max_total_ms` dropped 456 → 320 ms.
+
+5. **SOLA defaults that work on sustained periodic content**.
+   `sola_search_ms` widened 4.0 → 6.0 (covers ≥ 1 full pitch period at
+   the 40 kHz model rate for any voice with f0 ≥ 167 Hz; the previous
+   4 ms couldn't reach phase alignment for sustained vowels).
+   `sola_corr_threshold` added as an EngineConfig knob and lowered
+   0.25 → 0.10; the previous default fell back to centered crossfade on
+   borderline correlation, producing phase-discontinuous output for
+   sustained content. The "chunk-aligned cuts" warning that lit up in
+   the woys-diag report after the round-3 fixes disappeared after this
+   change.
+
+### Instrumentation
+
+- Per-stage timing on every chunk: `last_cv_ms`, `last_rmvpe_ms`,
+  `last_rvc_ms`. Surfaces in the slow-chunk log when a chunk goes late.
+- `EngineStats.max_inference_ms`, `max_total_ms`, `late_chunks` counters.
+- `EngineStats.slow_chunk_log`: in-memory log (capped at 50) of chunks
+  where `total_ms > chunk_seconds × 1000`. Each entry has the per-stage
+  breakdown and the input RMS so we can see whether outliers correlate
+  with content (silence vs voicing) or with a specific stage.
+- New `SLOW` socket command + `woys slow` CLI that dumps the log to
+  `/tmp/woys-slow-chunks.txt`. Used to confirm the residual late chunks
+  both happened during low-RMS input — cuDNN picks a slow algo branch on
+  near-zero distributions.
+
+### Numbers, calibrated honestly
+
+The diagnostic detector was calibrated against two control runs before
+declaring victory:
+
+| Source                                            | Cuts/min |
+| ------------------------------------------------- | -------: |
+| Synthetic clean (math-perfect 60 s)               |        0 |
+| Direct HyperX mic, no engine in path              |        0 |
+| **woys v0.6.8** through `woys-mic` (e_girl voice) |     ~23 |
+| **woys v0.6.9** through `woys-mic` (e_girl voice) | **~12** |
+
+Mean across multiple v0.6.9 runs is ~12 cuts/min with run-to-run variance
+around 30 %. Most of that variance is real engine behavior on this RTX
+2070 Mobile, not measurement noise (the calibration runs both score 0).
+The remaining floor is a hardware/model ceiling — further reduction would
+need model-level work (vocoder fine-tune for sustained content or
+quantization-aware training to stabilize RVC numerics) and is out of
+scope for v0.6.9.
+
+### Punted / cancelled
+
+- **v0.7.0 ring buffer rewrite — cancelled.** The diagnostic data did not
+  support a chunk-stitching root cause.
+- **Pacat-writer-queue-size watchdog tuning** — same status as before, no
+  change in this release.
+
 ## [0.6.8] — 2026-05-06 — Polish release — drift, decode safety, resilience
 
 Fallout from the post-v0.6.7 full-project audit (`/review`).

@@ -63,8 +63,10 @@ def test_round_trip_toggle_and_pitch(tmp_path: Path) -> None:
     assert not sock_path.exists()
 
 
-def test_send_command_when_no_server() -> None:
-    # Ensure the helper fails gracefully if no server is running.
+def test_send_command_when_no_server(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # Ensure the helper fails gracefully if no server is running. Pin the socket
+    # path to a tmp dir so the test is deterministic even when a real woys
+    # engine is live on the host (otherwise the test connects to it).
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     out = send_command("STATUS", timeout=0.2)
-    # When the socket doesn't exist, send_command returns a clear error.
     assert "ERR" in out or "not found" in out

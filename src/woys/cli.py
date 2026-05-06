@@ -61,6 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("toggle", help="toggle a running TUI's engine on/off")
     sub.add_parser("status", help="ask a running TUI for its status")
+    sub.add_parser(
+        "slow",
+        help="dump per-stage timing for chunks that ran over budget (v0.6.9)",
+    )
     pitch_p = sub.add_parser(
         "pitch",
         help="bump pitch shift in a running TUI (e.g. `woys pitch +2`)",
@@ -379,13 +383,19 @@ def main(argv: list[str] | None = None) -> int:
         return cli_tray()
     if args.cmd == "diag":
         return cmd_diag(args.seconds, args.no_engine)
-    if args.cmd in ("toggle", "status", "pitch"):
+    if args.cmd in ("toggle", "status", "pitch", "slow"):
         from tui.control import send_command
 
         if args.cmd == "toggle":
             print(send_command("TOGGLE"))
         elif args.cmd == "status":
             print(send_command("STATUS"))
+        elif args.cmd == "slow":
+            print(send_command("SLOW"))
+            slow_path = Path("/tmp/woys-slow-chunks.txt")
+            if slow_path.exists():
+                print("---")
+                print(slow_path.read_text(), end="")
         else:  # pitch
             delta = args.delta.lstrip("+") if args.delta.startswith("+") else args.delta
             try:
