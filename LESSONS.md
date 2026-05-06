@@ -1079,3 +1079,105 @@ Audits are a forcing function for asking "what would a new pair of
 eyes see?" The answer, this time, was "you have a default declared
 twice." Worth doing again before any tagged release with non-trivial
 config or behaviour changes.
+
+## 18. v0.6.9 retrospective — the micro-cut chase, calibrated
+
+v0.6.9 was supposed to be the v0.7.0 ring-buffer rewrite. It became a
+five-fix release built around a **diagnostic harness** ([`woys-diag`](https://github.com/alirexha/woys-diag),
+new private repo at v0.1.1) that I built first so I could measure
+voice-changer artifacts repeatably, instead of asking the user "does this
+sound better?" run-to-run. The harness paid for itself the first time it
+ran: the cut-chunk-offset distribution was 0/22 within ±25 ms of a
+0.25 s chunk boundary, which falsified the chunk-stitching theory the
+v0.7.0 plan was built on. Cancelled mid-flight.
+
+### Lesson 1 — trace the actual code path before patching
+
+Round 1 and round 2 of the fix sequence patched `Pipeline.exec()` in
+`src/server/voice_changer/RVC/pipeline/Pipeline.py`. Two rounds, real
+code edits, all gates green, and the cuts/min did move (23 → 16 → 11)
+— but **none of those edits actually executed at runtime**. The realtime
+engine's `_infer()` at `src/audio/engine.py:840` re-implements ONNX
+dispatch directly: `self._cv.run(...)`, `self._rmvpe.run(...)`,
+`self._rvc.run(...)`. The upstream `Pipeline` class is unreachable from
+the realtime path. The only round-1 fix that actually ran was the input
+gate in `engine._run_loop`. Everything else was the input gate fix
+plus run-to-run variance pretending to be progress.
+
+I caught this in round 3 by following control flow from `_run_loop` to
+`_safe_process_streaming_16k` to `_process_streaming_16k` to `_infer`,
+and noticing that `Pipeline` is never imported. Reapplied all the
+sanitization in `engine._infer()` and the live behavior changed.
+
+The shape of the mistake: I read the imports at the top of `Pipeline.py`
+and assumed they reflected the real call graph. They reflect the
+*upstream's* call graph. woys forked some files but not the wiring. **The
+imports inside the file you're patching prove only that the file knows
+how to find its dependencies. They don't prove anyone calls the file.**
+Always trace from the entry point (`engine.start` → thread → `_run_loop`)
+forward, not from a leaf file backward.
+
+### Lesson 2 — calibrate the detector before iterating against a noisy metric
+
+The cuts/min trajectory across rounds was 23 → 16 → 11 → 14 → 10 → 16.
+At a coefficient of variation around 30 %, single-run deltas like 11→14
+mean nothing. I was using cuts/min as a hypothesis-test instrument when
+its noise floor swallowed every fix smaller than ~7 cuts/min. The user
+called it: "we may have hit a floor where the cuts are dominated by
+something woys-diag detects but woys can't fix."
+
+The fix was to run two control captures — synthetic-clean (mathematically
+zero events) and direct-HyperX-no-engine (real human voice, no woys in
+the path) — and confirm the detector reports 0 cuts/min on both. It did.
+That validated cuts/min ~12 as a real engine number, not measurement
+noise, **and** capped further iteration: anything below run-to-run
+variance is chasing ghosts.
+
+If you find yourself iterating on a metric and getting non-monotone
+results that don't match the deterministic effects you can see in the
+data (the way `lead_silence` going from −33 dBFS to −240 dBFS was the
+actually-deterministic signal of the input gate working), stop iterating
+on the metric and **calibrate it.** Synthetic + zero-engine baselines are
+the cheapest way.
+
+### Lesson 3 — deterministic evidence beats noisy aggregate metrics
+
+Even with cuts/min jumping around, the *deterministic* improvements
+across rounds were:
+
+- Lead silence mean: −33 dBFS → −240 dBFS (input gate, reproducible)
+- max_total_ms: 456 → 320 ms (warmup, reproducible)
+- Chunk-aligned cuts: 8/12 → 1/10 (SOLA defaults — different runs but
+  the bug class disappeared)
+
+These are individually verifiable: run-to-run, with the fix applied, you
+see the same number. Lean on them when the aggregate metric is noisy.
+The aggregate is the headline, but the deterministic effects are the
+proof the fixes did anything.
+
+### Lesson 4 — the diagnostic harness should outlive the release
+
+woys-diag was built as a one-off for this investigation. It saved us
+from a multi-day wrong fix (v0.7.0 ring buffer) by providing
+chunk-offset histograms that contradicted the chunk-stitching theory.
+Shipped as its own repo at v0.1.1 with the same proprietary license; it
+can also test other voice changers (Voicemod-Linux, RVC-WebUI's
+PipeWire bridge) since it's source-agnostic.
+
+Worth keeping permanent: regression-tests against future woys releases
+should run `woys-diag run` automatically and compare to a known-good
+baseline. The CI tooling for that is the v0.7.x track, alongside any
+model-level mitigation for the residual ~12 cuts/min ceiling.
+
+### What v0.7.x is NOT
+
+The ring buffer is dead. The actual v0.7.x agenda, in priority order:
+
+1. Real-world validation (CS2 / Discord) of v0.6.9 — does the audible
+   experience match the cuts/min reduction?
+2. If audible cuts persist, model-level work — RVC fine-tune for
+   sustained content, or quantization-aware training to stabilize
+   numerics.
+3. CI integration of woys-diag as a regression gate.
+4. Stretch: investigate whether a different vocoder (HiFi-GAN variants,
+   newer RVC) materially reduces the floor.

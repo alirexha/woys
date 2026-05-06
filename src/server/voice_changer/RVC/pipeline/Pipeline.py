@@ -23,6 +23,52 @@ from voice_changer.utils.Timer import Timer2
 logger = VoiceChangaerLogger.get_instance().getLogger()
 
 
+# v0.6.9 — pitchf sanitization. The NSF SineGen vocoder zeroes the harmonic
+# source whenever ``f0 <= 0`` (see ``models.py: SineGen._f02uv``), so a single
+# NaN or zero frame from RMVPE/FCPE produces an audible mid-utterance dropout.
+# Live diagnostic showed 22 such gaps in 60s of voiced speech. We linearly
+# interpolate short voiced→voiced gaps (≤ _VOICED_GAP_MAX_FRAMES) without
+# fabricating voicing across long unvoiced runs (true silence still decodes
+# to silence). See ``docs/12-vad-misfire-investigation.md``.
+_VOICED_GAP_MAX_FRAMES = 8  # ~80 ms at 100 fps
+
+
+def _interpolate_voiced_gaps(pitchf: torch.Tensor) -> torch.Tensor:
+    if pitchf is None:
+        return pitchf
+    arr = pitchf.detach().cpu().numpy().astype(np.float64).reshape(-1)
+    invalid = np.isnan(arr) | (arr <= 0.0)
+    if not invalid.any():
+        return pitchf
+    valid_idx = np.where(~invalid)[0]
+    if len(valid_idx) == 0:
+        return pitchf
+    out = np.nan_to_num(arr, nan=0.0)
+    last_valid = -1
+    i = 0
+    while i < len(invalid):
+        if not invalid[i]:
+            last_valid = i
+            i += 1
+            continue
+        j = i
+        while j < len(invalid) and invalid[j]:
+            j += 1
+        run_len = j - i
+        if (
+            run_len <= _VOICED_GAP_MAX_FRAMES
+            and last_valid >= 0
+            and j < len(invalid)
+            and out[last_valid] > 0.0
+            and out[j] > 0.0
+        ):
+            for k in range(i, j):
+                alpha = (k - last_valid) / (j - last_valid)
+                out[k] = out[last_valid] * (1.0 - alpha) + out[j] * alpha
+        i = j
+    return torch.tensor(out, device=pitchf.device, dtype=pitchf.dtype).view(pitchf.shape)
+
+
 class Pipeline(object):
     embedder: Embedder
     inferencer: Inferencer
@@ -89,6 +135,9 @@ class Pipeline(object):
                 # pitchf = pitchf[:p_len]
                 pitch = torch.tensor(pitch, device=self.device).unsqueeze(0).long()
                 pitchf = torch.tensor(pitchf, device=self.device, dtype=torch.float).unsqueeze(0)
+                # v0.6.9: stop transient pitch-extractor failures (NaN / zero) from
+                # zeroing the SineGen harmonic source. See module-level comment.
+                pitchf = _interpolate_voiced_gaps(pitchf)
             else:
                 pitch = None
                 pitchf = None
@@ -105,6 +154,14 @@ class Pipeline(object):
                 feats = self.embedder.extractFeatures(feats, embOutputLayer, useFinalProj)
                 if torch.isnan(feats).all():
                     raise DeviceCannotSupportHalfPrecisionException()
+                # v0.6.9: silently zero partial NaN bursts. The .all() guard above
+                # only fires on total embedder failure (which is the half-precision
+                # signal); a few-frame NaN burst slips through and becomes audible
+                # silence after the int16 cast in infer(). Keep that .all() branch
+                # for the half-precision fallback, but stop quiet partial-NaN bursts
+                # from polluting the inferencer input.
+                if torch.isnan(feats).any():
+                    feats = torch.nan_to_num(feats, nan=0.0)
                 return feats
             except RuntimeError as e:
                 if "HALF" in e.__str__().upper():
@@ -118,7 +175,13 @@ class Pipeline(object):
         try:
             with torch.no_grad():
                 with autocast(enabled=self.isHalf):
-                    audio1 = self.inferencer.infer(feats,  p_len, pitch, pitchf, sid, out_size)                    
+                    audio1 = self.inferencer.infer(feats,  p_len, pitch, pitchf, sid, out_size)
+                    # v0.6.9: sanitize NaN before int16 cast. NaN -> int16 is
+                    # undefined behavior; on x86_64 Linux it lands near INT16_MIN,
+                    # which the listener hears as a click followed by silence on
+                    # otherwise-OK frames. Live diagnostic on the e_girl voice
+                    # showed sustained-vowel frames triggering this path.
+                    audio1 = torch.nan_to_num(audio1, nan=0.0, posinf=1.0, neginf=-1.0)
                     audio1 = (audio1 * 32767.5).data.to(dtype=torch.int16)
             return audio1
         except RuntimeError as e:

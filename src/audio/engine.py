@@ -93,10 +93,20 @@ class EngineConfig:
     # clicks at every chunk boundary when chunk_seconds is short.
     sola_enabled: bool = True
     sola_crossfade_ms: float = 50.0  # overlap window between consecutive chunks
-    sola_search_ms: float = 4.0  # how far to shift looking for in-phase alignment
+    # v0.6.9: widened from 4.0 to 6.0 so the search window covers at least one
+    # full pitch period for typical voice f0 (>= 167 Hz period at 40 kHz model
+    # rate = 240 samples = 6 ms). With a sub-period search, sustained vowels
+    # produce phase mismatches SOLA can't reach — manifests as audible
+    # dropouts during sustained voicing.
+    sola_search_ms: float = 6.0  # how far to shift looking for in-phase alignment
     # History fed to the model alongside each new chunk so the embedder /
     # vocoder convolutions don't see edge artifacts. Brief calls this "context".
     sola_context_ms: float = 100.0
+    # v0.6.9: lowered from sola.py's 0.25 default. With the original threshold,
+    # SOLA falls back to centered (offset=0) on borderline cases and produces
+    # phase-discontinuous crossfade for sustained content. 0.10 still rejects
+    # decorrelated noise but keeps best-effort alignment for periodic signals.
+    sola_corr_threshold: float = 0.10
 
     # RVC
     f0_up_key: int = 0  # semitones
@@ -176,6 +186,13 @@ class EngineConfig:
     # backends (or future versions of pacat / pw-cat) might benefit.
     # See `docs/11-microcuts-bug.md` part 3.
     prime_silence_seconds: float = 0.0
+    # v0.6.9 — input-level gate. When mic RMS is below this floor, the engine
+    # emits zeros directly instead of running RVC inference. Stops the vocoder
+    # from hallucinating a ~-24 dBFS "voicing floor" on near-silent input —
+    # the live diagnostic showed phantom emission throughout user-silent blocks.
+    # Set to a very negative number (e.g. -200.0) to disable. See
+    # `docs/12-vad-misfire-investigation.md`.
+    input_gate_dbfs: float = -55.0
     # Watchdog polls the pacat subprocess every N seconds; on death it
     # spawns a replacement and bumps `pacat_restarts`.
     pacat_watchdog_interval_s: float = 0.05
@@ -198,6 +215,22 @@ class EngineStats:
     avg_inference_ms: float = 0.0
     last_total_ms: float = 0.0
     avg_total_ms: float = 0.0
+    # v0.6.9 — outlier visibility. avg_*_ms hides single slow chunks that
+    # arrive after the audio sink has already underrun. max_* tracks the
+    # worst chunk since session start; late_chunks counts chunks where total
+    # processing exceeded the chunk budget (chunk_seconds * 1000).
+    max_inference_ms: float = 0.0
+    max_total_ms: float = 0.0
+    late_chunks: int = 0
+    # v0.6.9 round 5 — per-stage timing for the most recent chunk so the
+    # slow_chunk_log breakdown points at which ONNX session was responsible.
+    last_cv_ms: float = 0.0
+    last_rmvpe_ms: float = 0.0
+    last_rvc_ms: float = 0.0
+    # Last N chunks where total_ms exceeded the chunk budget. Each entry is a
+    # dict {chunk_idx, total_ms, inf_ms, cv_ms, rmvpe_ms, rvc_ms, input_rms}.
+    # Surface via the SLOW socket command -> /tmp/woys-slow-chunks.txt.
+    slow_chunk_log: list[dict[str, float]] = field(default_factory=list)
     last_error: str | None = None
 
     # v0.5.2 health counters (Brief §5 — surfaced in TUI + `diag`).
@@ -251,6 +284,56 @@ def _make_session(path: Path) -> ort.InferenceSession:
         )
     providers.append("CPUExecutionProvider")
     return ort.InferenceSession(str(path), sess_options=so, providers=providers)
+
+
+# v0.6.9 — pitchf sanitization for the realtime inference path.
+# Frames with NaN or f0 <= 0 are treated as "unvoiced" by the RVC vocoder's
+# NSF source module; a single such frame mid-utterance zeros the harmonic
+# source and produces an audible dropout. We replace NaN with 0 first
+# (defensive against extractor bugs), then linearly interpolate runs of
+# unvoiced frames up to `_VOICED_GAP_MAX_FRAMES` long between two voiced
+# frames. Long unvoiced runs are left as zeros so true silence still
+# decodes as silence. See `docs/12-vad-misfire-investigation.md`.
+_VOICED_GAP_MAX_FRAMES = 8  # ~80 ms at the RMVPE 100 fps frame rate
+
+
+def _interpolate_voiced_gaps_np(pitchf: NDArrayF32) -> NDArrayF32:
+    if pitchf.size == 0:
+        return pitchf
+    arr = pitchf.astype(np.float64, copy=True)
+    invalid = np.isnan(arr) | (arr <= 0.0)
+    if not invalid.any():
+        return pitchf
+    if (~invalid).sum() == 0:
+        # Whole chunk is unvoiced — preserve so vocoder produces silence.
+        out_silence: NDArrayF32 = np.nan_to_num(arr, nan=0.0).astype(np.float32, copy=False)
+        return out_silence
+    out = np.nan_to_num(arr, nan=0.0)
+    last_valid = -1
+    i = 0
+    n = len(invalid)
+    while i < n:
+        if not invalid[i]:
+            last_valid = i
+            i += 1
+            continue
+        j = i
+        while j < n and invalid[j]:
+            j += 1
+        run_len = j - i
+        if (
+            run_len <= _VOICED_GAP_MAX_FRAMES
+            and last_valid >= 0
+            and j < n
+            and out[last_valid] > 0.0
+            and out[j] > 0.0
+        ):
+            for k in range(i, j):
+                alpha = (k - last_valid) / (j - last_valid)
+                out[k] = out[last_valid] * (1.0 - alpha) + out[j] * alpha
+        i = j
+    out_f32: NDArrayF32 = out.astype(np.float32, copy=False)
+    return out_f32
 
 
 def _to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, NDArrayF32]:
@@ -329,7 +412,7 @@ class _StreamResampler:
         if src_rate == dst_rate:
             self._stream = None
             return
-        import soxr  # type: ignore[import-untyped]
+        import soxr
 
         self._stream = soxr.ResampleStream(src_rate, dst_rate, num_channels=1, quality=quality)
 
@@ -524,6 +607,7 @@ class RealtimeEngine:
             crossfade_ms=self.cfg.sola_crossfade_ms,
             search_ms=self.cfg.sola_search_ms,
             context_ms=self.cfg.sola_context_ms,
+            corr_threshold=self.cfg.sola_corr_threshold,
         )
         self._sola: SOLAStream | None = (
             SOLAStream(self._sola_input_cfg) if self.cfg.sola_enabled else None
@@ -707,6 +791,7 @@ class RealtimeEngine:
             crossfade_ms=self.cfg.sola_crossfade_ms,
             search_ms=self.cfg.sola_search_ms,
             context_ms=self.cfg.sola_context_ms,
+            corr_threshold=self.cfg.sola_corr_threshold,
         )
         self._sola = SOLAStream(out_cfg)
 
@@ -834,7 +919,13 @@ class RealtimeEngine:
         """Raw model invocation; no streaming bookkeeping."""
         assert self._cv is not None and self._rmvpe is not None and self._rvc is not None
 
+        t_cv0 = time.perf_counter()
         feats = self._extract_feats(audio16k)
+        # v0.6.9: silently zero NaN bursts in feats before they propagate
+        # through the inferencer and become NaN samples in the output.
+        if np.isnan(feats).any():
+            feats = np.nan_to_num(feats, nan=0.0)
+        t_cv1 = time.perf_counter()
         rm_dtype = np.float16 if "float16" in self._rmvpe_input_dtype else np.float32
         pitchf_raw = self._rmvpe.run(
             ["pitchf"],
@@ -844,6 +935,11 @@ class RealtimeEngine:
             },
         )[0]
         pitchf = pitchf_raw.astype(np.float32).squeeze()
+        # v0.6.9: sanitize + interpolate short voiced→voiced gaps so a transient
+        # RMVPE failure mid-utterance doesn't zero the NSF harmonic source.
+        # Live diagnostic on e_girl voice traced 8 of 14 dropouts to this path.
+        pitchf = _interpolate_voiced_gaps_np(pitchf)
+        t_rmvpe1 = time.perf_counter()
 
         feats_2x = np.repeat(feats, 2, axis=1)
         pitch_coarse, pitchf_aligned = _to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
@@ -865,6 +961,16 @@ class RealtimeEngine:
             },
         )[0]
         result: NDArrayF32 = np.array(out).astype(np.float32).squeeze()
+        # v0.6.9: belt-and-braces NaN sanitize. pacat is fed float32le; NaN
+        # would be undefined behavior in PipeWire's mixer chain and the
+        # listener hears it as a click + brief gap.
+        if np.isnan(result).any() or np.isinf(result).any():
+            result = np.nan_to_num(result, nan=0.0, posinf=1.0, neginf=-1.0)
+        t_rvc1 = time.perf_counter()
+        # Per-stage timing surfaces in the slow_chunk_log when a chunk goes late.
+        self.stats.last_cv_ms = (t_cv1 - t_cv0) * 1000.0
+        self.stats.last_rmvpe_ms = (t_rmvpe1 - t_cv1) * 1000.0
+        self.stats.last_rvc_ms = (t_rvc1 - t_rmvpe1) * 1000.0
         return result
 
     def _safe_process_streaming_16k(self, audio16: NDArrayF32) -> NDArrayF32 | None:
@@ -955,6 +1061,11 @@ class RealtimeEngine:
             return
         self._stop_event.clear()
         self._ensure_sessions()
+        # v0.6.9: warm cv + rmvpe + rvc cuDNN caches with synthetic chunks so
+        # the first real chunks don't blow the chunk-time budget. Live
+        # diagnostic showed `max_total_ms=456 ms` (1.8x the 250 ms budget) on
+        # cold-start chunks — usually the first 3-5 chunks of a session.
+        self._warmup_realtime_pipeline()
         # v0.5.0: optionally pre-warm every voice so swaps are instant from
         # the first press of `p`. Costs ~6 s for a 10-voice library.
         if self.cfg.eager_warmup:
@@ -963,6 +1074,27 @@ class RealtimeEngine:
         self.stats.running = True
         self._thread = threading.Thread(target=self._run_loop, name="vcclient-engine", daemon=True)
         self._thread.start()
+
+    def _warmup_realtime_pipeline(self, n_chunks: int = 4) -> None:
+        """v0.6.9 — pre-run a few synthetic chunks through the *full* realtime
+        pipeline (cv → rmvpe → rvc) so cuDNN's algo cache is populated for the
+        actual shapes we feed at runtime. `RvcSessionPool.warmup` only warms
+        the rvc session; the cv and rmvpe sessions still cold-start the first
+        few real chunks otherwise.
+        """
+        if self._cv is None or self._rmvpe is None or self._rvc is None:
+            return
+        chunk_n = round(self.cfg.chunk_seconds * 16_000)
+        if chunk_n <= 0:
+            return
+        rng = np.random.default_rng(42)
+        # Tiny noise so RMVPE doesn't see exact-zero (which can short-circuit).
+        dummy = rng.standard_normal(chunk_n).astype(np.float32) * 0.001
+        for _ in range(n_chunks):
+            try:
+                self._infer(dummy)
+            except Exception:
+                break
 
     def stop(self, timeout: float = 2.0) -> None:
         self._stop_event.set()
@@ -1332,6 +1464,21 @@ class RealtimeEngine:
                     rms = float(np.sqrt(np.mean(audio**2)))
                     self.stats.last_input_rms = rms
 
+                    # v0.6.9 — input-level gate. Bypass inference on near-silent
+                    # input so the vocoder doesn't hallucinate a baseline
+                    # "voicing floor" during pauses. See LESSONS §17.
+                    gate_thresh = (
+                        10.0 ** (self.cfg.input_gate_dbfs / 20.0)
+                        if self.cfg.input_gate_dbfs > -120.0
+                        else 0.0
+                    )
+                    if rms < gate_thresh:
+                        n_silence = round(audio.shape[0] * self.cfg.sink_rate / self.cfg.mic_rate)
+                        self._enqueue_chunk(
+                            self._to_sink_bytes(np.zeros(n_silence, dtype=np.float32))
+                        )
+                        continue
+
                     t_total = time.perf_counter()
                     audio16 = (
                         self._resampler_in.process(audio)
@@ -1386,6 +1533,29 @@ class RealtimeEngine:
                     self.stats.chunks_processed += 1
                     self.stats.last_inference_ms = inf_ms
                     self.stats.last_total_ms = total_ms
+                    if inf_ms > self.stats.max_inference_ms:
+                        self.stats.max_inference_ms = inf_ms
+                    if total_ms > self.stats.max_total_ms:
+                        self.stats.max_total_ms = total_ms
+                    if total_ms > self.cfg.chunk_seconds * 1000.0:
+                        self.stats.late_chunks += 1
+                        # v0.6.9 round 5 — capture per-stage breakdown for
+                        # postmortem of which session caused the outlier.
+                        # Capped at 50 entries so memory doesn't grow without
+                        # bound on a degraded GPU.
+                        self.stats.slow_chunk_log.append(
+                            {
+                                "chunk_idx": float(self.stats.chunks_processed),
+                                "total_ms": total_ms,
+                                "inf_ms": inf_ms,
+                                "cv_ms": self.stats.last_cv_ms,
+                                "rmvpe_ms": self.stats.last_rmvpe_ms,
+                                "rvc_ms": self.stats.last_rvc_ms,
+                                "input_rms": rms,
+                            }
+                        )
+                        if len(self.stats.slow_chunk_log) > 50:
+                            self.stats.slow_chunk_log.pop(0)
                     self.stats._recent_inference.append(inf_ms)
                     self.stats._recent_total.append(total_ms)
                     if self.stats._recent_inference:
