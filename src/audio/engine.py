@@ -144,17 +144,21 @@ class EngineConfig:
     # (laptop speakers / headphones) for self-monitoring.
     monitor: bool = False
     # Output latency in ms requested from the playback backend.
-    # v0.7.0: 300 → 80. Combined with the prefer_pw_cat switch below.
-    # The v0.6.7 measurement that motivated 300 (audible zero-gaps at
-    # pw-cat 100 ms with bursty 250 ms writes) does not apply at the new
-    # 150 ms write cadence + the v0.6.9 stability fixes. Empirical sweep
-    # at chunk=0.15: pw-cat backend reports queue_full_events=0,
-    # late_chunks=0 across output_latency = 50/80/100/150 ms; pacat
-    # reports xruns at every setting (50–300) on this PipeWire version.
-    # 80 ms is the practical floor with one quantum of safety margin
-    # over PipeWire's default ~43 ms quantum. Saves 220 ms vs v0.6.x
-    # 300 ms — the second-biggest lever after chunk_seconds.
-    output_latency_ms: int = 80
+    # v0.7.0-rc2: 80 → 220. rc1 went too aggressive — at 80 ms the user
+    # reported audible cut increase in real-world CS2 + Discord use,
+    # despite synthetic engine-stats sweeps showing zero
+    # queue_full_events. Real-speech RVC inference variance (the
+    # ~80 ms threading penalty in LESSONS §19, with p99 spikes to
+    # 130–200 ms) needs more output buffer than the synthetic harness
+    # exposed. The rc2 sweep used the new
+    # `scripts/sweep_latency.py` harness with the synthetic fixture
+    # at `tests/fixtures/auto_sweep_input.wav`; cuts/min was essentially
+    # flat across 180–320 ms (~80 events/min, dominated by RVC-on-
+    # synthetic-input output dropouts that don't model real speech).
+    # 220 ms is the cleanest position in that flat region while keeping
+    # 80 ms savings vs the v0.6.x 300 ms default. See
+    # `docs/14-v070-baseline.md` and `docs/15-auto-sweep-methodology.md`.
+    output_latency_ms: int = 220
     # Process-time hint to pacat: write callbacks granulate to this many
     # ms. 20 ms keeps writes from coalescing into bursts that would
     # alternately starve and overrun the buffer. Ignored by pw-cat, which
