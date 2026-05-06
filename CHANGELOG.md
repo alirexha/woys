@@ -4,6 +4,19 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.6.10] — 2026-05-06 — Remove jennie voice from default library
+
+Removed jennie voice from default library — user opted out. Library ships
+with 7 character voices + amitaro.
+
+### Removed
+
+- `jennie` (Jennie / BLACKPINK, Legacy Core 32K 230E) from
+  `voice-library/SOURCES.md`. Provenance link preserved under the
+  "Removed in v0.6.10" section, matching the v0.6.2 alfred + batman
+  precedent.
+- Local `~/.local/share/woys/models/jennie.onnx` and the `jennie` profile.
+
 ## [0.6.9] — 2026-05-06 — Micro-cut fix — five engine fixes against a calibrated diagnostic baseline
 
 The "micro white-cuts are still present randomly" complaint that survived
