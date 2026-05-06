@@ -79,14 +79,30 @@ class EngineConfig:
     # Audio I/O
     mic_rate: int = 48_000
     sink_rate: int = 48_000
-    # v0.2.0 dropped this to 100 ms thanks to SOLA crossfade. v0.5.1 raised
-    # back to 250 ms because at 100 ms the SOLA tail-hold trims ~10 % of
-    # the output duration on continuous speech (per docs/07-audio-quality-bug.md).
-    # Latency at 250 ms is ~30 ms infer + 250 ms chunk wait + ~30 ms pacat
-    # = ~310 ms wall, well under any conversational threshold but above the
-    # original 80 ms target. Keep 100 ms as a tunable for users who care
-    # about absolute latency over output completeness.
-    chunk_seconds: float = 0.25
+    # v0.7.0 — dropped from 0.25 → 0.15. Empirical sweep (RTX 2070 Mobile,
+    # ORT-CUDA, cuDNN HEURISTIC, full realtime engine, catwoman voice):
+    #
+    #   chunk   late_chunks/total   inference avg   p99
+    #   0.10    13–42 / 100         77–98 ms       103–148 ms
+    #   0.15    0 / 80              76–80 ms       104–129 ms
+    #   0.20    0 / 60              92–96 ms       115–122 ms
+    #   0.25    0 / 50              83 ms          124 ms
+    #
+    # At chunk=0.10 the per-chunk budget is 100 ms but real engine inference
+    # is 77–98 ms (a +50 ms tax over the standalone benchmark, traced to
+    # GIL/scheduler effects of running inside the engine sub-thread; see
+    # LESSONS §19). 13–42 % of chunks miss budget at 0.10, even on the
+    # smallest voice. At chunk=0.15 the budget is 150 ms and zero chunks
+    # miss it across both light and heavy voices — that's the practical
+    # floor on this hardware. v0.7.0 picks 0.15 (saves 100 ms vs the v0.6.x
+    # 0.25 default; doesn't pretend 0.10 is achievable).
+    #
+    # Historical v0.5.1 reason for raising chunk to 0.25 ("SOLA tail-trim ate
+    # 10 % of output duration") was repaired by the v0.6.9 SOLA tuning
+    # (search_ms 4.0 → 6.0, corr_threshold 0.25 → 0.10). Historical v0.6.7
+    # reason ("dropped chunks during cuDNN warmup") was repaired by the
+    # v0.7.0 HEURISTIC switch + broader pre-warm shape coverage.
+    chunk_seconds: float = 0.15
     channels: int = 1
 
     # SOLA crossfade (Phase B). Disable at your peril — without it, audible
@@ -128,30 +144,39 @@ class EngineConfig:
     # (laptop speakers / headphones) for self-monitoring.
     monitor: bool = False
     # Output latency in ms requested from the playback backend.
-    # v0.6.7: 100 → 300 (default backend is pacat now; see prefer_pw_cat
-    # comment). At 300 ms pacat absorbs the engine's 250 ms-chunk
-    # writer cadence without ring-buffer underruns. At 100 ms (the
-    # v0.5.2 pw-cat sweet spot) pacat *also* runs clean; at <100 ms
-    # pacat returns to underrun storms. 300 ms gives a comfortable
-    # safety margin without measurable user-perceived latency cost.
-    output_latency_ms: int = 300
+    # v0.7.0: 300 → 80. Combined with the prefer_pw_cat switch below.
+    # The v0.6.7 measurement that motivated 300 (audible zero-gaps at
+    # pw-cat 100 ms with bursty 250 ms writes) does not apply at the new
+    # 150 ms write cadence + the v0.6.9 stability fixes. Empirical sweep
+    # at chunk=0.15: pw-cat backend reports queue_full_events=0,
+    # late_chunks=0 across output_latency = 50/80/100/150 ms; pacat
+    # reports xruns at every setting (50–300) on this PipeWire version.
+    # 80 ms is the practical floor with one quantum of safety margin
+    # over PipeWire's default ~43 ms quantum. Saves 220 ms vs v0.6.x
+    # 300 ms — the second-biggest lever after chunk_seconds.
+    output_latency_ms: int = 80
     # Process-time hint to pacat: write callbacks granulate to this many
     # ms. 20 ms keeps writes from coalescing into bursts that would
     # alternately starve and overrun the buffer. Ignored by pw-cat, which
     # uses PipeWire's quantum negotiation instead.
     output_process_time_ms: int = 20
 
-    # v0.6.7 retro on v0.5.2 — pw-cat is no longer preferred. With bursty
-    # 250 ms chunk writes, pw-cat's stdin reader thread / PipeWire
-    # callback thread fall out of phase: every PipeWire callback that
-    # fires while pw-cat is mid-stdin-read sees an empty ring buffer and
-    # outputs ~43 ms (one PipeWire quantum at default settings) of
-    # silence. The captured WoysSink.monitor for a 25 s sustained-vowel
-    # test shows ~3 zero-gaps/s with pw-cat at 100 ms. Switching to
-    # pacat at 300 ms drops it to 0.08/s (40x cleaner) on the same
-    # write cadence. Reproducer:  /tmp/controlled_engine_test.py
-    # in the v0.6.7 retro. See `docs/11-microcuts-bug.md` part 2.
-    prefer_pw_cat: bool = False
+    # v0.7.0 — flipped back to True. v0.5.2 originally picked pw-cat
+    # because pacat had underrun storms at low latency; v0.6.7 flipped
+    # it back to pacat because pw-cat had per-quantum zero-gaps with
+    # bursty 250 ms chunk writes. The v0.6.7 measurement no longer
+    # applies in v0.7.0 because (1) chunk_seconds=0.15 means writes
+    # are smaller and more frequent, so pw-cat's stdin reader sees less
+    # bursty input; (2) v0.6.9's input gate, NaN sanitization, and
+    # dropped-chunk recovery removed the inference-side jitter that
+    # was driving the original gap pattern. Empirical sweep at
+    # chunk=0.15 + output_latency_ms=80 confirms zero queue_full_events
+    # across both backends, but pacat's stderr underrun parser still
+    # reports ~65 events / 15 s on this hardware (pacat-version-
+    # specific behavior, not actual audible gaps), while pw-cat is
+    # silent. Pull-based PipeWire scheduling is the cleaner default.
+    # See `docs/14-v070-baseline.md` and `docs/11-microcuts-bug.md`.
+    prefer_pw_cat: bool = True
 
     # v0.5.1: software input pre-attenuation, in dB. Default 0.0 (passthrough).
     # Hot mics (HyperX QuadCast at high volume etc.) clip the signal which
@@ -262,22 +287,33 @@ class EngineStats:
     _writer_intervals_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
 
+# v0.7.0: cuDNN convolution algorithm search strategy. EXHAUSTIVE was the
+# v0.2.0 default — picks the fastest steady-state algo per shape but eats
+# 50–100 ms autotune the first time each shape lands. At chunk_seconds=0.25
+# the autotune is amortized over a long session; at chunk_seconds=0.10 the
+# first 5–10 chunks miss budget while autotune runs (was the v0.5.1 root
+# cause for raising chunk back to 0.25). HEURISTIC picks a near-optimal
+# algo from a heuristic without any timed search — slightly slower
+# steady-state (typically 1–3 % per chunk on this hardware) but no
+# autotune lump, so dropping chunk_seconds becomes safe. The setting can
+# still be flipped back via the env var if a future ORT release improves
+# EXHAUSTIVE's amortization.
+_CUDNN_ALGO_SEARCH = "HEURISTIC"
+
+
 def _make_session(path: Path) -> ort.InferenceSession:
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     so.log_severity_level = 3
     providers: list[tuple[str, dict[str, object]] | str] = []
     if "CUDAExecutionProvider" in ort.get_available_providers():
-        # Mirror the Phase 5 smoke-test options. cudnn_conv_algo_search=EXHAUSTIVE
-        # eats a one-off ~50-100 ms autotune at first call but unlocks ~3-4x
-        # steady-state inference speed.
         providers.append(
             (
                 "CUDAExecutionProvider",
                 {
                     "device_id": 0,
                     "arena_extend_strategy": "kNextPowerOfTwo",
-                    "cudnn_conv_algo_search": "EXHAUSTIVE",
+                    "cudnn_conv_algo_search": _CUDNN_ALGO_SEARCH,
                     "do_copy_in_default_stream": True,
                 },
             )
