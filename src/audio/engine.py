@@ -447,9 +447,32 @@ def _make_session(path: Path) -> ort.InferenceSession:
                 "CUDAExecutionProvider",
                 {
                     "device_id": 0,
-                    "arena_extend_strategy": "kNextPowerOfTwo",
+                    # v0.7.0-rc12: kNextPowerOfTwo → kSameAsRequested.
+                    # The pre-rc12 strategy rounded each arena
+                    # allocation up to the next power of 2, which
+                    # caused occasional re-allocations + copies when
+                    # input shapes crossed a power-of-2 boundary
+                    # (e.g. 4357 → 8192-byte arena, 4847 → would
+                    # need ~10 KiB so re-alloc). Per ORT 1.14+ docs
+                    # `kSameAsRequested` is the recommended default
+                    # for static-shape workloads where you want
+                    # predictable memory behavior. We have soxr's
+                    # variable shape range (1957/1958/2446/2447 input
+                    # → 4357/4358/4846/4847 model_input) but the
+                    # range is BOUNDED — once the arena has seen all
+                    # four shapes, no further re-allocations.
+                    "arena_extend_strategy": "kSameAsRequested",
                     "cudnn_conv_algo_search": _CUDNN_ALGO_SEARCH,
                     "do_copy_in_default_stream": True,
+                    # v0.7.0-rc12: explicit. ORT 1.14+ default is "1"
+                    # but pinning makes the behavior version-stable.
+                    # Tells cuDNN to pick the fastest algo regardless
+                    # of workspace memory cost — a faster algo with
+                    # larger scratch space can beat a slower algo
+                    # with tighter scratch. With EXHAUSTIVE search
+                    # (rc10) AND max workspace, cuDNN has the widest
+                    # selection of algos to choose from.
+                    "cudnn_conv_use_max_workspace": "1",
                 },
             )
         )

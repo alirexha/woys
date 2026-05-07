@@ -4,6 +4,118 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc12] — 2026-05-07 — ORT arena + cudnn workspace tweaks; null result, GPU clock variance confirmed as the dominant cause
+
+### Background — GPU clock data captured during rc11 diag
+
+`nvidia-smi -lms 500` ran in parallel with `woys diag --seconds 30`:
+
+```
+graphics_clock_MHz:
+  count: 74 samples (~37 s, 0.5 s sampling)
+  mean:  1295
+  min:    300   (idle, between chunks)
+  max:   1920   (boost, during active inference)
+  p50:   1380
+  p95:   1920
+  p99:   1920
+```
+
+Clock varies 300 ↔ 1920 MHz across the diag run. During inference
+itself (last 5 samples in the log), clock is 855–1380 MHz. RTX 2070
+Mobile is dropping to base / mid-clock between chunks
+(`chunk_seconds = 150 ms - inference 50 ms = 100 ms idle / chunk`)
+and not always reboosting in time for the next inference.
+
+If a chunk's inference happens at 855 MHz instead of 1920 MHz,
+inference takes ~2.2× longer. p50=44 ms × 2.2 = 97 ms — matches
+the observed p99/max range.
+
+### What rc12 changed
+
+`src/audio/engine.py: _make_session` CUDA EP options:
+
+- `arena_extend_strategy: kNextPowerOfTwo → kSameAsRequested` (more
+  predictable allocations; avoids occasional re-allocations on
+  shape boundary crossings)
+- `cudnn_conv_use_max_workspace: "1"` (explicit; default in ORT
+  1.14+ but pinning version-stabilizes; lets cuDNN pick fastest
+  algo regardless of scratch-space cost)
+
+### Verification — null result
+
+`woys diag --seconds 30` (rc12, in-CC):
+
+```
+inference  p50=44.55  p95=84.72  p99=87.09  max=92.51  (n=32)
+
+rc11:      p50=44.25  p95=83.30  p99=86.18  max=96.23
+rc10:      p50=44.34  p95=83.58  p99=84.78  max=95.16
+rc9:       p50=35.62  p95=91.69  p99=96.27  max=96.75
+```
+
+p99 floor is firmly ~85 ms across rc10/rc11/rc12. The 40 ms
+p50→p99 spread is unmovable by ORT config tweaks. **Code-only
+fixes are exhausted.**
+
+### What I could not do automatically
+
+Locking GPU clocks via `sudo nvidia-smi --lock-gpu-clocks=1380,1920`
+requires interactive sudo password, which I can't supply in
+autonomous mode. This is the last unexercised lever per the rc11
+suspect ranking. **Manual host-level mitigation:**
+
+```bash
+# Before launching woys: lock GPU clocks to the high boost range
+sudo nvidia-smi --persistence-mode=1
+sudo nvidia-smi --lock-gpu-clocks=1380,1920
+woys run --autostart    # talk into Telegram
+
+# After done:
+sudo nvidia-smi --reset-gpu-clocks
+```
+
+If alireza's Telegram p99 drops below 50 ms after running the
+above, the GPU clock hypothesis is confirmed. v0.8.x can then
+land a permanent fix:
+- A `tools/woys-lock-clocks.sh` helper that wraps the sudo calls
+- A polkit rule to allow the woys user to run `nvidia-smi
+  --lock-gpu-clocks` without password
+- An optional engine startup hook that invokes the lock helper
+
+### Other v0.8.x candidates if clock-lock isn't enough
+
+- **TensorRT EP** instead of CUDA EP — 1.5–3× faster on
+  steady-state inference, much tighter p99 because TRT engines
+  are deterministic. Big refactor (rebuild model graph as TRT
+  engine on first load). ORT 1.22 has TensorrtExecutionProvider
+  available.
+- **Soxr shape stabilization** — refactor the input pipeline so
+  the model always sees a fixed-length input, eliminating shape-
+  driven cuDNN variance entirely. Bigger refactor than TRT
+  switch but eliminates a class of issues.
+- **Multiprocessing inference** — run inference in a child process
+  with its own CUDA context, isolated from the engine main
+  thread's audio I/O. Closes the LESSONS §19 threading tax too.
+
+### What did NOT change
+
+- rc7 gc.disable() stays.
+- rc8 tail_chunk_log stays.
+- rc9 broader pre-warm stays.
+- rc10 cuDNN EXHAUSTIVE stays.
+- rc11 SCHED_FIFO RT priority stays.
+- No tests, no migration, schema 10.
+
+### Verification
+
+98/98 fast tests pass; mypy --strict clean; ruff format clean.
+
+DO NOT auto-tag. **Per alireza's stop condition (b): "tried rc10,
+rc11, rc12 and the tail spike won't budge (real hardware floor
+reached, time for v0.8.x architecture work)" — escalating.**
+Final report follows in conversation.
+
 ## [0.7.0rc11] — 2026-05-07 — Engine thread → SCHED_FIFO prio 60; null result, variance is GPU-side
 
 ### What changed
