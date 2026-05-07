@@ -208,6 +208,11 @@ class EngineConfig:
     # RVC
     f0_up_key: int = 0  # semitones
     sid: int = 0
+    # B59 / audio-008: RMVPE voiced-frame confidence threshold. Below this,
+    # frames are treated as unvoiced (pitchf=0 → RVC NSF emits noise rather
+    # than harmonic content). Smaller values catch more frames as voiced
+    # (potential breath-as-pitch confusion); larger miss soft-voiced
+    # content. Recommended range [0.1, 0.5]. Upstream's default is 0.3.
     threshold: float = 0.3
 
     # Embedder selection. Only "onnx" is supported (direct ORT contentvec-f.onnx
@@ -268,6 +273,11 @@ class EngineConfig:
 
     # v0.5.0 session-pool tuning.
     # Cap on simultaneous cached RVC sessions (each ~150 MiB VRAM).
+    # B64 / perf-15: VRAM math on RTX 2070 (8 GiB) — pool_size=4 ≈ 600 MiB
+    # of voice models, plus foundation models (700-1500 MiB depending on
+    # rmvpe fp16 vs fp32), plus cuDNN handle / arena (~500 MiB). Combined
+    # with CS2 wanting ~3-4 GiB, an 8 GiB GPU is tight under contention.
+    # Lower this to 2 if you see CUDA OOM. Higher only on >12 GiB cards.
     session_pool_size: int = 4
     # If true, on engine.start() we eagerly create + cudnn-warm sessions for
     # every .onnx in the models dir (minus foundations). Adds ~6-12 s to
@@ -386,6 +396,16 @@ class EngineConfig:
     # rc7 logic, just inside the subprocess. Set False if long
     # sessions reveal cyclic-ref memory bloat.
     inference_subprocess_disable_gc: bool = True
+
+    # B63 / arch-012: opt-in periodic gc.collect(0) during the run loop.
+    # gc.disable is on for the engine's lifetime, which can be hours; for
+    # users who hit cyclic-ref memory bloat on long sessions, set this to
+    # e.g. 1000 to run a gen-0 collect every N chunks (~150 s at
+    # chunk_seconds=0.15). Cost: ~1-3 ms per collect — small enough to
+    # be a non-event for the audio thread; large enough to cause an
+    # observable jitter spike on tight chunk_seconds=0.10. Default 0
+    # = off (current behavior).
+    engine_periodic_gc_chunks: int = 0
 
     # v0.8.1 — TensorRT execution provider, DISABLED BY DEFAULT.
     #
@@ -835,26 +855,11 @@ def to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, ND
 _to_pitch_coarse = to_pitch_coarse
 
 
-def _resample_linear(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArrayF32:
-    """Cheap linear-interp resampler — kept as a known-bad reference baseline
-    for v0.5.1 tests. Production path uses `_resample` (soxr).
-
-    Linear interpolation has no anti-aliasing low-pass: frequencies above
-    `dst_rate / 2` fold back as audible high-frequency noise. RMSE on a
-    1 kHz sine round-trip 48k→40k→48k is ~30x worse than soxr HQ.
-    """
-    if src_rate == dst_rate:
-        return audio.astype(np.float32, copy=False)
-    n_src = len(audio)
-    n_dst = round(n_src * dst_rate / src_rate)
-    if n_dst <= 0:
-        return np.zeros(0, dtype=np.float32)
-    src_idx = np.linspace(0, n_src - 1, n_dst, dtype=np.float64)
-    floor = np.floor(src_idx).astype(np.int64)
-    ceil = np.minimum(floor + 1, n_src - 1)
-    frac = (src_idx - floor).astype(np.float32)
-    out: NDArrayF32 = ((1 - frac) * audio[floor] + frac * audio[ceil]).astype(np.float32)
-    return out
+# B60 / audio-012: `_resample_linear` (the known-bad reference baseline)
+# was deleted in v0.8.0. Production path used `_resample` (soxr); the linear
+# variant existed only to fail v0.5.1 quality tests. No callers in src/ or
+# tests/. If you need it back as a benchmark, see `scripts/bench_*.py` or
+# git history.
 
 
 def _resample(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArrayF32:
@@ -1314,6 +1319,11 @@ class RealtimeEngine:
         every `.onnx` that doesn't look like a foundation file. Costs
         ~600 ms per voice on RTX 2070; subsequent swaps to any of those
         voices are pointer swaps (~10 ms total).
+
+        B61 / perf-007: caps voice_paths at `session_pool_size`. Pre-v0.8.0
+        we walked every voice in the dir even though only the last
+        `pool_size` survive eviction — so voices 1..N-pool_size were
+        warmed and immediately discarded. Wasted startup time.
         """
         if voice_paths is None:
             foundations = {
@@ -1323,6 +1333,16 @@ class RealtimeEngine:
                 "hubert_base.onnx",
             }  # fmt: skip
             voice_paths = sorted(p for p in MODELS_DIR.glob("*.onnx") if p.name not in foundations)
+        # B61: only warm what fits in the pool. The first N entries (alphabetical)
+        # are the ones the user is most likely to land on — bias toward retaining
+        # the deterministic prefix.
+        cap = self.cfg.session_pool_size
+        if len(voice_paths) > cap:
+            print(
+                f"[engine] eager-warmup capped at session_pool_size={cap} "
+                f"(have {len(voice_paths)} voices; skipping the LRU-evicted tail)"
+            )
+            voice_paths = voice_paths[:cap]
         for p in voice_paths:
             self._rvc_pool.warmup(p)
             # Also probe + cache the SR for each.
@@ -2429,6 +2449,13 @@ class RealtimeEngine:
 
                     total_ms = (time.perf_counter() - t_total) * 1000
                     self.stats.chunks_processed += 1
+                    # B63 / arch-012: optional periodic gc.collect(0) for users
+                    # who run multi-hour sessions and observe heap growth.
+                    # Default off (engine_periodic_gc_chunks=0).
+                    if self.cfg.engine_periodic_gc_chunks > 0 and (
+                        self.stats.chunks_processed % self.cfg.engine_periodic_gc_chunks == 0
+                    ):
+                        gc.collect(0)
                     self.stats.last_inference_ms = inf_ms
                     self.stats.last_total_ms = total_ms
                     if inf_ms > self.stats.max_inference_ms:
