@@ -386,18 +386,35 @@ class EngineStats:
     _recent_enqueue_lag_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
 
-# v0.7.0: cuDNN convolution algorithm search strategy. EXHAUSTIVE was the
-# v0.2.0 default — picks the fastest steady-state algo per shape but eats
-# 50–100 ms autotune the first time each shape lands. At chunk_seconds=0.25
-# the autotune is amortized over a long session; at chunk_seconds=0.10 the
-# first 5–10 chunks miss budget while autotune runs (was the v0.5.1 root
-# cause for raising chunk back to 0.25). HEURISTIC picks a near-optimal
-# algo from a heuristic without any timed search — slightly slower
-# steady-state (typically 1–3 % per chunk on this hardware) but no
-# autotune lump, so dropping chunk_seconds becomes safe. The setting can
-# still be flipped back via the env var if a future ORT release improves
-# EXHAUSTIVE's amortization.
-_CUDNN_ALGO_SEARCH = "HEURISTIC"
+# v0.7.0-rc10: HEURISTIC → EXHAUSTIVE. The rc8 tail-chunk capture +
+# rc9 broader pre-warm together pinned the inference p99 spike to
+# cuDNN heuristic algo selection: even after rc9 pre-warmed every
+# audio16_len soxr emits (1957/1958/2446/2447), p99 stayed at ~96 ms.
+# rc9's tail log showed two distinct slow patterns — `rvc_ms` 64–72
+# ms (one shape group) and `rvc_ms` 47–48 ms + `rmvpe_ms` 17 ms
+# (other shape group). The heuristic was picking different,
+# intrinsically slower, algos for the alternating shapes.
+#
+# v0.7.0-rc1's pre-rejection of EXHAUSTIVE was based on the autotune
+# lump: a 50–100 ms one-time cost per first-encounter shape. At
+# chunk_seconds=0.10 / 0.15, paying that cost mid-realtime made the
+# first 5–10 chunks miss budget. rc9's broader pre-warm changes
+# that calculation: the autotune lump is now paid during warmup
+# (engine.start() before _run_loop), not realtime. Net startup
+# cost: another ~0.5–1 s on top of rc9's already-extended warmup.
+# Acceptable trade for letting cuDNN pick the FASTEST algo per
+# shape rather than a heuristic guess.
+#
+# v0.2.0 — v0.7.0-rc9 history preserved for context:
+#   v0.2.0 default — picks fastest steady-state algo per shape but
+#   eats 50-100 ms autotune the first time each shape lands.
+#   HEURISTIC (rc1+) picked a near-optimal algo from a heuristic
+#   without any timed search — slightly slower steady-state but no
+#   autotune lump.
+#
+# Setting can still be flipped back via the env var if EXHAUSTIVE
+# regresses or if a future ORT release improves HEURISTIC.
+_CUDNN_ALGO_SEARCH = "EXHAUSTIVE"
 
 
 def _make_session(path: Path) -> ort.InferenceSession:
