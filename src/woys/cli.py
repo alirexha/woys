@@ -85,6 +85,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="export weights in fp16 — RVC v2 only, validate quality before shipping",
     )
+    convert_p.add_argument(
+        "--yes-i-trust-the-pickle",
+        dest="trust_pickle",
+        action="store_true",
+        help=(
+            "consent to load arbitrary code from this .pth via torch.load — "
+            "needed for older RVC checkpoints whose unpickle constructors "
+            "torch's safe-load mode rejects. Only pass this for files you "
+            "trust (ones you trained, or from a verified source)."
+        ),
+    )
 
     fp16_p = sub.add_parser(
         "fp16-convert",
@@ -622,6 +633,7 @@ def main(argv: list[str] | None = None) -> int:
             output=args.output,
             opset=getattr(args, "opset", 17),
             fp16=getattr(args, "fp16", False),
+            trust_pickle=getattr(args, "trust_pickle", False),
         )
     if args.cmd == "fp16-convert":
         from woys.fp16_convert import cli_fp16_convert

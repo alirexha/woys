@@ -15,17 +15,68 @@ module is a thin original-work wrapper that:
 Cache: HuggingFace-derived inputs are downloaded into
 `~/.local/share/woys/converted/<repo>/` so re-conversion is free.
 
+Security: `.pth` files are pickle archives. `torch.load(weights_only=False)`
+will execute arbitrary Python on load. We try `weights_only=True` first;
+if torch's safe-load mode rejects the checkpoint (older RVC formats with
+custom unpickle constructors do), we require explicit consent via the
+`--yes-i-trust-the-pickle` flag (or `WOYS_YES_I_TRUST_THE_PICKLE=1`)
+before falling back. Only consent for files you trust — RVC checkpoints
+shared on Discord / unknown forks are an RCE vector.
+
 Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
 
 import contextlib
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 CACHE_DIR = Path.home() / ".local" / "share" / "woys" / "converted"
+
+_TRUST_PICKLE_ENV = "WOYS_YES_I_TRUST_THE_PICKLE"
+
+
+def _user_trusts_pickle(flag: bool) -> bool:
+    """Has the user explicitly opted into unsafe pickle loading?
+
+    True if `--yes-i-trust-the-pickle` was passed OR
+    `WOYS_YES_I_TRUST_THE_PICKLE=1` is in the environment. We don't
+    interactive-prompt — that's unsafe in scripts and CI.
+    """
+    if flag:
+        return True
+    val = os.environ.get(_TRUST_PICKLE_ENV, "").strip().lower()
+    return val in ("1", "true", "yes")
+
+
+def _safe_torch_load(pth_path: Path, *, trust_pickle: bool):
+    """Load a torch checkpoint with weights_only=True first; on failure,
+    require explicit consent before falling back to weights_only=False
+    (the unsafe pickle-deserialize mode).
+    """
+    import torch
+
+    try:
+        return torch.load(str(pth_path), map_location="cpu", weights_only=True)
+    except Exception as safe_err:
+        # Many RVC v1 checkpoints have custom unpickle constructors that
+        # weights_only rejects. Fall back ONLY with explicit consent.
+        if not _user_trusts_pickle(trust_pickle):
+            raise RuntimeError(
+                f"\n[security] Refusing to load {pth_path.name} via the unsafe pickle path.\n"
+                f"  Safe-load failed with: {type(safe_err).__name__}: {safe_err}\n"
+                f"\n"
+                f"  This .pth is a Python pickle. torch.load(weights_only=False)\n"
+                f"  will execute arbitrary code on import. Only proceed if you\n"
+                f"  trust the source (a model you trained, or a verified fork).\n"
+                f"\n"
+                f"  To proceed, re-run with --yes-i-trust-the-pickle, or set\n"
+                f"  {_TRUST_PICKLE_ENV}=1 in your environment.\n"
+            ) from safe_err
+        return torch.load(str(pth_path), map_location="cpu", weights_only=False)
 
 
 @dataclass
@@ -41,17 +92,18 @@ class _RVCMeta:
     useFinalProj: bool
 
 
-def _probe_pth_metadata(pth_path: Path) -> _RVCMeta:
+def _probe_pth_metadata(pth_path: Path, *, trust_pickle: bool = False) -> _RVCMeta:
     """Inspect the .pth checkpoint dict to figure out which RVC variant it is.
 
     Mirrors the upstream `_setInfoByPytorch` decision tree. Doesn't import
     upstream's class hierarchy — keeps this module a pure original-work
     derivative-of-format-knowledge, not a derivative of upstream code.
-    """
-    # Late import — torch is heavy.
-    import torch
 
-    cpt = torch.load(str(pth_path), map_location="cpu", weights_only=False)
+    `trust_pickle=True` allows fall-through to the unsafe `torch.load
+    (weights_only=False)` path; default-False makes the consent boundary
+    explicit at every call site.
+    """
+    cpt = _safe_torch_load(pth_path, trust_pickle=trust_pickle)
     config = cpt.get("config")
     if config is None:
         raise ValueError(
@@ -142,6 +194,7 @@ def convert_pth_to_onnx(
     *,
     fp16: bool = False,
     opset: int = 17,
+    trust_pickle: bool = False,
 ) -> Path:
     """Convert an RVC `.pth` to ONNX. Returns the output path.
 
@@ -149,6 +202,11 @@ def convert_pth_to_onnx(
     where you've validated quality is preserved — v1 models often degrade.
     `opset=17` matches what the engine expects; raise it only if you've
     verified ORT 1.20+ supports the ops the model emits.
+
+    `trust_pickle=True` permits the unsafe `torch.load(weights_only=False)`
+    fall-through for older RVC checkpoints (see module docstring). Default
+    False makes safe-load attempt-then-fail unless the user opted in via
+    the CLI flag or env var.
     """
     pth_path = Path(pth_path).resolve()
     if not pth_path.exists():
@@ -157,7 +215,7 @@ def convert_pth_to_onnx(
         output_path = pth_path.with_suffix(".onnx")
     output_path = Path(output_path).resolve()
 
-    meta = _probe_pth_metadata(pth_path)
+    meta = _probe_pth_metadata(pth_path, trust_pickle=trust_pickle)
     print(
         f"[convert] {pth_path.name}: "
         f"type={meta.modelType.split('.')[-1]} sr={meta.samplingRate} "
@@ -229,10 +287,21 @@ def convert_pth_to_onnx(
     return output_path
 
 
-def cli_convert(pth: str, output: str | None = None, opset: int = 17, fp16: bool = False) -> int:
+def cli_convert(
+    pth: str,
+    output: str | None = None,
+    opset: int = 17,
+    fp16: bool = False,
+    *,
+    trust_pickle: bool = False,
+) -> int:
     try:
         out = convert_pth_to_onnx(
-            Path(pth), Path(output) if output else None, fp16=fp16, opset=opset
+            Path(pth),
+            Path(output) if output else None,
+            fp16=fp16,
+            opset=opset,
+            trust_pickle=trust_pickle,
         )
     except Exception as e:
         print(f"[convert] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
