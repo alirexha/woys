@@ -289,9 +289,31 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
     if reply.startswith("ERR control socket not found"):
         # Engine not running — write config so the next `woys run`
         # picks it up.
-        cfg = load_config()
-        cfg.rvc_model = str(path.resolve())
-        save_config(cfg)
+        # B35 / corr-024: flock the config file across the read+modify+write
+        # window. Two concurrent `woys models use X` calls (e.g. from a
+        # script) both read the same baseline config and one's save can
+        # clobber the other. flock(LOCK_EX) serializes them.
+        import fcntl
+        from contextlib import contextmanager
+        from typing import Iterator
+
+        from tui.config import CONFIG_FILE
+
+        @contextmanager
+        def _config_lock() -> Iterator[None]:
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            lock_path = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".lock")
+            with open(lock_path, "w") as lf:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+
+        with _config_lock():
+            cfg = load_config()
+            cfg.rvc_model = str(path.resolve())
+            save_config(cfg)
         print(f"[models] config updated → {path.name}")
         print("         (engine not running; the next `woys run` will load it)")
         return 0

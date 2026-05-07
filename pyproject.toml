@@ -5,13 +5,12 @@ description = "Linux-native real-time voice changer. RVC-only on ONNX Runtime CU
 authors = [{ name = "Alireza Hamayeli", email = "alireza.hmyl@gmail.com" }]
 license = { file = "LICENSE" }
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11,<3.12"
 keywords = ["voice-changer", "rvc", "onnx", "pipewire", "linux", "woys"]
 classifiers = [
     "License :: Other/Proprietary License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
     "Private :: Do Not Upload",
 ]

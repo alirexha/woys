@@ -544,8 +544,13 @@ class EngineStats:
     last_enqueue_lag_ms: float = 0.0
 
     # Rolling latency window for the TUI.
-    _recent_inference: deque[float] = field(default_factory=lambda: deque(maxlen=32))
-    _recent_total: deque[float] = field(default_factory=lambda: deque(maxlen=32))
+    # B43 / quality-006: 128-deep rolling window for all stat surfaces so
+    # p95/p99 readings have enough samples to be stable. Pre-v0.8.0,
+    # `_recent_inference` and `_recent_total` were 32-deep, which made
+    # their p99 jumpy; mic_read / enqueue_lag / writer_intervals were
+    # already 128. Single window size, single mental model.
+    _recent_inference: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    _recent_total: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     # v0.5.2 — inter-write intervals in ms (writer thread fills this).
     _writer_intervals_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     # v0.7.0-rc6 — wider window than _recent_inference (32) so p95/p99
@@ -568,6 +573,11 @@ class EngineStats:
     # `woys diag` can print it. Empty when `cfg.use_tensorrt=False`.
     trt_active_for: dict[str, bool] = field(default_factory=dict)
     trt_init_errors: dict[str, str] = field(default_factory=dict)
+
+    # B28 / corr-009: thread priority + affinity warnings. Each entry
+    # describes one failure (engine main, writer, child) so a user with
+    # multiple priority issues can see all of them, not just the last.
+    priority_warnings: list[str] = field(default_factory=list)
 
     # B23 / quality-019: public read-accessors for the rolling stat
     # windows. cli.py used to reach into the leading-underscore deques
@@ -969,10 +979,13 @@ class RvcSessionPool:
                 return self._cache[key]
             self._cache[key] = sess
             self._access_order.append(key)
+            # B26 / corr-006: the pre-v0.8.0 `if evicted != key` guard was
+            # dead — `key` was just appended at -1, the pop comes from index
+            # 0, so evicted == key only when len == 1 (and then we DO want
+            # to evict, never reaching this branch). Just unconditionally
+            # drop.
             while len(self._access_order) > self._max_size:
-                evicted = self._access_order.pop(0)
-                if evicted != key:
-                    self._cache.pop(evicted, None)
+                self._cache.pop(self._access_order.pop(0), None)
         return sess
 
     def warmup(self, path: Path) -> ort.InferenceSession:
@@ -2042,11 +2055,11 @@ class RealtimeEngine:
             if self._last_writer_ts is not None:
                 interval_ms = (now - self._last_writer_ts) * 1000.0
                 self.stats._writer_intervals_ms.append(interval_ms)
-                # Update jitter (std dev) periodically — every ~16 chunks
-                # is sufficient resolution for a TUI readout.
-                if len(self.stats._writer_intervals_ms) >= 16 and (
-                    self.stats.chunks_processed % 16 == 0
-                ):
+                # B27 / corr-008: refresh jitter every chunk once the deque
+                # is full. The pre-v0.8.0 `% 16` gate produced stale readings
+                # for sudden jitter spikes that cleared in <16 chunks. Cost
+                # is ~10 µs every chunk on a 128-deque; trivial.
+                if len(self.stats._writer_intervals_ms) >= 16:
                     arr = np.array(self.stats._writer_intervals_ms, dtype=np.float32)
                     self.stats.writer_jitter_ms = float(arr.std())
             self._last_writer_ts = now
@@ -2057,19 +2070,28 @@ class RealtimeEngine:
         Bound to a single pacat process — when it exits, readline returns
         b'' and the thread terminates. The watchdog spawns a new reader
         for the replacement process.
+
+        B32 / corr-018: in pw-cat mode, parsing for "underrun" is futile
+        (pw-cat doesn't emit that token); instead we just drain the pipe
+        so it doesn't fill the kernel buffer (~64 KB) and deadlock the
+        subprocess. The xruns counter stays 0 in pw-cat mode (already
+        documented in `woys diag`).
         """
         if proc.stderr is None:
             return
+        is_pacat = self._player_backend == "pacat"
         try:
             for raw in proc.stderr:
                 if not raw:
                     break
-                # pacat -v prints lines like "Stream underrun.\n" exactly.
-                # We match case-insensitively in case the wording shifts
-                # across PulseAudio versions.
-                line = raw.decode("utf-8", errors="replace")
-                if "underrun" in line.lower():
-                    self.stats.xruns += 1
+                if is_pacat:
+                    # pacat -v prints lines like "Stream underrun.\n" exactly.
+                    # We match case-insensitively in case the wording shifts
+                    # across PulseAudio versions.
+                    line = raw.decode("utf-8", errors="replace")
+                    if "underrun" in line.lower():
+                        self.stats.xruns += 1
+                # else: drain-only — keep the pipe empty; don't parse.
         except (ValueError, OSError):
             # Pipe closed mid-read during shutdown — expected.
             return
@@ -2145,29 +2167,19 @@ class RealtimeEngine:
         without starving the writer. Same FIFO scheduler class — both
         threads still preempt SCHED_OTHER background work.
         """
-        if self.cfg.cpu_affinity_core is not None:
-            try:
-                os.sched_setaffinity(0, {self.cfg.cpu_affinity_core})
-            except (OSError, AttributeError) as e:
-                self.stats.last_error = f"affinity[{label}] failed ({type(e).__name__}: {e})"
+        # B28 + B47: shared `audio.priority` helpers; warnings append to
+        # `stats.priority_warnings` so the engine main / writer / inference
+        # child can all report independent failures without stomping
+        # `last_error`.
+        from audio.priority import try_set_affinity, try_set_realtime_priority
+
+        aff_warn = try_set_affinity(self.cfg.cpu_affinity_core, label)
+        if aff_warn is not None:
+            self.stats.priority_warnings.append(aff_warn)
         if self.cfg.realtime_priority:
-            try:
-                # Linux-only API. AttributeError on platforms (Windows,
-                # macOS) where sched_setscheduler isn't exposed.
-                param = os.sched_param(priority)
-                os.sched_setscheduler(0, os.SCHED_FIFO, param)
-            except (OSError, PermissionError, AttributeError) as rt_err:
-                # RLIMIT_RTPRIO too low (or no CAP_SYS_NICE) → fall back
-                # to nice(-10). Same behavior as pre-rc11.
-                try:
-                    os.nice(-10)
-                except (OSError, PermissionError) as nice_err:
-                    self.stats.last_error = (
-                        f"realtime_priority[{label}] denied "
-                        f"(SCHED_FIFO: {type(rt_err).__name__}: {rt_err}; "
-                        f"nice -10: {type(nice_err).__name__}: {nice_err}); "
-                        f"needs CAP_SYS_NICE or RLIMIT_RTPRIO ≥ 60"
-                    )
+            rt_warn = try_set_realtime_priority(label, priority=priority)
+            if rt_warn is not None:
+                self.stats.priority_warnings.append(rt_warn)
 
     def _run_loop(self) -> None:
         import sounddevice as sd
@@ -2263,9 +2275,13 @@ class RealtimeEngine:
             # in the current run (None when above threshold).
             gate_below_since: float | None = None
             hysteresis_s = max(0.0, self.cfg.input_gate_hysteresis_ms / 1000.0)
+            # B31 / corr-016: documented disable sentinel is -200.0 dBFS;
+            # use it. The pre-v0.8.0 `> -120.0` cutoff was a magic number
+            # (and gave qualitatively-different behavior for -120.0 vs
+            # -119.999 — a value that should be a no-op kill threshold).
             gate_thresh = (
                 10.0 ** (self.cfg.input_gate_dbfs / 20.0)
-                if self.cfg.input_gate_dbfs > -120.0
+                if self.cfg.input_gate_dbfs > -200.0
                 else 0.0
             )
 

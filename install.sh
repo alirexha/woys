@@ -82,10 +82,10 @@ mkdir -p "$APP_HOME" "$BIN_DIR" "$SYSTEMD_USER_DIR"
 "$UV_BIN" python install 3.11 >/dev/null
 if [ -x "$VENV/bin/python" ]; then
     say "reusing existing venv at $VENV (skip 5 GB re-download)…"
-    # Drop the old vcclient-cachy wheel before installing the woys wheel —
-    # the v0.6.0 rename means the old console script is dead and needs to
-    # not shadow the new one.
-    "$VENV/bin/python" -m pip uninstall -y vcclient-cachy >/dev/null 2>&1 || true
+    # B38 / pkg-005: don't blanket-suppress stderr — surface real errors.
+    if ! "$VENV/bin/python" -m pip uninstall -y vcclient-cachy >/dev/null; then
+        say "warning: failed to uninstall stale vcclient-cachy wheel; continuing"
+    fi
 else
     say "creating Python 3.11 venv at $VENV…"
     "$UV_BIN" venv --python 3.11 "$VENV" >/dev/null
@@ -101,21 +101,14 @@ LINK="$BIN_DIR/woys"
 ln -sfn "$VENV/bin/woys" "$LINK"
 say "linked launcher: $LINK -> $VENV/bin/woys"
 
-# v0.6.0 — backward-compat shim. `vcclient-cachy` keeps working but prints
-# a deprecation warning, then exec's the new binary with the same args.
-# Remove any stale symlink first — the old install pointed it at
-# venv/bin/vcclient-cachy which no longer exists.
-SHIM="$BIN_DIR/vcclient-cachy"
-rm -f "$SHIM"
-cat > "$SHIM" <<'SHIM_EOF'
-#!/usr/bin/env bash
-# Deprecated shim — `vcclient-cachy` was renamed to `woys` in v0.6.0.
-# This wrapper will be removed in v0.7.0. Update your scripts / muscle memory.
-printf '\033[33m[deprecation]\033[0m vcclient-cachy is deprecated, use `woys` (this shim will be removed in v0.7.0)\n' >&2
-exec woys "$@"
-SHIM_EOF
-chmod +x "$SHIM"
-say "linked deprecated shim: $SHIM -> woys (delete in v0.7.0)"
+# B39 / pkg-009: the deprecated `vcclient-cachy` shim's own comment said
+# "removed in v0.7.0". We are in v0.8.0 now. Stop installing it; remove
+# any stale shim that earlier installs left behind.
+SHIM_OLD="$BIN_DIR/vcclient-cachy"
+if [ -e "$SHIM_OLD" ]; then
+    rm -f "$SHIM_OLD"
+    say "removed obsolete vcclient-cachy shim (deprecated in v0.6.0, dropped in v0.8.0)"
+fi
 
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
@@ -137,8 +130,14 @@ fi
 
 if [ "$NO_SYSTEMD" -eq 0 ]; then
     install -m 0644 "$REPO_DIR/pkg/woys-mic.service" "$SYSTEMD_USER_DIR/"
-    systemctl --user daemon-reload || true
-    systemctl --user enable --now woys-mic.service || true
+    # B38 / pkg-005: surface failure of the systemctl steps so the user
+    # learns about it now, not when the mic doesn't auto-load on next boot.
+    if ! systemctl --user daemon-reload; then
+        say "warning: systemctl daemon-reload failed; continuing"
+    fi
+    if ! systemctl --user enable --now woys-mic.service; then
+        say "warning: failed to enable woys-mic.service; continuing"
+    fi
     say "woys-mic.service enabled (Discord/CS2 see woys-mic at boot)."
 
     # v0.6.8 — prune accumulated config backups left by prior in-place
@@ -176,14 +175,26 @@ else
     say "skipping systemd unit registration (--no-systemd)"
 fi
 
+# ---- post-install verification ------------------------------------------------
+
+# B40 / pkg-011: run `woys --version` to confirm the binary actually works.
+# Catches transitively-failed deps / broken venvs before the user discovers
+# them mid-`woys run`.
+if ! "$LINK" --version >/dev/null 2>&1; then
+    say "ERROR: $LINK does not start. Inspect:"
+    say "    $VENV/bin/python -c 'import woys; print(woys.__version__)'"
+    say "    $VENV/bin/python -c 'from audio.engine import EngineConfig'"
+    exit 1
+fi
+INSTALLED_VERSION="$("$LINK" --version 2>/dev/null | head -1)"
+
 # ---- summary -----------------------------------------------------------------
 
 cat <<EOF
 
 [install] done.
 
-  launcher : $LINK
-  shim     : $SHIM  (deprecated, removed in v0.7.0)
+  launcher : $LINK   ($INSTALLED_VERSION)
   venv     : $VENV
   models   : $APP_HOME/models   ($([ -f "$APP_HOME/models/amitaro_v2_16k.onnx" ] && echo present || echo missing))
   service  : $SYSTEMD_USER_DIR/woys-mic.service

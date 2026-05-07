@@ -299,12 +299,15 @@ def test_enqueue_chunk_bumps_queue_full_when_writer_stalled() -> None:
     assert eng.stats.queue_full_events == 1
 
 
-def test_apply_thread_priority_on_invalid_core_logs_to_last_error() -> None:
-    """Affinity failures must degrade to a warning, not an exception."""
+def test_apply_thread_priority_on_invalid_core_logs_to_warnings() -> None:
+    """Affinity failures must degrade to a warning, not an exception.
+    B28 / corr-009: warnings now go to `stats.priority_warnings` (a list),
+    not `stats.last_error` (which the inference-drop path would stomp)."""
     from audio.engine import EngineConfig, RealtimeEngine
 
     # 9999 is virtually guaranteed to be out of range on any test host.
     eng = RealtimeEngine(EngineConfig(cpu_affinity_core=9999))
     eng._apply_thread_priority(label="test")
-    assert eng.stats.last_error is not None
-    assert "affinity" in eng.stats.last_error
+    assert any("affinity" in w for w in eng.stats.priority_warnings), (
+        f"expected affinity warning in priority_warnings, got: {eng.stats.priority_warnings}"
+    )

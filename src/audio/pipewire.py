@@ -137,8 +137,8 @@ def _destroy_orphan_nodes() -> None:
     targets = {SINK_NAME, SOURCE_NAME, LEGACY_SOURCE_NAME}
     current_id: str | None = None
     ids_to_destroy: list[str] = []
-    for line in out.stdout.splitlines():
-        line = line.rstrip()
+    for raw_line in out.stdout.splitlines():
+        line = raw_line.rstrip()  # B45 / quality-010: stop shadowing the loop var
         if line.lstrip().startswith("id ") and ", type" in line:
             tok = line.lstrip().split(",", 1)[0]  # "id 89"
             current_id = tok.split()[1]

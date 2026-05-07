@@ -100,17 +100,23 @@ class InferenceTimings:
 class _ChildHandles:
     """Lifecycle handles for one child process generation. We rebuild
     this on every (re)start so a crashed child can be cleanly torn
-    down and replaced without leaking shm or pipe fds."""
+    down and replaced without leaking shm or pipe fds.
 
-    proc: Any  # mp.Process
-    parent_send: Any  # Connection
-    parent_recv: Any  # Connection
-    child_send_remote: (
-        Any  # Connection (the child's end; parent holds it open until spawn completes)
-    )
-    child_recv_remote: Any  # Connection (same)
-    input_shm: Any  # SharedMemory
-    output_shm: Any  # SharedMemory
+    B44 / quality-007: precise types instead of `Any`. mp.Process,
+    multiprocessing.connection.Connection, and shared_memory.SharedMemory
+    all have stubs in modern Python; the previous `Any` annotations
+    let typo'd attribute accesses slip through mypy --strict.
+    """
+
+    proc: mp.Process
+    parent_send: "mp.connection.Connection"
+    parent_recv: "mp.connection.Connection"
+    # The child-side ends; parent holds them open until spawn completes,
+    # then closes its references so they live only inside the child.
+    child_send_remote: "mp.connection.Connection"
+    child_recv_remote: "mp.connection.Connection"
+    input_shm: shared_memory.SharedMemory
+    output_shm: shared_memory.SharedMemory
     rvc_output_sr: int = 16_000
     is_half: bool = False
     active_embedder: str = "onnx"

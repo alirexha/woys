@@ -72,24 +72,9 @@ def _ort_preload_dlls() -> None:
         ort.preload_dlls()
 
 
-def _try_set_rt_priority(label: str) -> str | None:
-    """Same logic as engine._apply_thread_priority — try SCHED_FIFO
-    prio 60, fall back to nice(-10), then to a logged warning."""
-    try:
-        param = os.sched_param(60)
-        os.sched_setscheduler(0, os.SCHED_FIFO, param)
-        return None
-    except (OSError, PermissionError, AttributeError) as rt_err:
-        try:
-            os.nice(-10)
-            return None
-        except (OSError, PermissionError) as nice_err:
-            return (
-                f"realtime_priority[{label}] denied "
-                f"(SCHED_FIFO: {type(rt_err).__name__}: {rt_err}; "
-                f"nice -10: {type(nice_err).__name__}: {nice_err}); "
-                f"needs CAP_SYS_NICE or RLIMIT_RTPRIO ≥ 60"
-            )
+# B47 / quality-013: the priority logic moved into `audio.priority`. Kept as
+# a thin alias to preserve any external imports that referenced the old name.
+from audio.priority import try_set_realtime_priority as _try_set_rt_priority  # noqa: E402,F401
 
 
 def child_main(

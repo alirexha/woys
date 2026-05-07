@@ -184,22 +184,25 @@ def import_profile(
     else:
         snap_in["rvc_model"] = ""
 
-    # Apply the snapshot fields onto a fresh AppConfig and use save_profile to
-    # round-trip them through the existing _PROFILE_FIELDS allowlist.
+    # B30 / corr-014: build the snapshot directly. The pre-v0.8.0 code
+    # called `save_profile(cfg, name)` first (which snapshotted the
+    # CURRENT cfg, not snap_in's data) and then immediately overwrote
+    # the result — dead code with a side effect that left an
+    # intermediate-state profile in `cfg._extras` for the millisecond
+    # between the save_profile and the bag overwrite.
     from tui.config import AppConfig
 
     tmp_cfg = AppConfig()
     for k, v in snap_in.items():
         if hasattr(tmp_cfg, k):
             setattr(tmp_cfg, k, v)
-    save_profile(cfg, name)
-    # The save_profile above used `cfg`'s current values, not snap_in's. We
-    # need to overwrite it with a clean snapshot. Easiest: do it manually.
-    bag = dict(cfg._extras.get("profiles", {}))
-    bag[name] = {k: v for k, v in asdict(tmp_cfg).items() if k in snap_in or k == "rvc_model"}
-    # Make sure all profile fields land in the snapshot.
-    from woys.profiles import _PROFILE_FIELDS
 
+    # B29 / corr-013: use the `_profiles_bag` helper so a corrupt
+    # `_extras["profiles"]` (non-dict, e.g. user hand-edited config to
+    # `profiles = "broken"`) coerces to {} instead of raising mid-save.
+    from woys.profiles import _PROFILE_FIELDS, _profiles_bag
+
+    bag = dict(_profiles_bag(cfg))
     full_snap: dict[str, Any] = {}
     for k in _PROFILE_FIELDS:
         if k in snap_in:
