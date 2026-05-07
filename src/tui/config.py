@@ -53,6 +53,15 @@ class AppConfig:
     sola_search_ms: float = _E.sola_search_ms
     sola_context_ms: float = _E.sola_context_ms
     input_gain_db: float = _E.input_gain_db
+    # v0.7.0-rc4 — added to AppConfig's forwarded set. Pre-rc4 these
+    # lived only on EngineConfig, so user overrides in `config.toml`
+    # were silently ignored (the audit `docs/16-audit/synthesis.md`
+    # confirmed alireza's `input_gate_dbfs = -200.0` never made it
+    # to the engine — every prior rc ran the dataclass default).
+    # `prefer_pw_cat` had the same drift since rc1.
+    input_gate_dbfs: float = _E.input_gate_dbfs
+    input_gate_hysteresis_ms: float = _E.input_gate_hysteresis_ms
+    prefer_pw_cat: bool = _E.prefer_pw_cat
     # TUI / app-only settings (not in EngineConfig).
     autostart_engine: bool = False
     enable_dbus: bool = True  # reserved for future D-Bus wiring (currently unused)
@@ -65,7 +74,7 @@ class AppConfig:
     def __post_init__(self) -> None:
         # Stamp the schema version on every fresh AppConfig so round-trips
         # match. The migration in load_config() bumps it on legacy files.
-        self._extras.setdefault("config_schema_version", 9)
+        self._extras.setdefault("config_schema_version", 10)
 
 
 def load_config(path: Path = CONFIG_FILE) -> AppConfig:
@@ -180,8 +189,45 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
                 if pdata.get("output_latency_ms") == 220:
                     pdata["output_latency_ms"] = _E.output_latency_ms
                     migrated = True
+    # ---- schema 9 → 10 — v0.7.0-rc4 audit (`docs/16-audit/synthesis.md`)
+    # found rc3's persistent cuts came from sources other than
+    # `output_latency_ms`. Two defaults bump and two new fields land.
+    #
+    # `input_gate_dbfs` -55 → -75: the rc1+ default fired on intra-
+    # speech RMS dips, emitting full chunks of zeros that bypassed
+    # every downstream buffer. rc4 lowers the threshold to well
+    # below typical room ambient.
+    #
+    # `prefer_pw_cat` True → False: v0.6.7's documented per-quantum
+    # zero-gap pattern matches lens 08's waveform evidence (sample-
+    # exact zeros, ~40 ms quantized) better than pacat's underrun
+    # pattern. rc1's "smaller chunks dodge the race" reasoning was
+    # not empirically backed.
+    #
+    # `input_gate_hysteresis_ms` and `input_gate_dbfs` were also added
+    # to AppConfig's forwarded field set this release; the migration
+    # that follows is the first time `prefer_pw_cat` lands in user
+    # configs at all (pre-rc4 it had no on-disk surface).
+    if schema < 10:
+        if fields_in.get("input_gate_dbfs") == -55.0:
+            fields_in["input_gate_dbfs"] = _E.input_gate_dbfs  # -75.0
+            migrated = True
+        if fields_in.get("prefer_pw_cat") is True:
+            fields_in["prefer_pw_cat"] = _E.prefer_pw_cat  # False
+            migrated = True
+        profiles = extras.get("profiles")
+        if isinstance(profiles, dict):
+            for pdata in profiles.values():
+                if not isinstance(pdata, dict):
+                    continue
+                if pdata.get("input_gate_dbfs") == -55.0:
+                    pdata["input_gate_dbfs"] = _E.input_gate_dbfs
+                    migrated = True
+                if pdata.get("prefer_pw_cat") is True:
+                    pdata["prefer_pw_cat"] = _E.prefer_pw_cat
+                    migrated = True
     cfg = AppConfig(**fields_in, _extras=extras)
-    cfg._extras["config_schema_version"] = 9
+    cfg._extras["config_schema_version"] = 10
     if migrated:
         with contextlib.suppress(OSError):
             save_config(cfg, path)

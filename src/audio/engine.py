@@ -162,22 +162,20 @@ class EngineConfig:
     # uses PipeWire's quantum negotiation instead.
     output_process_time_ms: int = 20
 
-    # v0.7.0 — flipped back to True. v0.5.2 originally picked pw-cat
-    # because pacat had underrun storms at low latency; v0.6.7 flipped
-    # it back to pacat because pw-cat had per-quantum zero-gaps with
-    # bursty 250 ms chunk writes. The v0.6.7 measurement no longer
-    # applies in v0.7.0 because (1) chunk_seconds=0.15 means writes
-    # are smaller and more frequent, so pw-cat's stdin reader sees less
-    # bursty input; (2) v0.6.9's input gate, NaN sanitization, and
-    # dropped-chunk recovery removed the inference-side jitter that
-    # was driving the original gap pattern. Empirical sweep at
-    # chunk=0.15 + output_latency_ms=80 confirms zero queue_full_events
-    # across both backends, but pacat's stderr underrun parser still
-    # reports ~65 events / 15 s on this hardware (pacat-version-
-    # specific behavior, not actual audible gaps), while pw-cat is
-    # silent. Pull-based PipeWire scheduling is the cleaner default.
-    # See `docs/14-v070-baseline.md` and `docs/11-microcuts-bug.md`.
-    prefer_pw_cat: bool = True
+    # v0.7.0-rc4 — flipped back to False. v0.7.0-rc1 reverted to pw-cat
+    # on the reasoning that smaller chunks at chunk_seconds=0.15 would
+    # eliminate the per-quantum stdin/PipeWire-callback race v0.6.7
+    # documented (~43 ms zero-gaps on bursty writes). The
+    # `docs/16-audit/synthesis.md` retro disagreed: rc1's "this won't
+    # apply" is hand-wavy and doesn't address the race mechanism, and
+    # the symptom we hear in Telegram (sample-exact zeros, voice-
+    # correlated, ~40 ms quantized — see lens 08) matches pw-cat's
+    # documented per-quantum-gap pattern more closely than pacat's
+    # underrun pattern. Migration cascade in `tui/config.py` pulls
+    # users on the rc1+ default sentinel `True` forward to `False`;
+    # users who explicitly set `prefer_pw_cat = true` after the field
+    # is exposed in AppConfig keep their override.
+    prefer_pw_cat: bool = False
 
     # v0.5.1: software input pre-attenuation, in dB. Default 0.0 (passthrough).
     # Hot mics (HyperX QuadCast at high volume etc.) clip the signal which
@@ -212,13 +210,36 @@ class EngineConfig:
     # backends (or future versions of pacat / pw-cat) might benefit.
     # See `docs/11-microcuts-bug.md` part 3.
     prime_silence_seconds: float = 0.0
-    # v0.6.9 — input-level gate. When mic RMS is below this floor, the engine
-    # emits zeros directly instead of running RVC inference. Stops the vocoder
-    # from hallucinating a ~-24 dBFS "voicing floor" on near-silent input —
-    # the live diagnostic showed phantom emission throughout user-silent blocks.
-    # Set to a very negative number (e.g. -200.0) to disable. See
-    # `docs/12-vad-misfire-investigation.md`.
-    input_gate_dbfs: float = -55.0
+    # v0.7.0-rc4 — gate threshold lowered -55 → -75. The audit
+    # (`docs/16-audit/synthesis.md`, lens 06 / S1) traced rc1/rc2/rc3
+    # cuts to this gate firing on intra-speech RMS dips: -55 dBFS is
+    # only ~6 dB below typical room noise on a QuadCast, and brief
+    # speech valleys (between syllables, on plosive onsets, during
+    # fricatives) routinely cross it. Each fire emits a full chunk
+    # of zeros directly to the writer, bypassing SOLA, both
+    # resamplers, and inference, with no counter incremented — which
+    # is why three rcs of output_latency_ms tuning produced a flat
+    # audible response. -75 dBFS is well below room ambient; combined
+    # with the new hysteresis below, the gate only fires on sustained
+    # silence rather than transient voice dips.
+    #
+    # v0.6.9 original rationale (preserved): when mic RMS is below
+    # this floor, emit zeros directly instead of running RVC. Stops
+    # the vocoder from hallucinating a ~-24 dBFS "voicing floor" on
+    # near-silent input. Set to a very negative number (e.g. -200.0)
+    # to disable entirely. See `docs/12-vad-misfire-investigation.md`.
+    input_gate_dbfs: float = -75.0
+    # v0.7.0-rc4 — hysteresis on the input gate. The gate must observe
+    # `input_gate_hysteresis_ms` of continuously-below-threshold input
+    # before it fires. Brief dips in voiced speech (typical: 30–150 ms
+    # between syllables, on consonant onsets) no longer trigger
+    # zero-emission, even if they momentarily cross threshold. Set to
+    # 0 for the v0.6.9 behavior (immediate gating with no smoothing).
+    # 200 ms is roughly the upper end of natural inter-syllable pause
+    # in speech — anything beyond that is genuinely silence and the
+    # vocoder-hallucination behavior the gate exists to prevent
+    # actually appears.
+    input_gate_hysteresis_ms: float = 200.0
     # Watchdog polls the pacat subprocess every N seconds; on death it
     # spawns a replacement and bumps `pacat_restarts`.
     pacat_watchdog_interval_s: float = 0.05
@@ -280,6 +301,41 @@ class EngineStats:
     # and keep going. First few hits log to `last_error`; subsequent
     # ones increment silently to avoid spamming the TUI.
     dropped_chunks: int = 0
+    # v0.7.0-rc4 — instrumentation for the four silent-drop classes the
+    # `docs/16-audit/synthesis.md` audit identified as previously
+    # invisible to every existing counter. Each is incremented at
+    # the exact site that emits zeros / loses samples; together with
+    # `dropped_chunks` and `queue_full_events` they cover every
+    # silence-emit path the audit catalogued. Surfaced in `woys diag`
+    # output and the TUI STATUS reply so the next debug cycle isn't
+    # blind.
+    #
+    #   input_overflows    — sd.InputStream.read() reported
+    #                        `overflowed=True` (mic-side ring underflow,
+    #                        previously dropped on the floor at the
+    #                        tuple-unpack site).
+    #   gated_chunks       — input gate fired and emitted a chunk of
+    #                        zeros; bypasses SOLA + resamplers +
+    #                        inference, so an upstream of every buffer.
+    #   nan_chunks         — RVC vocoder output had NaN/inf and was
+    #                        sanitized to zero (v0.6.9 path); a
+    #                        non-zero rate during real-speech is
+    #                        evidence for the C-class hypothesis from
+    #                        the audit.
+    #   sola_fallback_count — SOLA's correlation search fell below
+    #                        threshold and the algorithm zero-padded
+    #                        the shortfall instead of letting the
+    #                        output buffer drain. Reflects how often
+    #                        chunks would have shrunk if rc4's pad
+    #                        weren't there.
+    #   sola_drain_ms      — total samples (in ms) of zero-padding
+    #                        SOLA emitted to keep output ≈ input
+    #                        length. Cumulative since session start.
+    input_overflows: int = 0
+    gated_chunks: int = 0
+    nan_chunks: int = 0
+    sola_fallback_count: int = 0
+    sola_drain_ms: float = 0.0
 
     # Rolling latency window for the TUI.
     _recent_inference: deque[float] = field(default_factory=lambda: deque(maxlen=32))
@@ -1003,6 +1059,12 @@ class RealtimeEngine:
         # listener hears it as a click + brief gap.
         if np.isnan(result).any() or np.isinf(result).any():
             result = np.nan_to_num(result, nan=0.0, posinf=1.0, neginf=-1.0)
+            # v0.7.0-rc4 — count NaN-sanitize hits so we can attribute
+            # voice-correlated cuts to the vocoder rather than the gate
+            # or SOLA. Pre-rc4 the path silently zeroed samples; lens 06
+            # of the audit flagged this as one of three NaN-zero paths
+            # that incremented no counter.
+            self.stats.nan_chunks += 1
         t_rvc1 = time.perf_counter()
         # Per-stage timing surfaces in the slow_chunk_log when a chunk goes late.
         self.stats.last_cv_ms = (t_cv1 - t_cv0) * 1000.0
@@ -1481,13 +1543,36 @@ class RealtimeEngine:
                     self.stats.last_error = f"monitor: {type(e).__name__}: {e}"
                     monitor_stream = None
 
+            # v0.7.0-rc4 — input-gate hysteresis state. The gate must
+            # observe ≥`input_gate_hysteresis_ms` of continuously-below
+            # threshold input before it fires; voice transients (brief
+            # dips between syllables, plosive onsets, fricative onsets)
+            # no longer trigger zero-emission. `gate_below_since` is
+            # the perf_counter time of the first below-threshold sample
+            # in the current run (None when above threshold).
+            gate_below_since: float | None = None
+            hysteresis_s = max(0.0, self.cfg.input_gate_hysteresis_ms / 1000.0)
+            gate_thresh = (
+                10.0 ** (self.cfg.input_gate_dbfs / 20.0)
+                if self.cfg.input_gate_dbfs > -120.0
+                else 0.0
+            )
+
             with in_stream:
                 while not self._stop_event.is_set():
                     # v0.4.1: pick up any queued model swap before reading
                     # the next mic chunk. Owns _rvc on this thread, so no
                     # race with _infer below.
                     self._maybe_swap_model()
-                    data, _ = in_stream.read(chunk_mic)
+                    # v0.7.0-rc4 — capture the overflow flag PortAudio
+                    # returns when its internal ring buffer overran
+                    # since the previous read. Pre-rc4 this was tuple-
+                    # unpacked into `_` and lost; lens 01 of the audit
+                    # flagged it as a silent mic-side drop site
+                    # invisible to every existing counter.
+                    data, overflowed = in_stream.read(chunk_mic)
+                    if overflowed:
+                        self.stats.input_overflows += 1
                     audio = data.reshape(-1).astype(np.float32, copy=False)
 
                     # v0.5.1: software input pre-attenuation. Default 0 dB
@@ -1501,20 +1586,30 @@ class RealtimeEngine:
                     rms = float(np.sqrt(np.mean(audio**2)))
                     self.stats.last_input_rms = rms
 
-                    # v0.6.9 — input-level gate. Bypass inference on near-silent
-                    # input so the vocoder doesn't hallucinate a baseline
-                    # "voicing floor" during pauses. See LESSONS §17.
-                    gate_thresh = (
-                        10.0 ** (self.cfg.input_gate_dbfs / 20.0)
-                        if self.cfg.input_gate_dbfs > -120.0
-                        else 0.0
-                    )
+                    # v0.7.0-rc4 — gate with hysteresis. Below threshold
+                    # alone is no longer enough to fire; the gate has to
+                    # see hysteresis_s of continuous below-threshold
+                    # input first. Above threshold resets the timer.
+                    now = time.perf_counter()
                     if rms < gate_thresh:
-                        n_silence = round(audio.shape[0] * self.cfg.sink_rate / self.cfg.mic_rate)
-                        self._enqueue_chunk(
-                            self._to_sink_bytes(np.zeros(n_silence, dtype=np.float32))
-                        )
-                        continue
+                        if gate_below_since is None:
+                            gate_below_since = now
+                        if now - gate_below_since >= hysteresis_s:
+                            n_silence = round(
+                                audio.shape[0] * self.cfg.sink_rate / self.cfg.mic_rate
+                            )
+                            self._enqueue_chunk(
+                                self._to_sink_bytes(np.zeros(n_silence, dtype=np.float32))
+                            )
+                            self.stats.gated_chunks += 1
+                            continue
+                        # Sub-hysteresis dip: pass through to inference. RVC
+                        # on near-silent input emits near-silence anyway, so
+                        # the cost is a few ms of compute we'd otherwise
+                        # bypass. The benefit is that voice transients no
+                        # longer get replaced with hard zeros.
+                    else:
+                        gate_below_since = None
 
                     t_total = time.perf_counter()
                     audio16 = (
@@ -1560,6 +1655,22 @@ class RealtimeEngine:
                     # The watchdog respawns pacat if it dies — main loop
                     # never raises out of the loop on a transient pacat fault.
                     self._enqueue_chunk(self._to_sink_bytes(out48))
+
+                    # v0.7.0-rc4 — pull SOLA's per-call drain counters
+                    # into engine stats. SOLA pads its fallback
+                    # shortfall with zeros (see `audio/sola.py`) so the
+                    # output stream stays length-stable; the counters
+                    # tell us how often the pad fired and how many ms
+                    # of zero-pad were emitted cumulatively. Voice-
+                    # activity-correlated SOLA fallback counts are
+                    # evidence for the SOLA-fallback class of cuts.
+                    if self._sola is not None:
+                        self.stats.sola_fallback_count = self._sola.fallback_count
+                        self.stats.sola_drain_ms = (
+                            self._sola.cumulative_drain_samples * 1000.0 / self._sola.cfg.rate
+                            if self._sola.cfg.rate > 0
+                            else 0.0
+                        )
 
                     # Optional self-monitor → host default output.
                     if monitor_stream is not None:

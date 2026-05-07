@@ -29,7 +29,8 @@ def test_hann_fade_zero_size() -> None:
 
 def test_best_offset_finds_aligned_shift() -> None:
     """Synthesize a signal, take its tail, and place a shifted copy of that
-    tail inside a longer 'head' buffer. _best_offset should recover the shift."""
+    tail inside a longer 'head' buffer. _best_offset should recover the shift
+    and not flag the result as a threshold-fallback."""
     rng = np.random.default_rng(seed=42)
     overlap = 128
     search = 16
@@ -42,28 +43,33 @@ def test_best_offset_finds_aligned_shift() -> None:
         # Place the tail at index (search + true_shift) inside head.
         head[:] = rng.standard_normal(head_len).astype(np.float32) * 0.05  # background noise
         head[search + true_shift : search + true_shift + overlap] = tail
-        recovered = _best_offset(tail, head, search=search, threshold=0.5)
+        recovered, fell_back = _best_offset(tail, head, search=search, threshold=0.5)
         assert recovered == true_shift, f"expected {true_shift}, got {recovered}"
+        assert not fell_back, f"unexpected threshold-fallback at shift {true_shift}"
 
 
 def test_best_offset_below_threshold_returns_zero() -> None:
-    """Pure noise shouldn't pick a non-zero offset."""
+    """Pure noise shouldn't pick a non-zero offset; should signal fallback."""
     rng = np.random.default_rng(seed=42)
     overlap = 128
     search = 16
     tail = rng.standard_normal(overlap).astype(np.float32)
     head = rng.standard_normal(overlap + 2 * search).astype(np.float32)
     # Threshold high enough that random noise won't beat it.
-    assert _best_offset(tail, head, search=search, threshold=0.9) == 0
+    offset, fell_back = _best_offset(tail, head, search=search, threshold=0.9)
+    assert offset == 0
+    assert fell_back
 
 
 def test_best_offset_silent_tail() -> None:
-    """A near-silent prev_tail can't drive correlation; expect 0."""
+    """A near-silent prev_tail can't drive correlation; expect 0 + fallback."""
     overlap = 64
     search = 8
     tail = np.zeros(overlap, dtype=np.float32) + 1e-9
     head = np.random.default_rng(0).standard_normal(overlap + 2 * search).astype(np.float32)
-    assert _best_offset(tail, head, search=search, threshold=0.1) == 0
+    offset, fell_back = _best_offset(tail, head, search=search, threshold=0.1)
+    assert offset == 0
+    assert fell_back
 
 
 def test_sola_first_chunk_holds_back_tail() -> None:
@@ -98,6 +104,92 @@ def test_sola_no_nan_or_clip_on_random_stream() -> None:
     # Hann pair sums to 1 → max output amplitude can't exceed max input amplitude.
     # We use 0.5 input with stdev 0.5 so max input ≈ 2-3; output should sit in that range.
     assert np.abs(full).max() <= 5.0
+
+
+def test_sola_pads_fallback_shortfall_to_input_length() -> None:
+    """v0.7.0-rc4 — the per-call output must be (input - cf) samples
+    regardless of which offset _best_offset picks. Pre-rc4, fallback
+    chunks emitted (input - cf - search) samples, draining the
+    downstream output buffer at ~7 ms/sec at chunk=0.15 with 18 %
+    fallback rate (audit lens 03). rc4 zero-pads the shortfall so the
+    output stream stays length-stable; this test pins that behavior."""
+    rng = np.random.default_rng(seed=7)
+    # Use threshold=0.99 so every chunk falls back; that's the worst case.
+    cfg = SOLAConfig(rate=16_000, crossfade_ms=20.0, search_ms=4.0, corr_threshold=0.99)
+    sola = SOLAStream(cfg)
+    cf = cfg.crossfade_samples
+
+    chunk_sz = 800  # 50 ms at 16 kHz; well above 2*cf + 2*search
+    # First chunk: held back, no fallback path exercised.
+    sola.process(rng.standard_normal(chunk_sz).astype(np.float32))
+    assert sola.fallback_count == 0
+
+    # Subsequent chunks: every one should fall back (decorrelated noise).
+    out = sola.process(rng.standard_normal(chunk_sz).astype(np.float32))
+    assert out.shape == (chunk_sz - cf,), (
+        f"fallback chunk emitted {out.shape[0]} samples; expected {chunk_sz - cf}"
+    )
+    # Fallback was signalled and drain was tracked.
+    assert sola.fallback_count == 1
+    assert sola.cumulative_drain_samples == cfg.search_samples
+
+
+def test_sola_no_drain_on_clean_alignment() -> None:
+    """When the alignment search uniquely picks offset = -search
+    (correlation 1.0, no equal-correlation peak elsewhere in the
+    search range), the natural output is (input - cf) samples and
+    no padding fires. We construct that case explicitly: seed
+    `_prev_tail` with a known random buffer, then build a chunk
+    whose first `cf` samples MATCH that buffer exactly and whose
+    remainder is decorrelated noise. The unique correlation peak
+    is at offset=-search by construction; all other offsets
+    correlate against random noise (corr ≈ 0)."""
+    cfg = SOLAConfig(rate=16_000, crossfade_ms=20.0, search_ms=4.0, corr_threshold=0.5)
+    sola = SOLAStream(cfg)
+    cf = cfg.crossfade_samples
+    search = cfg.search_samples
+
+    rng = np.random.default_rng(seed=29)
+    seeded_tail = rng.standard_normal(cf).astype(np.float32)
+    sola._prev_tail = seeded_tail.copy()  # bypass the first-chunk path
+
+    # Chunk: exact copy of prev_tail, then random noise to fill it out.
+    # offset = -search → head[0:cf] = chunk[0:cf] = seeded_tail. Match.
+    # offset = 0 → head[search:search+cf] = chunk[search:search+cf] which
+    # is mostly noise → corr ≈ 0.
+    chunk_sz = 800
+    chunk = np.empty(chunk_sz, dtype=np.float32)
+    chunk[:cf] = seeded_tail
+    chunk[cf:] = rng.standard_normal(chunk_sz - cf).astype(np.float32)
+
+    out = sola.process(chunk)
+
+    # Output length should be exactly chunk_sz - cf (no padding fired).
+    assert out.shape == (chunk_sz - cf,), f"output shape {out.shape} != expected ({chunk_sz - cf},)"
+    # No fallback (correlation 1.0 beats threshold) and zero drain
+    # (offset=-search produces full natural output).
+    assert sola.fallback_count == 0
+    assert sola.cumulative_drain_samples == 0, (
+        f"unexpected drain on uniquely-aligned input: {sola.cumulative_drain_samples}"
+    )
+    # Sanity.
+    assert search > 0 and cf > 0
+
+
+def test_sola_reset_clears_fallback_counters() -> None:
+    """reset() must wipe the fallback/drain accounting alongside prev_tail
+    so post-restart sessions don't carry stale numbers into woys-diag."""
+    cfg = SOLAConfig(rate=16_000, crossfade_ms=20.0, search_ms=4.0, corr_threshold=0.99)
+    sola = SOLAStream(cfg)
+    rng = np.random.default_rng(seed=3)
+    chunk = rng.standard_normal(800).astype(np.float32)
+    sola.process(chunk)
+    sola.process(chunk)
+    assert sola.fallback_count > 0 or sola.cumulative_drain_samples > 0
+    sola.reset()
+    assert sola.fallback_count == 0
+    assert sola.cumulative_drain_samples == 0
+    assert sola._prev_tail is None
 
 
 def test_sola_flush_emits_held_tail() -> None:

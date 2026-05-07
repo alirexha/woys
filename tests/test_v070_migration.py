@@ -10,6 +10,8 @@ untouched. The migration is staged across schema versions:
                        output_latency 300 → engine default
   schema 7 → 8  (rc2): output_latency 80 (rc1) → engine default
   schema 8 → 9  (rc3): output_latency 220 (rc2) → engine default (280)
+  schema 9 → 10 (rc4): input_gate_dbfs -55.0 → engine default (-75.0),
+                       prefer_pw_cat True → engine default (False)
 
 A v0.6.x user with no schema version on disk cascades through every
 leg in a single load and lands at the current default in one shot.
@@ -36,18 +38,18 @@ def test_v06x_defaults_bumped_on_load(tmp_path: Path) -> None:
 
     cfg = load_config(out)
 
-    # Bumped to v0.7.0-rc3 defaults (cascading through every leg).
+    # Bumped to v0.7.0-rc4 defaults (cascading through every leg).
     assert cfg.chunk_seconds == 0.15
     assert cfg.output_latency_ms == 280
     assert cfg.sola_search_ms == 6.0
     # Schema version stamped at the latest.
-    assert cfg._extras["config_schema_version"] == 9
+    assert cfg._extras["config_schema_version"] == 10
     # File rewritten with bumped values + schema version.
     raw = tomllib.loads(out.read_text())
     assert raw["chunk_seconds"] == 0.15
     assert raw["output_latency_ms"] == 280
     assert raw["sola_search_ms"] == 6.0
-    assert raw["config_schema_version"] == 9
+    assert raw["config_schema_version"] == 10
 
 
 def test_rc1_users_cascade_to_rc3(tmp_path: Path) -> None:
@@ -69,7 +71,7 @@ def test_rc1_users_cascade_to_rc3(tmp_path: Path) -> None:
     cfg = load_config(out)
 
     assert cfg.output_latency_ms == 280
-    assert cfg._extras["config_schema_version"] == 9
+    assert cfg._extras["config_schema_version"] == 10
     assert cfg._extras["profiles"]["default"]["output_latency_ms"] == 280
 
 
@@ -93,9 +95,58 @@ def test_rc2_users_pulled_forward_to_rc3(tmp_path: Path) -> None:
     cfg = load_config(out)
 
     assert cfg.output_latency_ms == 280
-    assert cfg._extras["config_schema_version"] == 9
+    assert cfg._extras["config_schema_version"] == 10
     assert cfg._extras["profiles"]["default"]["output_latency_ms"] == 280
     assert cfg._extras["profiles"]["gaming"]["output_latency_ms"] == 280
+
+
+def test_rc3_users_pulled_forward_to_rc4(tmp_path: Path) -> None:
+    """A user who installed v0.7.0-rc3 has input_gate_dbfs=-55.0 (rc1+
+    default) and prefer_pw_cat=True (rc1+ default) baked in — except
+    `prefer_pw_cat` was never in AppConfig's forwarded fields pre-rc4,
+    so it lived only in EngineConfig's dataclass default. After rc4
+    exposes it, anyone whose on-disk file shipped True (or who lands
+    on the dataclass default via the migration) gets pulled forward
+    to False, and the -55 dBFS gate threshold gets bumped to -75."""
+    out = tmp_path / "c.toml"
+    out.write_text(
+        "chunk_seconds = 0.15\n"
+        "output_latency_ms = 280\n"
+        "sola_search_ms = 6.0\n"
+        "input_gate_dbfs = -55.0\n"  # rc1+ default sentinel
+        "prefer_pw_cat = true\n"  # rc1+ default sentinel
+        "config_schema_version = 9\n"  # stamped by rc3's load_config
+        "[profiles.default]\n"
+        "input_gate_dbfs = -55.0\n"
+        "prefer_pw_cat = true\n"
+    )
+
+    cfg = load_config(out)
+
+    assert cfg.input_gate_dbfs == -75.0
+    assert cfg.prefer_pw_cat is False
+    assert cfg._extras["config_schema_version"] == 10
+    assert cfg._extras["profiles"]["default"]["input_gate_dbfs"] == -75.0
+    assert cfg._extras["profiles"]["default"]["prefer_pw_cat"] is False
+
+
+def test_rc4_explicit_gate_overrides_preserved(tmp_path: Path) -> None:
+    """A user who explicitly set `input_gate_dbfs = -200.0` to disable
+    the gate must NOT have it bumped to -75 by the rc3→rc4 migration —
+    the migration only matches the rc1+ default sentinel value -55.0.
+    Likewise an explicit `prefer_pw_cat = false` must round-trip."""
+    out = tmp_path / "c.toml"
+    out.write_text(
+        "input_gate_dbfs = -200.0\n"  # explicit override
+        "prefer_pw_cat = false\n"  # explicit override
+        "config_schema_version = 9\n"
+    )
+
+    cfg = load_config(out)
+
+    assert cfg.input_gate_dbfs == -200.0
+    assert cfg.prefer_pw_cat is False
+    assert cfg._extras["config_schema_version"] == 10
 
 
 def test_user_explicit_80_is_preserved_below_rc2_threshold() -> None:
@@ -156,12 +207,20 @@ def test_already_migrated_is_idempotent(tmp_path: Path) -> None:
     """A config loaded twice should not be rewritten the second time
     once the schema version is current."""
     out = tmp_path / "c.toml"
-    out.write_text("chunk_seconds = 0.15\noutput_latency_ms = 280\nconfig_schema_version = 9\n")
+    out.write_text(
+        "chunk_seconds = 0.15\n"
+        "output_latency_ms = 280\n"
+        "input_gate_dbfs = -75.0\n"
+        "prefer_pw_cat = false\n"
+        "config_schema_version = 10\n"
+    )
     mtime_1 = out.stat().st_mtime_ns
 
     cfg = load_config(out)
     assert cfg.chunk_seconds == 0.15
     assert cfg.output_latency_ms == 280
+    assert cfg.input_gate_dbfs == -75.0
+    assert cfg.prefer_pw_cat is False
     mtime_2 = out.stat().st_mtime_ns
     # No rewrite — file untouched on subsequent loads of an up-to-date file.
     assert mtime_1 == mtime_2
