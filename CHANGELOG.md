@@ -4,6 +4,104 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.8.0rc2] — 2026-05-07 — rc1 production fix: pre-warm mp resource_tracker before Textual hijacks stderr
+
+### The bug
+
+`woys run --autostart` (and bare `woys`) crashed at engine startup
+with:
+
+```
+ValueError: bad value(s) in fds_to_keep
+  ↳ multiprocessing/util.py:456 in spawnv_passfds
+  ↳ resource_tracker.py:148 in ensure_running
+  ↳ shared_memory.py:120 in __init__
+  ↳ inference_client.py:150 in _spawn_child
+```
+
+`fds_to_pass` = `[-1, 9]` — the -1 was `sys.stderr.fileno()`. CC's
+`woys diag` testing in v0.8.0-rc1 didn't catch this because diag
+runs without Textual (real stderr); production TUI path has Textual
+replacing stderr inside `WoysApp.on_mount`, where `fileno()` returns
+-1.
+
+### Root cause (verified via `/tmp/textual_shm_repro.py`)
+
+Python's `multiprocessing.resource_tracker` lazy-spawns its daemon on
+the first `SharedMemory(create=True)` call. Its spawn includes
+`sys.stderr.fileno()` in `fds_to_keep`. Inside Textual's mounted
+runtime, stderr is wrapped to a stream whose `fileno()` returns -1
+→ posixsubprocess refuses to keep an invalid fd → spawn fails →
+inference subprocess never starts → engine crashes.
+
+The bug is timing-specific: `resource_tracker.ensure_running()` only
+runs on the FIRST shm-create per process. By the time
+`engine.start()` fires inside `on_mount`, stderr is already
+hijacked.
+
+### The fix
+
+`src/woys/cli.py: _prewarm_mp_resource_tracker()` — at the very top
+of `cli.main()`, before any TUI import:
+
+```python
+from multiprocessing import shared_memory
+_w = shared_memory.SharedMemory(create=True, size=8)
+_w.close()
+_w.unlink()
+```
+
+This forces the resource_tracker daemon to spawn while stderr is
+still real. Subsequent `SharedMemory(create=True)` calls (including
+the ones inside Textual's `on_mount`) reuse the already-running
+daemon — no respawn, no `fileno()=−1` failure.
+
+Cost: one shm create + close + unlink ≈ 200 µs per process. Once
+per `cli.main()` invocation. Skipped silently on platforms where
+the create fails (e.g. /dev/shm unwritable; `cfg.inference_subprocess
+= False` is the user-facing escape there).
+
+### New CLI: `woys engine`
+
+Added a non-TUI engine entry point so the production-equivalent
+spawn path can be smoke-tested headlessly:
+
+```bash
+woys engine --seconds 8        # run for 8s with per-second status prints
+woys engine --quiet            # run until SIGINT, no progress prints
+```
+
+Same `RealtimeEngine` + same `InferenceClient` subprocess spawn the
+TUI uses, just without Textual hijacking the terminal. Used here in
+v0.8.0-rc2 to self-verify the production path before shipping
+(CC's prior bash test for rc1 went through the in-process diag
+path, which was why the TUI crash slipped past).
+
+### Self-verification — production paths (in CC's bash)
+
+```
+$ woys engine --seconds 8
+engine running. child_pid=234503 rvc_output_sr=16000 active_embedder=onnx
+  chunks=4   avg_inf=62.3ms writer_jitter=0.0ms xruns=0 queue_full=0
+  chunks=11  avg_inf=55.5ms writer_jitter=0.0ms xruns=0 queue_full=0
+  chunks=18  avg_inf=51.0ms writer_jitter=0.0ms xruns=0 queue_full=4
+  ...
+final: chunks=52 avg_inf=54.0ms writer_jitter=0.0ms xruns=1
+                                                    ← spawn worked, child healthy
+
+$ timeout 3 woys run --autostart
+[Textual UI mounts; no ValueError; clean SIGTERM at timeout]
+                                                    ← TUI path also clean
+```
+
+### Verification
+
+98/98 fast tests pass; mypy --strict clean; ruff format clean.
+
+DO NOT auto-tag. Real-mic Telegram test next, expected to show the
+rc1 multiprocessing wins (writer_jitter ≤ 30 ms, xruns ≤ 2)
+without the rc1 crash.
+
 ## [0.8.0rc1] — 2026-05-07 — Multiprocessing inference; close the LESSONS §19 threading tax
 
 The v0.7.0 rc series exhausted code-only knobs against the inference

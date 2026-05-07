@@ -147,6 +147,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip the engine run; only report static info (CUDA, PipeWire, sink state)",
     )
 
+    # v0.8.0-rc2 — engine without the TUI. Same RealtimeEngine + same
+    # InferenceClient subprocess spawn, but no Textual hijacking
+    # stderr — useful for headless smoke testing the production path
+    # (autonomous CC iteration, CI, debugging the multiprocessing
+    # layer). Behaves like `woys run --autostart` minus the
+    # interactive UI: starts engine, prints status every second,
+    # runs until SIGINT or --seconds elapses.
+    eng_p = sub.add_parser(
+        "engine",
+        help="run the engine without the TUI (headless smoke / CI / debug)",
+    )
+    eng_p.add_argument(
+        "--seconds",
+        type=float,
+        default=0.0,
+        help="run for this many seconds then exit (0 = run until SIGINT)",
+    )
+    eng_p.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the per-second status prints; only print the final summary",
+    )
+
     return parser
 
 
@@ -370,6 +393,90 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     return 1 if (s.xruns or s.queue_full_events or s.pacat_restarts) else 0
 
 
+def cmd_engine(seconds: float, quiet: bool) -> int:
+    """v0.8.0-rc2 — headless engine entry. Same engine + InferenceClient
+    spawn path the TUI uses, minus Textual's terminal hijacking. SIGINT
+    triggers a clean stop+teardown."""
+    import signal as _signal
+    import time as _time
+
+    from audio.engine import EngineConfig, RealtimeEngine
+    from audio.pipewire import PipeWireError, VirtualMic, get_state
+    from tui.config import load_config
+
+    print(f"woys engine — {__version__}")
+    try:
+        VirtualMic().ensure()
+        st = get_state()
+        if not (st.sink_present and st.source_present):
+            print("error: WoysSink + woys-mic not loaded; run `woys pw setup`", file=sys.stderr)
+            return 2
+    except PipeWireError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    cfg = load_config()
+    rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
+    engine_cfg = EngineConfig(
+        chunk_seconds=cfg.chunk_seconds,
+        sink_name=cfg.sink_name,
+        output_latency_ms=cfg.output_latency_ms,
+        output_process_time_ms=cfg.output_process_time_ms,
+        embedder=cfg.embedder,
+        input_gain_db=cfg.input_gain_db,
+        input_gate_dbfs=cfg.input_gate_dbfs,
+        input_gate_hysteresis_ms=cfg.input_gate_hysteresis_ms,
+        prefer_pw_cat=cfg.prefer_pw_cat,
+    )
+    if rvc_path is not None:
+        engine_cfg.rvc_model = rvc_path
+
+    eng = RealtimeEngine(engine_cfg)
+    print("starting engine...")
+    eng.start()
+    print(
+        f"engine running. child_pid={eng.stats.child_pid} "
+        f"rvc_output_sr={eng._rvc_output_sr} active_embedder={eng.active_embedder}"
+    )
+
+    stop = {"now": False}
+
+    def _on_sigint(signum: int, _frame: object) -> None:
+        del signum
+        stop["now"] = True
+
+    _signal.signal(_signal.SIGINT, _on_sigint)
+    _signal.signal(_signal.SIGTERM, _on_sigint)
+
+    deadline = _time.perf_counter() + seconds if seconds > 0 else float("inf")
+    try:
+        while not stop["now"] and _time.perf_counter() < deadline:
+            _time.sleep(1.0)
+            if not quiet:
+                s = eng.stats
+                print(
+                    f"  chunks={s.chunks_processed} "
+                    f"avg_inf={s.avg_inference_ms:.1f}ms "
+                    f"writer_jitter={s.writer_jitter_ms:.1f}ms "
+                    f"xruns={s.xruns} "
+                    f"queue_full={s.queue_full_events} "
+                    f"dropped={s.dropped_chunks}"
+                )
+    finally:
+        print("stopping engine...")
+        eng.stop(timeout=2.0)
+        s = eng.stats
+        print(
+            f"final: chunks={s.chunks_processed} "
+            f"avg_inf={s.avg_inference_ms:.1f}ms "
+            f"writer_jitter={s.writer_jitter_ms:.1f}ms "
+            f"xruns={s.xruns} "
+            f"queue_full={s.queue_full_events} "
+            f"dropped={s.dropped_chunks}"
+        )
+    return 0
+
+
 def cmd_pw_status() -> int:
     from audio.pipewire import PipeWireError, ensure_pipewire, get_state
 
@@ -390,7 +497,49 @@ def cmd_pw_status() -> int:
     return 0 if state.fully_present else 1
 
 
+def _prewarm_mp_resource_tracker() -> None:
+    """v0.8.0-rc2 — force `multiprocessing.resource_tracker` to spawn its
+    daemon NOW, while `sys.stderr.fileno()` is still a real fd.
+
+    Why this exists: the resource_tracker daemon is lazily started on the
+    first `SharedMemory(create=True)` call. Its spawn passes
+    `sys.stderr.fileno()` as a `fds_to_keep` entry. Inside Textual's
+    `on_mount`, `sys.stderr` has been replaced with a wrapper whose
+    `fileno()` returns -1, causing
+    `_posixsubprocess.fork_exec` to raise
+    `ValueError: bad value(s) in fds_to_keep`. v0.8.0-rc1 hit this
+    immediately on `woys run --autostart` because `engine.start()` (and
+    its `InferenceClient.start()` → `SharedMemory(create=True)`) fires
+    inside `WoysApp.on_mount`, after stderr is hijacked.
+
+    The fix: create + immediately destroy a tiny SharedMemory here, at
+    the entry of `cli.main()`, BEFORE any TUI import. The first call
+    spawns the resource_tracker daemon with a real stderr fd. Subsequent
+    SharedMemory creations (including the ones inside Textual's
+    on_mount) reuse the already-running tracker — no respawn, no
+    fileno-of-bad-stream needed.
+
+    Cost: one shm create + close + unlink ≈ 200 µs. Once per process
+    lifetime. Skipped silently on platforms without SharedMemory or
+    when /dev/shm isn't writable (subprocess inference is disabled by
+    `cfg.inference_subprocess=False` in those cases).
+    """
+    try:
+        from multiprocessing import shared_memory  # noqa: PLC0415
+
+        _shm = shared_memory.SharedMemory(create=True, size=8)
+        _shm.close()
+        _shm.unlink()
+    except Exception:
+        # /dev/shm unwritable, sandbox restrictions, etc. — leave the
+        # tracker un-warmed; subprocess inference will fail later with
+        # a clearer error message in InferenceClient.start().
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    # MUST run before any Textual import. See `_prewarm_mp_resource_tracker`.
+    _prewarm_mp_resource_tracker()
     parser = build_parser()
     args = parser.parse_args(argv)
     # `woys` with no subcommand launches the TUI with autostart — same as
@@ -473,6 +622,8 @@ def main(argv: list[str] | None = None) -> int:
         return cli_tray()
     if args.cmd == "diag":
         return cmd_diag(args.seconds, args.no_engine)
+    if args.cmd == "engine":
+        return cmd_engine(args.seconds, args.quiet)
     if args.cmd in ("toggle", "status", "pitch", "slow"):
         from tui.control import send_command
 
