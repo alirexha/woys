@@ -4,6 +4,72 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc3] — 2026-05-07 — Pull rc2's output buffer further back; this is the last rung
+
+User audibly rejected rc2's `output_latency_ms = 220` in real-world
+Telegram VoIP testing — frequent white cuts, worse than v0.6.10.
+The rc2 retro already noted that the synthetic harness's flat
+cuts/min region across 180–320 ms is dominated by RVC-on-synthetic
+output dropouts and over-counts uniformly, which is why the rule
+was "ONE real-mic test is the ship gate." The mic test failed.
+
+rc3 climbs the last rung: 280 ms, 20 ms under the v0.6.x 300 ms
+default that we already know is audibly clean. If 280 also fails,
+the structural floor on this hardware is hit and further latency
+reduction needs the engine threading tax (LESSONS §19) closed
+first — that's v0.8.x territory, not another rc bump.
+
+### Changed default
+
+- `output_latency_ms`: **220 → 280.** Last rung before the v0.6.x
+  300 ms baseline. Saves 20 ms wall-clock vs v0.6.x while keeping
+  enough buffer above rc2's audibly-rejected 220 ms to absorb the
+  real-speech RVC inference variance the synthetic harness can't
+  see.
+
+### Total mic-to-app wall-clock
+
+| Stage | v0.6.10 | rc1 | rc2 | rc3 |
+|---|---|---|---|---|
+| chunk wait | 250 ms | 150 ms | 150 ms | 150 ms |
+| inference | ~80 ms | ~80 ms | ~80 ms | ~80 ms |
+| output buffer | 300 ms | 80 ms | 220 ms | 280 ms |
+| Discord codec | ~30 ms | ~30 ms | ~30 ms | ~30 ms |
+| **total** | **~660 ms** | **~340 ms** | **~480 ms** | **~540 ms** |
+| **vs v0.6.10** |  | −320 ms (−48 %) | −180 ms (−27 %) | **−120 ms (−18 %)** |
+
+### Migration
+
+`config_schema_version` bumped 8 → 9. Users on rc2 with
+`output_latency_ms = 220` (either as the rc2 default or after the
+rc2 migration of an rc1 file) are bumped to 280 on first load
+under rc3, both top-level and inside every `[profiles.<name>]`
+section. Explicit non-default values (e.g. 250) are preserved.
+
+### What rc3 still requires
+
+A single real-mic Telegram (or CS2 / Discord) test at the rc3
+default to confirm cuts are audibly cleared. If it passes, tag
+v0.7.0. If it fails, **do not** bump `output_latency_ms` further —
+that means the 280 ms safety margin still isn't enough for the
+real per-chunk variance, and the right move is closing the
+threading tax in v0.8.x rather than walking output_latency back
+to or past the v0.6.x baseline.
+
+### Tests
+
+- `tests/test_v070_migration.py::test_rc2_users_pulled_forward_to_rc3`
+  — covers the schema-8 → schema-9 transition with explicit
+  `output_latency_ms = 220` at the top level and across multiple
+  profile sections.
+- `tests/test_v070_migration.py::test_rc1_users_cascade_to_rc3`
+  (renamed from `test_rc1_users_pulled_forward_to_rc2`) — verifies
+  a schema-7 user with `output_latency_ms = 80` cascades through
+  every leg in one load and lands at 280.
+- All previous v0.7.0-rc2 migration assertions updated to rc3
+  values (280 ms, schema_version=9).
+- `tests/test_v068_polish.py` pin updated 220 → 280.
+
 ## [0.7.0rc2] — 2026-05-06 — Pull rc1's output buffer back from too-aggressive 80 ms
 
 User audibly confirmed rc1's `output_latency_ms = 80` produced a

@@ -65,7 +65,7 @@ class AppConfig:
     def __post_init__(self) -> None:
         # Stamp the schema version on every fresh AppConfig so round-trips
         # match. The migration in load_config() bumps it on legacy files.
-        self._extras.setdefault("config_schema_version", 8)
+        self._extras.setdefault("config_schema_version", 9)
 
 
 def load_config(path: Path = CONFIG_FILE) -> AppConfig:
@@ -148,12 +148,12 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
                     pdata["sola_search_ms"] = _E.sola_search_ms
                     migrated = True
     # ---- schema 7 → 8 — v0.7.0-rc1's 80 ms output_latency was empirically
-    # too aggressive (user reported audible cut increase). rc2 bumps the
+    # too aggressive (user reported audible cut increase). rc2 bumped the
     # default to 220 ms; users who landed on 80 via the rc1 migration
-    # get pulled forward without losing their explicit overrides.
+    # get pulled forward. Note: the rc3 leg below cascades them on to 280.
     if schema < 8:
         if fields_in.get("output_latency_ms") == 80:
-            fields_in["output_latency_ms"] = _E.output_latency_ms  # 220
+            fields_in["output_latency_ms"] = _E.output_latency_ms  # rc3: 280
             migrated = True
         profiles = extras.get("profiles")
         if isinstance(profiles, dict):
@@ -163,8 +163,25 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
                 if pdata.get("output_latency_ms") == 80:
                     pdata["output_latency_ms"] = _E.output_latency_ms
                     migrated = True
+    # ---- schema 8 → 9 — v0.7.0-rc2's 220 ms was still audibly cutting in
+    # real-world Telegram VoIP testing. rc3 bumps to 280 ms (the last rung —
+    # 20 ms under the known-clean v0.6.x 300 ms default). Users who landed
+    # on 220 via the rc2 default get pulled forward; explicit non-default
+    # values (e.g. 250) are left alone.
+    if schema < 9:
+        if fields_in.get("output_latency_ms") == 220:
+            fields_in["output_latency_ms"] = _E.output_latency_ms  # 280
+            migrated = True
+        profiles = extras.get("profiles")
+        if isinstance(profiles, dict):
+            for pdata in profiles.values():
+                if not isinstance(pdata, dict):
+                    continue
+                if pdata.get("output_latency_ms") == 220:
+                    pdata["output_latency_ms"] = _E.output_latency_ms
+                    migrated = True
     cfg = AppConfig(**fields_in, _extras=extras)
-    cfg._extras["config_schema_version"] = 8
+    cfg._extras["config_schema_version"] = 9
     if migrated:
         with contextlib.suppress(OSError):
             save_config(cfg, path)

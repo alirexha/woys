@@ -2,9 +2,17 @@
 
 The v0.6.x defaults baked into existing user configs (chunk_seconds=0.25,
 output_latency_ms=300, sola_search_ms=4.0) get bumped on first load
-under v0.7.0 to the new defaults (0.15 / 80 / 6.0). Explicit user
-overrides — values that don't match the v0.6.x defaults — are
-preserved untouched.
+to the current rc defaults. Explicit user overrides — values that
+don't match a known prior-version default sentinel — are preserved
+untouched. The migration is staged across schema versions:
+
+  schema 0 → 7  (rc1): chunk 0.25 → 0.15, sola_search 4.0 → 6.0,
+                       output_latency 300 → engine default
+  schema 7 → 8  (rc2): output_latency 80 (rc1) → engine default
+  schema 8 → 9  (rc3): output_latency 220 (rc2) → engine default (280)
+
+A v0.6.x user with no schema version on disk cascades through every
+leg in a single load and lands at the current default in one shot.
 """
 
 from __future__ import annotations
@@ -28,24 +36,26 @@ def test_v06x_defaults_bumped_on_load(tmp_path: Path) -> None:
 
     cfg = load_config(out)
 
-    # Bumped to v0.7.0-rc2 defaults.
+    # Bumped to v0.7.0-rc3 defaults (cascading through every leg).
     assert cfg.chunk_seconds == 0.15
-    assert cfg.output_latency_ms == 220
+    assert cfg.output_latency_ms == 280
     assert cfg.sola_search_ms == 6.0
     # Schema version stamped at the latest.
-    assert cfg._extras["config_schema_version"] == 8
+    assert cfg._extras["config_schema_version"] == 9
     # File rewritten with bumped values + schema version.
     raw = tomllib.loads(out.read_text())
     assert raw["chunk_seconds"] == 0.15
-    assert raw["output_latency_ms"] == 220
+    assert raw["output_latency_ms"] == 280
     assert raw["sola_search_ms"] == 6.0
-    assert raw["config_schema_version"] == 8
+    assert raw["config_schema_version"] == 9
 
 
-def test_rc1_users_pulled_forward_to_rc2(tmp_path: Path) -> None:
+def test_rc1_users_cascade_to_rc3(tmp_path: Path) -> None:
     """A user who installed v0.7.0-rc1 has output_latency_ms=80 baked
-    into their config (via either the rc1 default or the rc1 migration
-    of a v0.6.x file). rc2 must pull them forward."""
+    into their config. The schema-7 → 8 leg sets it to the current
+    engine default, so they land at rc3's 280 in a single load (the
+    schema-8 → 9 leg is a no-op for them since the value is already
+    280, not the rc2-default 220 sentinel)."""
     out = tmp_path / "c.toml"
     out.write_text(
         "chunk_seconds = 0.15\n"  # rc1 default — already migrated
@@ -58,9 +68,34 @@ def test_rc1_users_pulled_forward_to_rc2(tmp_path: Path) -> None:
 
     cfg = load_config(out)
 
-    assert cfg.output_latency_ms == 220
-    assert cfg._extras["config_schema_version"] == 8
-    assert cfg._extras["profiles"]["default"]["output_latency_ms"] == 220
+    assert cfg.output_latency_ms == 280
+    assert cfg._extras["config_schema_version"] == 9
+    assert cfg._extras["profiles"]["default"]["output_latency_ms"] == 280
+
+
+def test_rc2_users_pulled_forward_to_rc3(tmp_path: Path) -> None:
+    """A user who installed v0.7.0-rc2 has output_latency_ms=220 baked
+    into their config (via either the rc2 default or the rc2 migration
+    of an rc1 file). rc3 must pull them forward to 280 — both at the
+    top level and inside every [profiles.<name>] section."""
+    out = tmp_path / "c.toml"
+    out.write_text(
+        "chunk_seconds = 0.15\n"
+        "output_latency_ms = 220\n"  # rc2's user-rejected default
+        "sola_search_ms = 6.0\n"
+        "config_schema_version = 8\n"  # stamped by rc2's load_config
+        "[profiles.default]\n"
+        "output_latency_ms = 220\n"
+        "[profiles.gaming]\n"
+        "output_latency_ms = 220\n"
+    )
+
+    cfg = load_config(out)
+
+    assert cfg.output_latency_ms == 280
+    assert cfg._extras["config_schema_version"] == 9
+    assert cfg._extras["profiles"]["default"]["output_latency_ms"] == 280
+    assert cfg._extras["profiles"]["gaming"]["output_latency_ms"] == 280
 
 
 def test_user_explicit_80_is_preserved_below_rc2_threshold() -> None:
@@ -81,11 +116,7 @@ def test_explicit_user_overrides_preserved(tmp_path: Path) -> None:
     # alone. (We can't perfectly distinguish "explicit choice" from
     # "matched default" — the migration only bumps known-default
     # sentinel values.)
-    out.write_text(
-        "chunk_seconds = 0.5\n"
-        "output_latency_ms = 250\n"
-        "sola_search_ms = 8.0\n"
-    )
+    out.write_text("chunk_seconds = 0.5\noutput_latency_ms = 250\nsola_search_ms = 8.0\n")
 
     cfg = load_config(out)
 
@@ -112,9 +143,9 @@ def test_profile_sections_also_migrated(tmp_path: Path) -> None:
     cfg = load_config(out)
 
     profiles = cfg._extras["profiles"]
-    # Default-matching values bumped to rc2 defaults.
+    # Default-matching values bumped to rc3 defaults (cascading through every leg).
     assert profiles["gaming"]["chunk_seconds"] == 0.15
-    assert profiles["gaming"]["output_latency_ms"] == 220
+    assert profiles["gaming"]["output_latency_ms"] == 280
     assert profiles["gaming"]["sola_search_ms"] == 6.0
     # Explicit override left alone.
     assert profiles["studio"]["chunk_seconds"] == 0.5
@@ -125,16 +156,12 @@ def test_already_migrated_is_idempotent(tmp_path: Path) -> None:
     """A config loaded twice should not be rewritten the second time
     once the schema version is current."""
     out = tmp_path / "c.toml"
-    out.write_text(
-        "chunk_seconds = 0.15\n"
-        "output_latency_ms = 220\n"
-        "config_schema_version = 8\n"
-    )
+    out.write_text("chunk_seconds = 0.15\noutput_latency_ms = 280\nconfig_schema_version = 9\n")
     mtime_1 = out.stat().st_mtime_ns
 
     cfg = load_config(out)
     assert cfg.chunk_seconds == 0.15
-    assert cfg.output_latency_ms == 220
+    assert cfg.output_latency_ms == 280
     mtime_2 = out.stat().st_mtime_ns
     # No rewrite — file untouched on subsequent loads of an up-to-date file.
     assert mtime_1 == mtime_2
