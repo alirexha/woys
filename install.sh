@@ -95,6 +95,28 @@ say "installing woys + runtime deps (long step on fresh installs — torch + ORT
 "$UV_BIN" pip install --python "$VENV/bin/python" -e "$REPO_DIR" >/dev/null
 "$UV_BIN" pip install --python "$VENV/bin/python" -r "$REPO_DIR/requirements.txt" >/dev/null
 
+# ---- v0.9.0 native PipeWire helper --------------------------------------------
+
+# v0.9.0 ships a small native PipeWire client (~250 LOC C) that replaces
+# the pw-cat / pacat subprocess on the playback path. Build it now so
+# users can opt in via prefer_native_pw=true. Hard-fail if the build
+# tools are missing — the helper is the headline v0.9.0 fix.
+say "building native PipeWire helper (bin/woys-pw-out)…"
+if ! command -v gcc >/dev/null 2>&1; then
+    say "warning: gcc not found; skipping native helper build"
+    say "         (install gcc + pipewire-dev to enable prefer_native_pw)"
+elif ! pkg-config --exists libpipewire-0.3 2>/dev/null; then
+    say "warning: libpipewire-0.3 dev headers missing; skipping native helper"
+    say "         (pacman -S pipewire to install)"
+else
+    if ! make -C "$REPO_DIR/bin" >/dev/null; then
+        say "warning: native helper build failed; prefer_native_pw will hard-fail"
+    else
+        install -Dm755 "$REPO_DIR/bin/woys-pw-out" "$BIN_DIR/woys-pw-out"
+        say "installed native helper: $BIN_DIR/woys-pw-out"
+    fi
+fi
+
 # ---- launcher symlink ---------------------------------------------------------
 
 LINK="$BIN_DIR/woys"

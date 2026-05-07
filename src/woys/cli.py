@@ -273,11 +273,18 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     cfg = load_config()
     rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
     engine_cfg = EngineConfig(
+        f0_up_key=cfg.f0_up_key,
+        sid=cfg.sid,
         chunk_seconds=cfg.chunk_seconds,
         sink_name=cfg.sink_name,
+        monitor=cfg.monitor,
         output_latency_ms=cfg.output_latency_ms,
         output_process_time_ms=cfg.output_process_time_ms,
         embedder=cfg.embedder,
+        sola_enabled=cfg.sola_enabled,
+        sola_crossfade_ms=cfg.sola_crossfade_ms,
+        sola_search_ms=cfg.sola_search_ms,
+        sola_context_ms=cfg.sola_context_ms,
         input_gain_db=cfg.input_gain_db,
         # v0.7.0-rc4 — pre-rc4 these silently fell back to the
         # dataclass defaults, so `woys diag` was always running
@@ -286,6 +293,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         input_gate_dbfs=cfg.input_gate_dbfs,
         input_gate_hysteresis_ms=cfg.input_gate_hysteresis_ms,
         prefer_pw_cat=cfg.prefer_pw_cat,
+        prefer_native_pw=cfg.prefer_native_pw,
     )
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path
@@ -335,6 +343,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     print(f"  avg inference    : {s.avg_inference_ms:.1f} ms")
     print(f"  writer jitter    : {s.writer_jitter_ms:.1f} ms (target <5% of chunk)")
     print(f"  player xruns     : {s.xruns}  (pacat-only — pw-cat does not report)")
+    print(f"  native-pw under. : {s.player_underruns}  (native-pw helper only)")
     print(f"  queue-full events: {s.queue_full_events}")
     print(f"  player restarts  : {s.pacat_restarts}")
     # v0.7.0-rc4/rc5 — silent-drop counters previously invisible to
@@ -453,15 +462,23 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
     cfg = load_config()
     rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
     engine_cfg = EngineConfig(
+        f0_up_key=cfg.f0_up_key,
+        sid=cfg.sid,
         chunk_seconds=cfg.chunk_seconds,
         sink_name=cfg.sink_name,
+        monitor=cfg.monitor,
         output_latency_ms=cfg.output_latency_ms,
         output_process_time_ms=cfg.output_process_time_ms,
         embedder=cfg.embedder,
+        sola_enabled=cfg.sola_enabled,
+        sola_crossfade_ms=cfg.sola_crossfade_ms,
+        sola_search_ms=cfg.sola_search_ms,
+        sola_context_ms=cfg.sola_context_ms,
         input_gain_db=cfg.input_gain_db,
         input_gate_dbfs=cfg.input_gate_dbfs,
         input_gate_hysteresis_ms=cfg.input_gate_hysteresis_ms,
         prefer_pw_cat=cfg.prefer_pw_cat,
+        prefer_native_pw=cfg.prefer_native_pw,
     )
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path

@@ -148,6 +148,7 @@ USER_VISIBLE_ENGINE_FIELDS: tuple[str, ...] = (
     "input_gate_dbfs",
     "input_gate_hysteresis_ms",
     "prefer_pw_cat",
+    "prefer_native_pw",
 )
 
 
@@ -263,6 +264,23 @@ class EngineConfig:
     # users who explicitly set `prefer_pw_cat = true` after the field
     # is exposed in AppConfig keep their override.
     prefer_pw_cat: bool = False
+
+    # v0.9.0 — when True, the engine spawns `bin/woys-pw-out` (native
+    # PipeWire client) instead of pw-cat / pacat. The native helper
+    # decouples the engine's bursty 150 ms chunk writes from PipeWire's
+    # per-quantum (1024/48000 = 21.33 ms) RT callback via a lock-free
+    # SPSC ring buffer. This closes the cut signature lens 08 of the
+    # v0.7.x audit fingered (sample-exact zeros at quantum cadence; see
+    # `docs/16-audit/synthesis.md` P0-4 + lens 08 FFT peaks at 21.33 /
+    # 42.67 ms). NEVER falls back silently if the helper is missing —
+    # `_open_pacat` raises so the user sees the install gap instead of
+    # mysterious cuts.
+    #
+    # Default False for v0.9.0 so the path is opt-in for one release of
+    # soak (per `docs/19-pw-investigation.md` §7 follow-up 7); v0.9.1
+    # flips the default to True; v0.10 deletes the legacy pw-cat / pacat
+    # paths entirely.
+    prefer_native_pw: bool = False
 
     # v0.5.1: software input pre-attenuation, in dB. Default 0.0 (passthrough).
     # Hot mics (HyperX QuadCast at high volume etc.) clip the signal which
@@ -496,6 +514,13 @@ class EngineStats:
     queue_full_events: int = 0
     pacat_restarts: int = 0
     writer_jitter_ms: float = 0.0
+    # v0.9.0 — when the native-pw helper is in use, the helper prints
+    # "underruns=N\n" on stderr roughly once per second; the engine's
+    # stderr-reader parses those lines into this counter. Closes audit
+    # lens 09 rank 1 ("pw-cat is silent on underruns; we swapped a
+    # metric we could see for one we can't"). Stays 0 in pw-cat /
+    # pacat modes (those backends don't emit `underruns=` lines).
+    player_underruns: int = 0
     # v0.6.8 — count of chunks the engine had to drop because inference
     # raised (GPU OOM, numerical, transient ORT error). Without this,
     # any single bad chunk crashes the entire engine; with it, we drop
@@ -1940,6 +1965,31 @@ class RealtimeEngine:
                 f"or correct `sink_name` in ~/.config/woys/config.toml."
             )
 
+    def _find_native_pw_helper(self) -> Path | None:
+        """Locate `woys-pw-out` (the native PipeWire helper introduced in
+        v0.9.0). Search order:
+          1. $PATH (via `shutil.which`)
+          2. <repo>/bin/woys-pw-out (dev checkout, makes `make install`
+             optional)
+          3. ~/.local/bin/woys-pw-out (default install prefix)
+
+        Returns None if none of those resolve.
+        """
+        # 1. PATH.
+        path_hit = shutil.which("woys-pw-out")
+        if path_hit:
+            return Path(path_hit)
+        # 2. Repo's bin/.
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        repo_hit = repo_root / "bin" / "woys-pw-out"
+        if repo_hit.exists() and os.access(repo_hit, os.X_OK):
+            return repo_hit
+        # 3. Default install prefix.
+        local_hit = Path.home() / ".local" / "bin" / "woys-pw-out"
+        if local_hit.exists() and os.access(local_hit, os.X_OK):
+            return local_hit
+        return None
+
     def _open_pacat(self) -> subprocess.Popen[bytes]:
         """Spawn the playback subprocess targeting the named virtual sink.
 
@@ -1952,11 +2002,48 @@ class RealtimeEngine:
         Without that guard, `--target` / `--device` silently fall back
         to the default sink when the named sink is missing.
 
+        v0.9.0: `cfg.prefer_native_pw` (default False) selects the
+        new native helper `woys-pw-out` (see `bin/woys-pw-out.c`) over
+        pw-cat / pacat. The native helper decouples the engine's bursty
+        chunk writes from PipeWire's per-quantum RT callback via an
+        explicit SPSC ring buffer, closing the audit's lens-08 cut
+        signature (sample-exact zeros at 21.33/42.67 ms quantum
+        cadence). NEVER falls back silently — if `prefer_native_pw=True`
+        and the helper is missing, we raise so the user sees an actionable
+        error instead of cuts they can't explain.
+
         The retained name `_open_pacat` is historical — the watchdog and
         writer threads don't care which binary is on the other side, only
         that it accepts raw float32le on stdin.
         """
         self._assert_sink_loaded()
+        if self.cfg.prefer_native_pw:
+            helper = self._find_native_pw_helper()
+            if helper is None:
+                raise RuntimeError(
+                    "prefer_native_pw=True but `woys-pw-out` was not found. "
+                    "Build it with `make -C bin/` from the repo root, then "
+                    "either symlink it onto $PATH or run "
+                    "`make -C bin/ install` to drop it into ~/.local/bin/. "
+                    "Set prefer_native_pw=false in your config to fall back "
+                    "to the legacy pw-cat / pacat path."
+                )
+            self._player_backend = "native-pw"
+            cmd = [
+                str(helper),
+                f"--target={self.cfg.sink_name}",
+                f"--rate={self.cfg.sink_rate}",
+                f"--channels={self.cfg.output_channels}",
+                "--quantum=1024",
+                "--ring-frames=8192",
+            ]
+            return subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+
         if self.cfg.prefer_pw_cat:
             pw_cat = shutil.which("pw-cat")
             if pw_cat is not None:
@@ -2100,18 +2187,35 @@ class RealtimeEngine:
         if proc.stderr is None:
             return
         is_pacat = self._player_backend == "pacat"
+        is_native = self._player_backend == "native-pw"
         try:
             for raw in proc.stderr:
                 if not raw:
                     break
+                line = raw.decode("utf-8", errors="replace")
                 if is_pacat:
                     # pacat -v prints lines like "Stream underrun.\n" exactly.
                     # We match case-insensitively in case the wording shifts
                     # across PulseAudio versions.
-                    line = raw.decode("utf-8", errors="replace")
                     if "underrun" in line.lower():
                         self.stats.xruns += 1
-                # else: drain-only — keep the pipe empty; don't parse.
+                elif is_native:
+                    # v0.9.0 — native helper emits:
+                    #   "ready"                      once after STREAMING
+                    #   "quantum=N rate=M ..."       once after format negotiation
+                    #   "underruns=N"                every UNDERRUN_REPORT_SECS
+                    #   "error: <msg>"               fatal
+                    s = line.strip()
+                    if s.startswith("underruns="):
+                        try:
+                            count = int(s[len("underruns=") :])
+                        except ValueError:
+                            count = 0
+                        self.stats.player_underruns = count
+                    elif s.startswith("error:"):
+                        # Surface the helper's hard-fail message to woys diag.
+                        self.stats.last_error = f"native-pw: {s[len('error:'):].strip()}"
+                # else: pw-cat or unknown — drain-only.
         except (ValueError, OSError):
             # Pipe closed mid-read during shutdown — expected.
             return
