@@ -342,6 +342,26 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         f"(n={len(enq_samples)}; should be sub-ms in steady state)"
     )
 
+    # v0.7.0-rc8 — inference tail samples. Captures chunks where
+    # inf_ms > 2× running p50, with the input shape + per-session-
+    # stage breakdown so we can read what slow chunks have in common.
+    # Empty list means no chunks crossed the 2× threshold during this
+    # session (rare; usually means inference was very stable).
+    if s.tail_chunk_log:
+        print(f"  ---- inference tail samples ({len(s.tail_chunk_log)} entries) ----")
+        print("  cols: chunk_idx  inf_ms (vs p50_ref)  cv  rmvpe  rvc  audio16_len  mic_read  rms")
+        for r in s.tail_chunk_log:
+            print(
+                f"  #{int(r['chunk_idx']):4d}  "
+                f"{r['inf_ms']:6.1f} (vs {r['inf_p50_ref']:5.1f})  "
+                f"cv={r['cv_ms']:5.1f}  "
+                f"rmvpe={r['rmvpe_ms']:5.1f}  "
+                f"rvc={r['rvc_ms']:5.1f}  "
+                f"a16={int(r['audio16_len']):5d}  "
+                f"mic={r['mic_read_ms']:5.1f}  "
+                f"rms={r['input_rms']:.4f}"
+            )
+
     if s.last_error:
         print(f"  last_error       : {s.last_error}")
 

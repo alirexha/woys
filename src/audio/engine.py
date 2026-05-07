@@ -279,6 +279,18 @@ class EngineStats:
     # dict {chunk_idx, total_ms, inf_ms, cv_ms, rmvpe_ms, rvc_ms, input_rms}.
     # Surface via the SLOW socket command -> /tmp/woys-slow-chunks.txt.
     slow_chunk_log: list[dict[str, float]] = field(default_factory=list)
+    # v0.7.0-rc8 — chunks whose inference time was > 2× the running
+    # p50 of recent inference, regardless of whether total_ms passed
+    # chunk_seconds*1000. The rc7 diag dump showed inference p50=40 ms
+    # / p99=96 ms / max=110 ms with overrun_ratio=0 — a 70 ms tail
+    # spread that doesn't trip the existing `slow_chunk_log` (gated on
+    # total_ms > chunk_seconds*1000 = 150 ms). This list captures the
+    # tail chunks so we can correlate their inf_ms with input shape,
+    # history size, RMS, and per-session-stage breakdown. If slow
+    # chunks share a common signature (specific audio16_len, specific
+    # cv vs rmvpe vs rvc dominance, specific RMS band), rc9's fix
+    # targets that mechanism. Capped at 50 entries.
+    tail_chunk_log: list[dict[str, float]] = field(default_factory=list)
     last_error: str | None = None
 
     # v0.5.2 health counters (Brief §5 — surfaced in TUI + `diag`).
@@ -1792,6 +1804,33 @@ class RealtimeEngine:
                         )
                         if len(self.stats.slow_chunk_log) > 50:
                             self.stats.slow_chunk_log.pop(0)
+                    # v0.7.0-rc8 — tail-chunk capture, gated on inference
+                    # time alone (not total_ms). Fires when inf_ms is more
+                    # than 2× the running p50 of `_recent_inference`, which
+                    # has been pre-this-chunk's-append at the bottom of the
+                    # loop. Skip until the deque has ≥16 prior samples so
+                    # the threshold is stable. Captures input-shape and
+                    # per-session-stage data so we can read what slow
+                    # chunks have in common after a Telegram run.
+                    if len(self.stats._recent_inference) >= 16:
+                        sorted_inf = sorted(self.stats._recent_inference)
+                        inf_p50 = sorted_inf[len(sorted_inf) // 2]
+                        if inf_p50 > 0 and inf_ms > inf_p50 * 2:
+                            self.stats.tail_chunk_log.append(
+                                {
+                                    "chunk_idx": float(self.stats.chunks_processed),
+                                    "inf_ms": inf_ms,
+                                    "inf_p50_ref": float(inf_p50),
+                                    "cv_ms": self.stats.last_cv_ms,
+                                    "rmvpe_ms": self.stats.last_rmvpe_ms,
+                                    "rvc_ms": self.stats.last_rvc_ms,
+                                    "audio16_len": float(audio16.shape[0]),
+                                    "input_rms": rms,
+                                    "mic_read_ms": float(mic_read_ms),
+                                }
+                            )
+                            if len(self.stats.tail_chunk_log) > 50:
+                                self.stats.tail_chunk_log.pop(0)
                     self.stats._recent_inference.append(inf_ms)
                     self.stats._recent_total.append(total_ms)
                     if self.stats._recent_inference:
