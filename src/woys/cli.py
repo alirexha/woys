@@ -304,6 +304,44 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
             f"  overrun ratio    : {overrun:.3f}  "
             f"({s.late_chunks}/{s.chunks_processed} chunks past budget)"
         )
+
+    # v0.7.0-rc6 — per-stage producer-side timing percentiles. The rc5
+    # writer-jitter probe (docs/16-audit/12-rc5-writer-jitter-probe.md)
+    # ruled out the writer side. Producer-side cadence variance is
+    # what writer_jitter_ms reflects; this breakdown attributes it to
+    # mic_read vs inference vs enqueue_lag. Pure instrumentation —
+    # no behavior change, no fix proposed.
+    import numpy as _np
+
+    def _pct(samples: list[float] | None, p: float) -> float:
+        if not samples:
+            return float("nan")
+        return float(_np.percentile(samples, p))
+
+    inf_samples = list(s._recent_inference)
+    mic_samples = list(s._recent_mic_read_ms)
+    enq_samples = list(s._recent_enqueue_lag_ms)
+    print("  ---- per-stage timing (rolling window, ms) ----")
+    print(
+        f"  inference        p50={_pct(inf_samples, 50):6.2f}  "
+        f"p95={_pct(inf_samples, 95):6.2f}  "
+        f"p99={_pct(inf_samples, 99):6.2f}  "
+        f"max={s.max_inference_ms:6.2f}  (n={len(inf_samples)})"
+    )
+    print(
+        f"  mic_read         p50={_pct(mic_samples, 50):6.2f}  "
+        f"p95={_pct(mic_samples, 95):6.2f}  "
+        f"p99={_pct(mic_samples, 99):6.2f}  "
+        f"(n={len(mic_samples)}; should hover near {s.last_mic_read_ms:.0f}ms = "
+        f"chunk_seconds * 1000)"
+    )
+    print(
+        f"  enqueue_lag      p50={_pct(enq_samples, 50):6.2f}  "
+        f"p95={_pct(enq_samples, 95):6.2f}  "
+        f"p99={_pct(enq_samples, 99):6.2f}  "
+        f"(n={len(enq_samples)}; should be sub-ms in steady state)"
+    )
+
     if s.last_error:
         print(f"  last_error       : {s.last_error}")
 

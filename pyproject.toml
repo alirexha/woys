@@ -1,6 +1,6 @@
 [project]
 name = "woys"
-version = "0.7.0rc5"
+version = "0.7.0rc6"
 description = "Linux-native real-time voice changer. RVC-only on ONNX Runtime CUDA, PipeWire-native, terminal-controlled."
 authors = [{ name = "Alireza Hamayeli", email = "alireza.hmyl@gmail.com" }]
 license = { file = "LICENSE" }
