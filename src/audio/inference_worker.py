@@ -197,8 +197,13 @@ def child_main(
     # Step 7: main loop.
     nan_chunks_total = 0
     while True:
-        # Watchdog parent. If parent died, our PPID becomes 1 (init).
-        if os.getppid() != parent_pid and os.getppid() == 1:
+        # Watchdog parent. Any change in PPID means the original parent died:
+        # on Linux, PIDs don't migrate, so getppid() != parent_pid is sufficient.
+        # The previous `and getppid() == 1` gate was wrong on systemd-userspace
+        # systems (Arch, CachyOS, modern Fedora/Ubuntu) where orphaned user
+        # processes reparent to `systemd --user`, NOT pid 1 (init). Without
+        # this fix the child stays alive after parent crash, holding GPU memory.
+        if os.getppid() != parent_pid:
             with contextlib.suppress(Exception):
                 child_send.send({"cmd": RESP_ERROR, "error": "parent died, child exiting"})
             break
