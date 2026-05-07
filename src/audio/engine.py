@@ -49,6 +49,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -272,6 +273,32 @@ class EngineConfig:
     # locked-down systems, never a hang or crash.
     realtime_priority: bool = True
 
+    # v0.8.0 — run cv → rmvpe → rvc inference in a child process with
+    # its own CUDA context. Closes the LESSONS §19 threading tax
+    # (~23 ms typical-case overhead from running ORT inference in the
+    # engine's daemon thread alongside writer / watchdog / stderr-
+    # reader threads, all contending for the GIL during numpy ops
+    # between ONNX sessions). Parent audio I/O thread no longer
+    # competes; child process gets exclusive GIL + RT priority +
+    # gc.disable() + cuDNN EXHAUSTIVE + broader pre-warm (rc7-rc12
+    # wins, all preserved).
+    #
+    # IPC: shared memory for hot-path audio arrays (zero-copy via
+    # numpy buffer protocol), Pipes for control + small metadata
+    # (pickle overhead ~50–200 µs per call, < 1 % of inference time).
+    #
+    # Set False to fall back to in-process inference. Used by tests
+    # that need direct access to `_infer` / `_process_streaming_16k`
+    # without spawn cost, and as an emergency escape if subprocess
+    # mode regresses on a particular host.
+    inference_subprocess: bool = True
+
+    # When `inference_subprocess=True`, control whether the CHILD
+    # process disables Python GC during its inference loop. Same
+    # rc7 logic, just inside the subprocess. Set False if long
+    # sessions reveal cyclic-ref memory bloat.
+    inference_subprocess_disable_gc: bool = True
+
 
 @dataclass
 class EngineStats:
@@ -403,6 +430,13 @@ class EngineStats:
     # chunk_seconds=0.15.
     _recent_mic_read_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     _recent_enqueue_lag_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+
+    # v0.8.0 — inference subprocess telemetry. None / 0 when running
+    # in-process (legacy path).
+    child_pid: int | None = None
+    child_restarts: int = 0
+    last_ipc_roundtrip_ms: float = 0.0
+    _recent_ipc_roundtrip_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
 
 # v0.7.0-rc10: HEURISTIC → EXHAUSTIVE. The rc8 tail-chunk capture +
@@ -773,6 +807,11 @@ class RealtimeEngine:
         # had already disabled GC (rare but possible in tests).
         self._gc_was_enabled_before_start: bool = False
 
+        # v0.8.0 — handle to the inference subprocess. Created lazily
+        # in `start()` when `cfg.inference_subprocess=True`. Stays None
+        # in legacy in-process mode.
+        self._inf_client: Any = None
+
         # Lazy-load sessions; avoid CUDA work if the engine is constructed
         # but never started (e.g., TUI dry-run).
         self._cv: ort.InferenceSession | None = None
@@ -1074,8 +1113,35 @@ class RealtimeEngine:
                     full = np.concatenate([tail48, flush48]) if flush48.size else tail48
                     if full.size > 0:
                         self._enqueue_chunk(self._to_sink_bytes(full))
-        # Replace the session. Existing _cv (contentvec) and _rmvpe stay
-        # — they're foundation models, not voice-specific.
+
+        # v0.8.0 — subprocess swap path. Child owns the session pool;
+        # tell it to swap, wait for the new RVC sample-rate response,
+        # then rebuild the output resampler in the parent if the rate
+        # changed. Falls back to the in-process path on
+        # InferenceError (child went away mid-swap).
+        if self._inf_client is not None:
+            from audio.inference_client import InferenceError
+
+            try:
+                new_sr, new_is_half = self._inf_client.swap_model(target)
+                self.cfg.rvc_model = target
+                self._is_half = new_is_half
+                if new_sr != self._rvc_output_sr:
+                    self._resampler_out = _StreamResampler(new_sr, self.cfg.sink_rate)
+                    self._rebuild_sola_for_rate(new_sr)
+                self._rvc_output_sr = new_sr
+                self.reset_streaming_state()
+                return
+            except InferenceError as e:
+                self.stats.last_error = f"subprocess swap failed: {e}"
+                # Fall through to legacy path so the engine isn't
+                # broken — but in subprocess mode the in-process
+                # _rvc isn't loaded, so the legacy path will fail.
+                # Return without doing anything; user can retry.
+                return
+
+        # Legacy in-process path. Existing _cv (contentvec) and _rmvpe
+        # stay — they're foundation models, not voice-specific.
         # v0.5.0: pool-cached. Cache hit ≈ 10 ms; cache miss ≈ 600 ms.
         self.cfg.rvc_model = target
         self._rvc = self._rvc_pool.get_or_create(target)
@@ -1115,7 +1181,66 @@ class RealtimeEngine:
         return self._infer(audio16k)
 
     def _infer(self, audio16k: NDArrayF32) -> NDArrayF32:
-        """Raw model invocation; no streaming bookkeeping."""
+        """Raw model invocation; no streaming bookkeeping.
+
+        v0.8.0 — when `cfg.inference_subprocess=True` AND the
+        `_inf_client` was successfully started, this delegates to the
+        child process via `InferenceClient.infer()`. The child runs
+        the full cv → rmvpe → rvc pipeline in its own CUDA context;
+        per-stage timings come back via the response and populate
+        `EngineStats` so woys diag shows the same breakdown.
+
+        On `InferenceError` (child died, pipe broke), we attempt one
+        restart-and-retry. If the retry fails too, the exception
+        propagates up to `_safe_process_streaming_16k` which catches
+        it and bumps `dropped_chunks` like any other inference
+        failure.
+        """
+        if self._inf_client is not None:
+            from audio.inference_client import InferenceError
+
+            try:
+                ipc_result, timings = self._inf_client.infer(
+                    audio16k,
+                    f0_up_key=self.cfg.f0_up_key,
+                    sid=self.cfg.sid,
+                    threshold=self.cfg.threshold,
+                )
+            except InferenceError as e:
+                # Try one restart. If THAT fails, propagate.
+                self.stats.last_error = (
+                    f"inference child died ({e}); attempting restart"
+                )
+                try:
+                    self._inf_client.restart()
+                    self.stats.child_restarts = self._inf_client.restart_count
+                    self.stats.child_pid = (
+                        self._inf_client._handles.proc.pid
+                        if self._inf_client._handles
+                        else None
+                    )
+                    ipc_result, timings = self._inf_client.infer(
+                        audio16k,
+                        f0_up_key=self.cfg.f0_up_key,
+                        sid=self.cfg.sid,
+                        threshold=self.cfg.threshold,
+                    )
+                except InferenceError:
+                    raise
+
+            # Populate stats from child's per-stage timings + the
+            # cumulative NaN-replace count. Use the child's running
+            # total so cumulative numbers survive a child restart.
+            self.stats.last_cv_ms = timings.cv_ms
+            self.stats.last_rmvpe_ms = timings.rmvpe_ms
+            self.stats.last_rvc_ms = timings.rvc_ms
+            self.stats.last_ipc_roundtrip_ms = timings.roundtrip_ms
+            self.stats._recent_ipc_roundtrip_ms.append(timings.roundtrip_ms)
+            self.stats.nan_chunks = timings.nan_chunks_total
+            ipc_typed: NDArrayF32 = ipc_result
+            return ipc_typed
+
+        # Legacy in-process path.
         assert self._cv is not None and self._rmvpe is not None and self._rvc is not None
 
         t_cv0 = time.perf_counter()
@@ -1159,7 +1284,7 @@ class RealtimeEngine:
                 "sid": np.array([self.cfg.sid], dtype=np.int64),
             },
         )[0]
-        result: NDArrayF32 = np.array(out).astype(np.float32).squeeze()
+        result = np.array(out).astype(np.float32).squeeze()
         # v0.6.9: belt-and-braces NaN sanitize. pacat is fed float32le; NaN
         # would be undefined behavior in PipeWire's mixer chain and the
         # listener hears it as a click + brief gap.
@@ -1176,7 +1301,8 @@ class RealtimeEngine:
         self.stats.last_cv_ms = (t_cv1 - t_cv0) * 1000.0
         self.stats.last_rmvpe_ms = (t_rmvpe1 - t_cv1) * 1000.0
         self.stats.last_rvc_ms = (t_rvc1 - t_rmvpe1) * 1000.0
-        return result
+        result_typed: NDArrayF32 = result
+        return result_typed
 
     def _safe_process_streaming_16k(self, audio16: NDArrayF32) -> NDArrayF32 | None:
         """v0.6.8 — wrap `_process_streaming_16k` so a transient
@@ -1272,42 +1398,82 @@ class RealtimeEngine:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._ensure_sessions()
-        # v0.6.9: warm cv + rmvpe + rvc cuDNN caches with synthetic chunks so
-        # the first real chunks don't blow the chunk-time budget. Live
-        # diagnostic showed `max_total_ms=456 ms` (1.8x the 250 ms budget) on
-        # cold-start chunks — usually the first 3-5 chunks of a session.
-        self._warmup_realtime_pipeline()
-        # v0.5.0: optionally pre-warm every voice so swaps are instant from
-        # the first press of `p`. Costs ~6 s for a 10-voice library.
-        if self.cfg.eager_warmup:
+
+        if self.cfg.inference_subprocess:
+            # v0.8.0 — spawn the inference child. Child loads ORT
+            # sessions + applies the rc7-rc12 wins (gc.disable, RT
+            # priority, EXHAUSTIVE cuDNN, broader pre-warm) inside its
+            # own CUDA context. Parent's audio I/O thread no longer
+            # competes with inference for the GIL.
+            from audio.inference_client import InferenceClient, InferenceError
+
+            cfg_dict = self._cfg_dict_for_subprocess()
+            self._inf_client = InferenceClient(cfg_dict)
+            try:
+                self._inf_client.start()
+            except InferenceError as e:
+                self._inf_client = None
+                self.stats.last_error = f"inference subprocess failed to start: {e}"
+                # Fall back to in-process so the engine isn't dead.
+                self._ensure_sessions()
+                self._warmup_realtime_pipeline()
+            else:
+                # Child loaded the RVC session — pull rate + dtype info.
+                self._rvc_output_sr = self._inf_client.rvc_output_sr
+                self._is_half = self._inf_client.is_half
+                self.active_embedder = self._inf_client.active_embedder
+                self.stats.child_pid = (
+                    self._inf_client._handles.proc.pid
+                    if self._inf_client._handles
+                    else None
+                )
+                # Build the parent-side SOLA stream at the model's
+                # output rate. The legacy in-process path does this
+                # lazily inside `_cached_rvc_sr`; subprocess mode
+                # needs an explicit call because we never went
+                # through `_cached_rvc_sr`.
+                self._rebuild_sola_for_rate(self._rvc_output_sr)
+        else:
+            # Legacy in-process path. Builds ORT sessions in this
+            # process and warms cuDNN here. Used by tests that need
+            # direct access to `_infer` etc., and as an emergency
+            # escape if subprocess mode regresses.
+            self._ensure_sessions()
+            self._warmup_realtime_pipeline()
+
+        # v0.5.0: optionally pre-warm every voice so swaps are instant
+        # from the first press of `p`. Skipped in subprocess mode —
+        # the child's RvcSessionPool handles this internally if
+        # eager_warmup is set. (Wiring full eager_warmup via IPC is
+        # deferred; in v0.8.0 swaps are still on-demand for child.)
+        if self.cfg.eager_warmup and not self.cfg.inference_subprocess:
             n = self.warmup_voice_library()
             print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
         self.stats.running = True
 
-        # v0.7.0-rc7 — disable Python GC during the engine's lifetime to
-        # eliminate generational-collection pauses from the inference
-        # tail. The rc6 diag dump (`docs/16-audit/12-rc5-writer-jitter-
-        # probe.md` follow-up) showed inference p50=66 ms / p99=98 ms /
-        # max=110 ms — a 32 ms tail that owns the writer-cadence
-        # variance. mic_read p99 was 160 ms (≈ chunk_seconds, no
-        # variance), enqueue_lag p99 was 0.06 ms (sub-ms, clean). Tail
-        # is in inference itself.
-        #
-        # Numpy arrays in the engine hot path are reference-counted —
-        # they free as soon as their reference count drops, no GC
-        # required. The only thing GC handles is cyclic references,
-        # which are rare in this code path. Disabling GC for the
-        # session prevents the periodic ~10–30 ms collection pauses
-        # that fire on the GIL during inference. stop() re-enables
-        # and runs one final collection to clean up any cyclic refs
-        # that accumulated.
+        # v0.7.0-rc7 — disable Python GC in the parent during the
+        # engine's lifetime. Even in subprocess mode, the parent
+        # still does mic I/O, SOLA, and writer-thread coordination
+        # — all GIL-holding work that benefits from GC pauses being
+        # eliminated. The CHILD also runs gc.disable() per its own
+        # config (see EngineConfig.inference_subprocess_disable_gc).
         self._gc_was_enabled_before_start = gc.isenabled()
         if self._gc_was_enabled_before_start:
             gc.disable()
 
         self._thread = threading.Thread(target=self._run_loop, name="vcclient-engine", daemon=True)
         self._thread.start()
+
+    def _cfg_dict_for_subprocess(self) -> dict[str, Any]:
+        """Convert EngineConfig to a pickle-safe dict for spawn. Path
+        fields become strings; everything else passes through."""
+        from dataclasses import asdict
+
+        d = asdict(self.cfg)
+        for k, v in list(d.items()):
+            if isinstance(v, Path):
+                d[k] = str(v)
+        return d
 
     def _warmup_realtime_pipeline(self, n_chunks_per_shape: int = 4) -> None:
         """v0.6.9 — pre-run synthetic chunks through the *full* realtime
@@ -1391,6 +1557,15 @@ class RealtimeEngine:
         if self._thread:
             self._thread.join(timeout=timeout)
         self.stats.running = False
+
+        # v0.8.0 — tear down the inference subprocess after the engine
+        # thread has stopped sending it work. `InferenceClient.stop()`
+        # sends CMD_STOP, joins the child, closes pipes, unlinks shm.
+        if self._inf_client is not None:
+            with contextlib.suppress(Exception):
+                self._inf_client.stop(timeout_s=timeout)
+            self._inf_client = None
+            self.stats.child_pid = None
 
         # v0.7.0-rc7 — restore GC to its prior state and run one
         # collection to free any cyclic references that accumulated

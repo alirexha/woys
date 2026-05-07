@@ -75,7 +75,7 @@ def test_onnx_contentvec_shapes_v1() -> None:
 def test_engine_embedder_default_is_onnx() -> None:
     from audio.engine import EngineConfig, RealtimeEngine
 
-    eng = RealtimeEngine(EngineConfig(chunk_seconds=0.25))
+    eng = RealtimeEngine(EngineConfig(chunk_seconds=0.25, inference_subprocess=False))
     eng._ensure_sessions()
     assert eng.active_embedder == "onnx"
 
@@ -93,7 +93,9 @@ def test_engine_embedder_fairseq_falls_back_to_onnx_when_missing() -> None:
     except ImportError:
         pass
 
-    eng = RealtimeEngine(EngineConfig(chunk_seconds=0.25, embedder="fairseq"))
+    eng = RealtimeEngine(
+        EngineConfig(chunk_seconds=0.25, embedder="fairseq", inference_subprocess=False)
+    )
     eng._ensure_sessions()
     assert eng.active_embedder == "onnx"
     assert eng.stats.last_error is not None

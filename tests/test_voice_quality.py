@@ -147,7 +147,13 @@ def _run_voice_through_engine(
     """
     from audio.engine import EngineConfig, RealtimeEngine
 
-    eng = RealtimeEngine(EngineConfig(chunk_seconds=chunk_seconds, rvc_model=voice_path))
+    eng = RealtimeEngine(
+        EngineConfig(
+            chunk_seconds=chunk_seconds,
+            rvc_model=voice_path,
+            inference_subprocess=False,
+        )
+    )
     eng._ensure_sessions()
     eng.reset_streaming_state()
     if audio_in is None:

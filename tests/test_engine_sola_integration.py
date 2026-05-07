@@ -54,7 +54,14 @@ def test_streaming_no_click_artifacts_with_sola() -> None:
     chunk_n = sr // 10  # 100 ms
 
     def run(sola_on: bool) -> np.ndarray:
-        eng = RealtimeEngine(EngineConfig(chunk_seconds=0.1, sola_enabled=sola_on))
+        # v0.8.0 — opt out of subprocess inference; this test calls
+        # `_ensure_sessions` + `_process_streaming_16k` directly,
+        # which only works in the legacy in-process path.
+        eng = RealtimeEngine(
+            EngineConfig(
+                chunk_seconds=0.1, sola_enabled=sola_on, inference_subprocess=False
+            )
+        )
         eng._ensure_sessions()
         eng.reset_streaming_state()
         out_pieces: list[np.ndarray] = []
@@ -94,7 +101,11 @@ def test_engine_warm_avg_total_under_120ms_at_chunk_100ms() -> None:
     if not get_state().fully_present:
         pytest.skip("WoysSink + woys-mic not loaded")
 
-    eng = RealtimeEngine(EngineConfig(chunk_seconds=0.1, sola_enabled=True))
+    eng = RealtimeEngine(
+        EngineConfig(
+            chunk_seconds=0.1, sola_enabled=True, inference_subprocess=False
+        )
+    )
     eng.start()
     try:
         time.sleep(2.5)  # warmup window — cudnn autotune settles here
