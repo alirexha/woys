@@ -64,6 +64,49 @@ if hasattr(ort, "preload_dlls"):
     ort.preload_dlls()
 
 
+def _preload_trt_dlls() -> bool:
+    """v0.8.1 — preload TensorRT shared libraries so ORT's TRT EP can
+    resolve `libnvinfer.so.10`. The pip-installed `tensorrt-cu12`
+    package puts its libs under
+    `<venv>/lib/python3.11/site-packages/tensorrt_libs/` which isn't
+    on the system loader path, so ORT (which dlopens
+    `libonnxruntime_providers_tensorrt.so` and that in turn dlopens
+    `libnvinfer.so.10`) fails with "cannot open shared object" unless
+    we ctypes-preload the .so files into the process's symbol space
+    first.
+
+    Returns True if every libnvinfer*.so was loaded successfully,
+    False otherwise (TRT EP will silently fall through to CUDA EP
+    in that case — the per-session providers list always includes
+    CUDA EP as a fallback).
+    """
+    import ctypes
+
+    try:
+        import tensorrt_libs  # type: ignore[import-untyped]
+    except ImportError:
+        return False
+
+    libs_dir = os.path.dirname(tensorrt_libs.__file__)
+    ok = True
+    for fn in sorted(os.listdir(libs_dir)):
+        # Only load the libnvinfer* shims; other files in tensorrt_libs
+        # (Python source, init helpers) shouldn't be ctypes-loaded.
+        if "libnvinfer" not in fn or ".so" not in fn:
+            continue
+        full = os.path.join(libs_dir, fn)
+        try:
+            ctypes.CDLL(full, mode=ctypes.RTLD_GLOBAL)
+        except OSError:
+            ok = False
+    return ok
+
+
+# Best-effort TRT preload at module import. Failure is non-fatal —
+# session creation falls back to CUDA EP if TRT can't be initialized.
+_TRT_PRELOAD_OK = _preload_trt_dlls()
+
+
 MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 
 # Defaults pulled from Phase 1 inventory.
@@ -287,17 +330,60 @@ class EngineConfig:
     # numpy buffer protocol), Pipes for control + small metadata
     # (pickle overhead ~50–200 µs per call, < 1 % of inference time).
     #
-    # Set False to fall back to in-process inference. Used by tests
-    # that need direct access to `_infer` / `_process_streaming_16k`
-    # without spawn cost, and as an emergency escape if subprocess
-    # mode regresses on a particular host.
-    inference_subprocess: bool = True
+    # v0.8.0-rc4 A/B confirmed multiprocessing is a null result on
+    # quiet GPU (subprocess and in-process tied within noise). The
+    # rc1 measured win was real but conditional on CS2 contesting
+    # the GPU; without contention, in-process inference completes
+    # fast enough that the GIL never blocks the writer thread for
+    # long. v0.8.1 default flipped to False.
+    #
+    # Subprocess infrastructure stays as opt-in for users with
+    # persistent GPU contention (e.g. CS2 + woys simultaneously) —
+    # set `inference_subprocess=True` in `~/.config/woys/config.toml`
+    # to spawn the inference child and isolate audio I/O from
+    # GIL-bound inference.
+    inference_subprocess: bool = False
 
     # When `inference_subprocess=True`, control whether the CHILD
     # process disables Python GC during its inference loop. Same
     # rc7 logic, just inside the subprocess. Set False if long
     # sessions reveal cyclic-ref memory bloat.
     inference_subprocess_disable_gc: bool = True
+
+    # v0.8.1 — TensorRT execution provider, DISABLED BY DEFAULT.
+    #
+    # The v0.8.1 TRT pivot was a dead end on this hardware/model
+    # combination (ORT 1.22 + TRT 10.16 + RVC v2 + RMVPE):
+    #
+    #   - RMVPE FP16 STFT fails TRT init outright. TRT 10.16's STFT
+    #     importer requires Float32 input; RMVPE has been auto-
+    #     promoted to FP16 since v0.3.0. Per-session try/except
+    #     catches this and falls back to CUDA EP for RMVPE — but
+    #     that means RMVPE doesn't benefit from TRT at all.
+    #
+    #   - RVC initializes successfully but produces MATHEMATICALLY
+    #     WRONG output. Cosine similarity vs CUDA EP across the 4
+    #     soxr shapes: 0.02 / 0.44 / 0.48 / 0.28 (target ≥ 0.95).
+    #     The Int64 binding warnings from TRT's parser are the
+    #     observable symptom; the underlying issue is some
+    #     combination of int64 indexing in the NSF source module
+    #     and lack of shape inference annotations on the model.
+    #
+    #   - Speedup, ignoring correctness, is 1.04-1.87× on cv only.
+    #     Below the 1.5-3× v0.8.1 target. With cos_sim broken on
+    #     RVC, the win is hypothetical.
+    #
+    # Infrastructure stays in place for users who want to experiment
+    # (set `use_tensorrt = true` in `~/.config/woys/config.toml`)
+    # and as a path forward when ORT or the RVC export pipeline
+    # gains TRT-friendly shape inference / int64 handling. For now,
+    # the production default is CUDA EP only — same as rc12 baseline.
+    #
+    # Per-session TRT init status (success vs CUDA fallback) is
+    # surfaced via `EngineStats.trt_active_for` and printed in
+    # `woys diag` so the experimenting user sees exactly which
+    # sessions take which path.
+    use_tensorrt: bool = False
 
 
 @dataclass
@@ -438,6 +524,14 @@ class EngineStats:
     last_ipc_roundtrip_ms: float = 0.0
     _recent_ipc_roundtrip_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
+    # v0.8.1 — per-session TRT EP status. After `_ensure_sessions`
+    # runs, this maps each loaded model's filename to True (TRT
+    # active) or False (CUDA EP fallback because TRT init failed).
+    # `trt_init_errors` records the failure reason per model so
+    # `woys diag` can print it. Empty when `cfg.use_tensorrt=False`.
+    trt_active_for: dict[str, bool] = field(default_factory=dict)
+    trt_init_errors: dict[str, str] = field(default_factory=dict)
+
 
 # v0.7.0-rc10: HEURISTIC → EXHAUSTIVE. The rc8 tail-chunk capture +
 # rc9 broader pre-warm together pinned the inference p99 spike to
@@ -470,48 +564,110 @@ class EngineStats:
 _CUDNN_ALGO_SEARCH = "EXHAUSTIVE"
 
 
-def _make_session(path: Path) -> ort.InferenceSession:
+_TRT_CACHE_ROOT = Path.home() / ".cache" / "woys" / "trt"
+
+
+def _trt_cache_dir_for(model_path: Path) -> Path:
+    """Per-model TRT engine cache directory under
+    `~/.cache/woys/trt/<model-stem>/`. Engines for different shapes
+    of the same model land in the same directory, keyed by ORT's
+    internal shape-aware hash. Different models keep separate
+    subdirs so cache invalidation per-model is just `rm -rf`.
+    """
+    d = _TRT_CACHE_ROOT / model_path.stem
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _cuda_provider_entry() -> tuple[str, dict[str, object]]:
+    """The CUDA EP config we use everywhere — extracted so the TRT
+    fallback path can pull the same options if TRT init fails."""
+    return (
+        "CUDAExecutionProvider",
+        {
+            "device_id": 0,
+            # v0.7.0-rc12: kNextPowerOfTwo → kSameAsRequested.
+            # See engine history below for full context.
+            "arena_extend_strategy": "kSameAsRequested",
+            "cudnn_conv_algo_search": _CUDNN_ALGO_SEARCH,
+            "do_copy_in_default_stream": True,
+            "cudnn_conv_use_max_workspace": "1",
+        },
+    )
+
+
+# Module-level record of which sessions actually got TRT EP. Surfaced
+# in `EngineStats.trt_active_for` so woys diag can show which models
+# failed TRT init and fell back to CUDA — gives the user one place to
+# see the real picture without grepping logs.
+_TRT_ACTIVE_PER_SESSION: dict[str, bool] = {}
+_TRT_INIT_ERRORS: dict[str, str] = {}
+
+
+def _make_session(path: Path, *, use_tensorrt: bool = True) -> ort.InferenceSession:
+    """v0.8.1 — try TensorRT EP first, fall back to CUDA EP per session.
+
+    ORT's TRT EP fails session initialization (not just the TRT
+    subgraph) when it encounters operators it can't handle —
+    e.g. RMVPE's FP16 STFT, which TRT requires to be FP32. We
+    catch that failure and rebuild the session with CUDA EP only.
+    The fallback is logged to `_TRT_INIT_ERRORS[path.name]` and
+    can be surfaced via `EngineStats.trt_active_for` and woys diag.
+    """
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     so.log_severity_level = 3
-    providers: list[tuple[str, dict[str, object]] | str] = []
-    if "CUDAExecutionProvider" in ort.get_available_providers():
-        providers.append(
+    available = ort.get_available_providers()
+
+    if use_tensorrt and _TRT_PRELOAD_OK and "TensorrtExecutionProvider" in available:
+        cache_dir = _trt_cache_dir_for(path)
+        trt_providers: list[tuple[str, dict[str, object]] | str] = [
             (
-                "CUDAExecutionProvider",
+                "TensorrtExecutionProvider",
                 {
                     "device_id": 0,
-                    # v0.7.0-rc12: kNextPowerOfTwo → kSameAsRequested.
-                    # The pre-rc12 strategy rounded each arena
-                    # allocation up to the next power of 2, which
-                    # caused occasional re-allocations + copies when
-                    # input shapes crossed a power-of-2 boundary
-                    # (e.g. 4357 → 8192-byte arena, 4847 → would
-                    # need ~10 KiB so re-alloc). Per ORT 1.14+ docs
-                    # `kSameAsRequested` is the recommended default
-                    # for static-shape workloads where you want
-                    # predictable memory behavior. We have soxr's
-                    # variable shape range (1957/1958/2446/2447 input
-                    # → 4357/4358/4846/4847 model_input) but the
-                    # range is BOUNDED — once the arena has seen all
-                    # four shapes, no further re-allocations.
-                    "arena_extend_strategy": "kSameAsRequested",
-                    "cudnn_conv_algo_search": _CUDNN_ALGO_SEARCH,
-                    "do_copy_in_default_stream": True,
-                    # v0.7.0-rc12: explicit. ORT 1.14+ default is "1"
-                    # but pinning makes the behavior version-stable.
-                    # Tells cuDNN to pick the fastest algo regardless
-                    # of workspace memory cost — a faster algo with
-                    # larger scratch space can beat a slower algo
-                    # with tighter scratch. With EXHAUSTIVE search
-                    # (rc10) AND max workspace, cuDNN has the widest
-                    # selection of algos to choose from.
-                    "cudnn_conv_use_max_workspace": "1",
+                    # Cache engines to disk so the 5-30 s per-shape
+                    # compile cost is paid only on the first session
+                    # ever (or when the model file changes).
+                    "trt_engine_cache_enable": True,
+                    "trt_engine_cache_path": str(cache_dir),
+                    # 2 GiB workspace for TRT's builder. RTX 2070 has
+                    # 8 GiB; cv + rmvpe + rvc resident is ~2 GiB.
+                    "trt_max_workspace_size": 2 * 1024 * 1024 * 1024,
+                    # FP16 disabled until per-voice quality validation
+                    # (cosine sim ≥ 0.95 vs FP32 baseline) is run.
+                    "trt_fp16_enable": False,
+                    "trt_max_partition_iterations": 1000,
+                    "trt_min_subgraph_size": 1,
+                    "trt_timing_cache_enable": True,
+                    "trt_timing_cache_path": str(cache_dir),
                 },
-            )
-        )
-    providers.append("CPUExecutionProvider")
-    return ort.InferenceSession(str(path), sess_options=so, providers=providers)
+            ),
+            _cuda_provider_entry(),
+            "CPUExecutionProvider",
+        ]
+        try:
+            sess = ort.InferenceSession(str(path), sess_options=so, providers=trt_providers)
+            _TRT_ACTIVE_PER_SESSION[path.name] = True
+            _TRT_INIT_ERRORS.pop(path.name, None)
+            return sess
+        except Exception as e:
+            # TRT couldn't parse / partition the graph. Log the
+            # reason and retry with CUDA EP only. Common cause:
+            # graph contains an operator TRT doesn't support
+            # (FP16 STFT, certain custom ops, dynamic shapes
+            # without shape inference annotations).
+            _TRT_ACTIVE_PER_SESSION[path.name] = False
+            _TRT_INIT_ERRORS[path.name] = f"{type(e).__name__}: {str(e)[:240]}"
+
+    # CUDA EP only path (TRT disabled or TRT init failed).
+    cuda_providers: list[tuple[str, dict[str, object]] | str] = []
+    if "CUDAExecutionProvider" in available:
+        cuda_providers.append(_cuda_provider_entry())
+    cuda_providers.append("CPUExecutionProvider")
+    sess = ort.InferenceSession(str(path), sess_options=so, providers=cuda_providers)
+    _TRT_ACTIVE_PER_SESSION.setdefault(path.name, False)
+    return sess
 
 
 # v0.6.9 — pitchf sanitization for the realtime inference path.
@@ -711,11 +867,15 @@ class RvcSessionPool:
     `_maybe_swap_model`; tests / TUI may call it from any thread.
     """
 
-    def __init__(self, max_size: int = 4) -> None:
+    def __init__(self, max_size: int = 4, *, use_tensorrt: bool = True) -> None:
         self._cache: dict[Path, ort.InferenceSession] = {}
         self._access_order: list[Path] = []
         self._max_size = max(1, max_size)
         self._lock = threading.Lock()
+        # v0.8.1: pool sessions inherit the engine's TRT preference. The
+        # engine constructs the pool with `use_tensorrt=cfg.use_tensorrt`
+        # so RVC voice loads share whatever EP path the engine wants.
+        self._use_tensorrt = use_tensorrt
 
     def __len__(self) -> int:
         with self._lock:
@@ -740,7 +900,7 @@ class RvcSessionPool:
 
         # Cache miss — build outside the lock (slow); other threads can
         # still get cached sessions while we tune.
-        sess = _make_session(key)
+        sess = _make_session(key, use_tensorrt=self._use_tensorrt)
 
         with self._lock:
             # Another thread may have raced us; if so, drop ours and use theirs.
@@ -886,7 +1046,10 @@ class RealtimeEngine:
         self._last_writer_ts: float | None = None
 
         # v0.5.0 session pool — shared cache so swap = pointer swap.
-        self._rvc_pool = RvcSessionPool(max_size=self.cfg.session_pool_size)
+        self._rvc_pool = RvcSessionPool(
+            max_size=self.cfg.session_pool_size,
+            use_tensorrt=self.cfg.use_tensorrt,
+        )
         # Probed `model_sr` per voice path so we don't redo the probe each
         # swap. Keys are resolved Paths.
         self._rvc_sr_cache: dict[Path, int] = {}
@@ -908,15 +1071,21 @@ class RealtimeEngine:
         rmvpe_path = self._auto_pick_fp16(self.cfg.rmvpe_model, allow=True)
 
         if self._cv is None:
-            self._cv = _make_session(cv_path)
+            self._cv = _make_session(cv_path, use_tensorrt=self.cfg.use_tensorrt)
             self._cv_input_dtype = self._cv.get_inputs()[0].type
         if self._rmvpe is None:
-            self._rmvpe = _make_session(rmvpe_path)
+            self._rmvpe = _make_session(rmvpe_path, use_tensorrt=self.cfg.use_tensorrt)
             self._rmvpe_input_dtype = self._rmvpe.get_inputs()[0].type
         if self._rvc is None:
             self._rvc = self._rvc_pool.get_or_create(self.cfg.rvc_model)
             self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
             self._rvc_output_sr = self._cached_rvc_sr(Path(self.cfg.rvc_model))
+
+        # v0.8.1: snapshot TRT init status from the module-level
+        # tracker into stats, so woys diag can show which sessions
+        # actually got TRT EP and which fell back to CUDA.
+        self.stats.trt_active_for = dict(_TRT_ACTIVE_PER_SESSION)
+        self.stats.trt_init_errors = dict(_TRT_INIT_ERRORS)
 
         # Resolve embedder mode. ONNX is the default; "fairseq" is opt-in via
         # config and degrades gracefully when the package isn't installed.

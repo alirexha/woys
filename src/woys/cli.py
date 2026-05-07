@@ -295,9 +295,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     s = engine.stats
     print("---- results ----")
     # v0.8.0-rc4 — surface the inference path explicitly so silent
-    # fallbacks (rc2 corruption bug) can never hide again. If the
-    # user asked for subprocess but it isn't running, that's a
-    # bug; print it loudly. last_error captures the rationale.
+    # fallbacks (rc2 corruption bug) can never hide again.
     if engine.cfg.inference_subprocess:
         if s.child_pid is not None:
             print(f"  inference path   : SUBPROCESS (child pid={s.child_pid})")
@@ -305,6 +303,21 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
             print("  inference path   : IN-PROCESS (subprocess requested but NOT running!)")
     else:
         print("  inference path   : IN-PROCESS (legacy, by config)")
+    # v0.8.1 — per-session TRT status. Show which sessions actually
+    # use TRT EP and which fell back to CUDA EP because TRT init
+    # failed (e.g. RMVPE FP16 STFT, RVC Int64 binding edge cases).
+    if engine.cfg.use_tensorrt:
+        active = s.trt_active_for or {}
+        if active:
+            for model_name, is_trt in sorted(active.items()):
+                tag = "TRT" if is_trt else "CUDA (TRT init failed)"
+                print(f"  trt[{model_name}] : {tag}")
+            for model_name, err in sorted(s.trt_init_errors.items()):
+                print(f"  trt error[{model_name}]: {err[:100]}...")
+        else:
+            print("  tensorrt         : enabled but no sessions loaded yet")
+    else:
+        print("  tensorrt         : disabled by config")
     print(f"  player backend   : {engine._player_backend or 'unknown'}")
     print(f"  chunks_processed : {s.chunks_processed}")
     print(f"  avg total e2e    : {s.avg_total_ms:.1f} ms")
