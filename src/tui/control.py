@@ -247,15 +247,30 @@ def send_command(cmd: str, timeout: float = 30.0) -> str:
     path = control_socket_path()
     if not path.exists():
         return "ERR control socket not found — TUI not running?"
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.settimeout(timeout)
-            s.connect(str(path))
-            s.sendall((cmd + "\n").encode("utf-8"))
-            return s.recv(512).decode("utf-8", errors="replace").strip()
-    except (ConnectionRefusedError, FileNotFoundError):
-        # Stale socket file — server crashed or was kill -9'd.
+    # B34 / corr-022: retry briefly on ConnectionRefusedError. The TUI's
+    # bind → listen → settimeout sequence has a ~50 ms window where
+    # `path.exists()` is True but `connect()` refuses. A client racing
+    # TUI startup hit this consistently before; 3 attempts × 100 ms
+    # absorbs the race without slowing down the truly-stale-socket path
+    # noticeably.
+    last_err: BaseException | None = None
+    for _ in range(3):
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                s.settimeout(timeout)
+                s.connect(str(path))
+                s.sendall((cmd + "\n").encode("utf-8"))
+                return s.recv(512).decode("utf-8", errors="replace").strip()
+        except ConnectionRefusedError as e:
+            last_err = e
+            time.sleep(0.1)
+            continue
+        except FileNotFoundError as e:
+            last_err = e
+            break
+    if isinstance(last_err, FileNotFoundError):
         return "ERR control socket stale — TUI not running?"
+    return "ERR control socket refused — TUI not accepting connections?"
 
 
 def submit_and_wait(

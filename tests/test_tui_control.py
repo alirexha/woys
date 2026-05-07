@@ -15,6 +15,25 @@ def test_socket_path_lives_in_runtime_dir(monkeypatch) -> None:  # type: ignore[
     assert p.name == "control.sock"
 
 
+def test_socket_path_fallback_when_xdg_unset(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """B52 / test-011: when XDG_RUNTIME_DIR is unset (locked-down CI / minimal
+    Linux setups), `control_socket_path` must fall back to a per-uid path
+    under /tmp instead of crashing."""
+    import os
+
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    p = control_socket_path()
+    assert p.name == "control.sock"
+    assert str(p).startswith("/tmp/woys-")
+    assert str(os.getuid()) in str(p)
+    # And `runtime_path()` should resolve under the same fallback root.
+    from tui.control import runtime_path
+
+    rp = runtime_path("slow-chunks.txt")
+    assert rp.name == "slow-chunks.txt"
+    assert str(rp).startswith("/tmp/woys-")
+
+
 def test_round_trip_toggle_and_pitch(tmp_path: Path) -> None:
     state = {"running": False, "pitch": 0}
 
