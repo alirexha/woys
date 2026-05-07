@@ -1390,3 +1390,85 @@ invisible. Post-rc4, it dominated the next debug cycle.
 Rule for future audits: ship the instrumentation BEFORE or
 ALONGSIDE the fix. Never afterwards. The fix may be wrong; the
 counter that proves it wrong is the load-bearing artifact.
+
+## 23. v0.9.0 — Fix 1 (ORT IO binding) deferred as a null result on this stack
+
+The v0.9.x brief (`V0_9_X_AUTONOMOUS.md`) listed three fixes; Fix 1
+was "port `scripts/bench_iobinding.py` into `engine._infer`" with
+the v0.8.0 reviewer's expected "10-30% inference win." Empirical
+measurement on the actual hardware (RTX 2070 Mobile + RVC v2_16k +
+ORT 1.22 + ContentVec-f + RMVPE wrapped) refuted that prediction:
+
+```
+chunk=0.15s, 200 passes (warm=20):
+  BASELINE     avg=27.59  p50=21.18  p95=46.10  p99=48.50  max=48.84  ms
+  IOBINDING    avg=28.03  p50=21.51  p95=48.62  p99=49.98  max=51.60  ms
+  Δavg = -0.44 ms (-1.6%)
+
+chunk=0.10s, 200 passes (warm=20):
+  BASELINE     avg=27.38  p50=20.86  p95=46.80  p99=49.02  max=49.36  ms
+  IOBINDING    avg=27.60  p50=21.20  p95=47.03  p99=49.53  max=49.85  ms
+  Δavg = -0.22 ms (-0.8%)
+```
+
+The expected win comes from eliminating the per-call host→device
+copy of small input tensors (audio16k ~16 KB, threshold scalar,
+sid scalar) and from binding outputs on-CUDA. On this pipeline,
+those copies are µs-scale relative to ~21 ms p50 inference compute;
+the win is below noise. RVC v2_16k is small enough that compute
+dominates I/O.
+
+A 30-pass smoke run had earlier shown a -6% p99 reduction; the
+200-pass follow-up showed that signal was sample-noise. The first
+result was honest, just statistically thin. This generalizes:
+**any "X% perf win" claim on a benchmarked-once result deserves a
+200-pass second confirmation before code lands.**
+
+### Lesson — measure on the actual hardware before designing the fix
+
+The v0.8.0 review's perf-004 entry cited "ORT IO binding is a known
+win on this class of pipeline; impact requires measurement." The
+brief promoted that to "10-30% inference win" without re-measuring.
+On the hardware the user actually runs, the prediction was wrong.
+
+The bench file `scripts/bench_iobinding.py` had been on disk since
+2026-05-06 — predating the v0.8.0 review by a day — and was never
+run as part of the perf-004 reasoning. Twenty seconds of `python
+scripts/bench_iobinding.py --passes 200` would have shown the null
+result and saved the brief from prescribing a fix that would have
+landed for no measurable user benefit.
+
+Generalization for v0.9.x and beyond: **for any "perf-N% win" entry
+on the fix list, run the bench (or write one) BEFORE the fix is
+scoped.** Predicate-first, fix-second.
+
+### Why Fix 1 wasn't shipped anyway as code-quality
+
+The IO binding port is ~50 LOC across `_infer`, hot-swap rebinding,
+and a parity test. Even if the perf gain is null, one might argue
+shipping it as a code-quality refactor is worth it. Three counter-
+arguments:
+
+1. The brief's mission is "attacking different root causes of
+   cuts/lag in real Telegram use." A null-perf refactor doesn't
+   attack a cause; it adds review surface for no user benefit.
+2. The hot-swap rebinding adds a new failure mode (binding becomes
+   stale across `_rvc` swap). Even with a parity test gate, it's
+   one more thing that can go wrong, for no reward.
+3. The brief explicitly authorizes deferral on dead ends: "If a
+   fix turns out to be a dead end on this stack, document why in
+   LESSONS.md, move on. Don't ship broken code. Don't fake the
+   gate." Adding code with no measurable benefit fits "fake the
+   gate" if the gate's predicate (10-30% win) is what motivates
+   shipping.
+
+If a future RVC variant (e.g., a 40k-rate v2 with larger feats) or
+a future ORT version with redesigned IO binding makes the win real,
+the bench file is still there to re-measure. The implementation
+stays on standby, not shipped.
+
+### What this means for the v0.9.0 release
+
+rc1 is now Fix 2 (native PipeWire client). rc2 is Fix 3
+(mitigations doc). rc3 / final tag combines both. Fix 1 is
+documented in this lesson and dropped from the v0.9.0 scope.
