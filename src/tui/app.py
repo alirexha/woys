@@ -167,6 +167,13 @@ class VCClientApp(App[int]):
                 sola_search_ms=self.cfg.sola_search_ms,
                 sola_context_ms=self.cfg.sola_context_ms,
                 input_gain_db=self.cfg.input_gain_db,
+                # v0.7.0-rc4 — these three were on EngineConfig from
+                # v0.6.9 / rc1 but never plumbed through AppConfig, so
+                # user overrides in `config.toml` were silently
+                # ignored. See `docs/16-audit/synthesis.md`.
+                input_gate_dbfs=self.cfg.input_gate_dbfs,
+                input_gate_hysteresis_ms=self.cfg.input_gate_hysteresis_ms,
+                prefer_pw_cat=self.cfg.prefer_pw_cat,
             )
         )
         self.no_pw_setup = no_pw_setup
@@ -228,7 +235,17 @@ class VCClientApp(App[int]):
                 f"avg_total_ms={s.avg_total_ms:.1f} "
                 f"avg_inf_ms={s.avg_inference_ms:.1f} "
                 f"max_total_ms={s.max_total_ms:.1f} "
-                f"late_chunks={s.late_chunks}/{s.chunks_processed}"
+                f"late_chunks={s.late_chunks}/{s.chunks_processed} "
+                # v0.7.0-rc4 — surface the previously-invisible
+                # silent-drop counters. Reading these post-session
+                # tells the user which mechanism actually fired.
+                f"gated={s.gated_chunks} "
+                f"input_overflows={s.input_overflows} "
+                f"nan_chunks={s.nan_chunks} "
+                f"sola_fallback={s.sola_fallback_count} "
+                f"sola_drain_ms={s.sola_drain_ms:.1f} "
+                f"queue_full={s.queue_full_events} "
+                f"dropped={s.dropped_chunks}"
             )
         if cmd == "SLOW":
             # v0.6.9 round 5 — dump slow_chunk_log to a file the user can cat.

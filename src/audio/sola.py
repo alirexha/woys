@@ -82,21 +82,24 @@ def _hann_fade(n: int) -> tuple[NDArrayF32, NDArrayF32]:
     return fade_out, fade_in
 
 
-def _best_offset(tail: NDArrayF32, head: NDArrayF32, search: int, threshold: float) -> int:
+def _best_offset(
+    tail: NDArrayF32, head: NDArrayF32, search: int, threshold: float
+) -> tuple[int, bool]:
     """Find the integer shift `k` (within ±search) that maximizes the
     normalized correlation between `tail[-overlap:]` and `head[k : k + overlap]`.
 
-    Returns 0 if the peak correlation falls below `threshold` (silence /
-    de-correlated content). The caller treats 0 as the "centered" fallback.
+    Returns `(offset, fell_back)`. `fell_back=True` means the peak
+    correlation was below `threshold` (silence / de-correlated content)
+    and `offset` is `0` regardless of which shift won.
     """
     overlap = len(tail)
     if overlap == 0 or len(head) < overlap + 2 * search:
-        return 0
+        return 0, True
 
     # Normalize tail once.
     tail_norm = float(np.linalg.norm(tail))
     if tail_norm < 1e-6:
-        return 0
+        return 0, True
 
     best_offset = 0
     best_corr = -np.inf
@@ -113,7 +116,9 @@ def _best_offset(tail: NDArrayF32, head: NDArrayF32, search: int, threshold: flo
             best_corr = corr
             best_offset = k
 
-    return best_offset if best_corr >= threshold else 0
+    if best_corr >= threshold:
+        return best_offset, False
+    return 0, True
 
 
 class SOLAStream:
@@ -139,9 +144,22 @@ class SOLAStream:
         # The "kept tail" carries the *unfaded* end of the previous emit so we
         # can correlate against it next time. We store length=crossfade_samples.
         self._prev_tail: NDArrayF32 | None = None
+        # v0.7.0-rc4 — counters for the per-call output drain. When
+        # `_best_offset` picks any offset other than `-search`, the
+        # algorithm's natural output is short by `search + offset`
+        # samples vs the optimum. Untracked, this drains the downstream
+        # output buffer at a buffer-size-independent rate (~7 ms/sec at
+        # chunk=0.15 with 18 % fallback rate per audit lens 03). We now
+        # zero-pad the shortfall to keep output ≈ input length and
+        # surface the totals so woys-diag / woys status can attribute
+        # cuts to SOLA fallback drain rather than to the output buffer.
+        self.fallback_count: int = 0
+        self.cumulative_drain_samples: int = 0
 
     def reset(self) -> None:
         self._prev_tail = None
+        self.fallback_count = 0
+        self.cumulative_drain_samples = 0
 
     @property
     def context_samples(self) -> int:
@@ -173,8 +191,9 @@ class SOLAStream:
         # Need at least crossfade + 2*search samples in the new chunk to do
         # a meaningful correlation; otherwise fall back to centered overlap.
         head_needed = cf + 2 * cfg.search_samples
+        fell_back = False
         if new_audio.shape[0] >= head_needed:
-            offset = _best_offset(
+            offset, fell_back = _best_offset(
                 self._prev_tail,
                 new_audio[:head_needed],
                 cfg.search_samples,
@@ -182,6 +201,7 @@ class SOLAStream:
             )
         else:
             offset = 0
+            fell_back = True
 
         # Aligned head: the part of new_audio that overlaps with prev_tail.
         head_start = cfg.search_samples + offset if new_audio.shape[0] >= head_needed else 0
@@ -209,6 +229,29 @@ class SOLAStream:
         self._prev_tail = new_tail[-cf:].copy()
 
         out: NDArrayF32 = np.concatenate([crossfaded, body]).astype(np.float32, copy=False)
+
+        # v0.7.0-rc4 — pad fallback shortfall. When `_best_offset` picks
+        # `offset != -search` (either fallback or just a non-optimal
+        # alignment), the natural output is `search + offset` samples
+        # short of the optimum. Untracked, this drains the downstream
+        # output buffer at chunk_seconds-search/chunk_seconds rate during
+        # any sustained voicing burst that doesn't beat corr_threshold.
+        # Zero-padding the shortfall keeps output ≈ input length; the
+        # alternative (let the buffer drain) was hypothesised by the
+        # audit synthesis as an independent contributor to the persistent
+        # cuts. The pad is a small click at the body→pad boundary, but
+        # the next chunk's crossfade smooths it; cumulative drain on the
+        # other hand caused audible mid-utterance dropouts and was the
+        # P0 we're closing.
+        expected_len = new_audio.shape[0] - cf
+        if expected_len > 0 and out.shape[0] < expected_len:
+            shortfall = expected_len - out.shape[0]
+            self.cumulative_drain_samples += shortfall
+            if fell_back:
+                self.fallback_count += 1
+            pad = np.zeros(shortfall, dtype=np.float32)
+            out = np.concatenate([out, pad]).astype(np.float32, copy=False)
+
         return out
 
     def flush(self) -> NDArrayF32:

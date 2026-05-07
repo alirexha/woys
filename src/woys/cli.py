@@ -245,6 +245,13 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         output_process_time_ms=cfg.output_process_time_ms,
         embedder=cfg.embedder,
         input_gain_db=cfg.input_gain_db,
+        # v0.7.0-rc4 — pre-rc4 these silently fell back to the
+        # dataclass defaults, so `woys diag` was always running
+        # the rc1+ defaults regardless of what the user had in
+        # `config.toml`. See `docs/16-audit/synthesis.md`.
+        input_gate_dbfs=cfg.input_gate_dbfs,
+        input_gate_hysteresis_ms=cfg.input_gate_hysteresis_ms,
+        prefer_pw_cat=cfg.prefer_pw_cat,
     )
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path
@@ -272,6 +279,21 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     print(f"  player xruns     : {s.xruns}  (pacat-only — pw-cat does not report)")
     print(f"  queue-full events: {s.queue_full_events}")
     print(f"  player restarts  : {s.pacat_restarts}")
+    # v0.7.0-rc4 — silent-drop counters previously invisible to woys-diag.
+    # `gated_chunks` is the input-gate fire count; `input_overflows` is
+    # mic-side ring underruns; `nan_chunks` is RVC NaN-sanitize fires;
+    # `sola_fallback_count` / `sola_drain_ms` is SOLA's per-call
+    # length-shortfall. Each one is a previously-unobservable cuts
+    # contributor; together with `dropped_chunks` they cover every
+    # silence-emit path the audit `docs/16-audit/synthesis.md` catalogued.
+    print(f"  input overflows  : {s.input_overflows}")
+    print(f"  gated chunks     : {s.gated_chunks}  (input gate fired)")
+    print(f"  nan chunks       : {s.nan_chunks}  (RVC vocoder NaN sanitize)")
+    print(
+        f"  sola fallbacks   : {s.sola_fallback_count}  "
+        f"(drain padded: {s.sola_drain_ms:.1f} ms cumulative)"
+    )
+    print(f"  dropped chunks   : {s.dropped_chunks}  (inference exceptions)")
     if s.last_error:
         print(f"  last_error       : {s.last_error}")
 

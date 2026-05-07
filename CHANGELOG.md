@@ -4,6 +4,143 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc4] — 2026-05-07 — Stop tuning the wrong layer; bundle four root-cause fixes from the audit
+
+User audibly rejected rc3 in Telegram — same character as rc2 and rc1.
+Three release candidates of `output_latency_ms` tuning produced a flat
+audible response, which empirically rules that variable out as the
+dominant cause. A 9-agent parallel audit (`docs/16-audit/synthesis.md`)
+identified four upstream P0 mechanisms the buffer ladder could never
+reach. rc4 lands all four together with the missing instrumentation
+to attribute future cuts honestly.
+
+### Why the buffer ladder failed
+
+Lens 05 of the audit refuted the "module-loopback at 200 ms" hypothesis
+definitively — woys uses `module-null-sink + module-remap-source`, and
+the remap-source has 0 µs latency. The output_latency_ms knob was
+tuning a buffer downstream of where the cuts originate. Lens 08
+confirmed via the existing rc2 sweep captures (six WAVs we'd had on
+disk for a day) that cuts are sample-exact zeros, voice-correlated,
+~40 ms quantized, and flat across the 180–320 ms output_latency sweep
+— the fingerprint of an upstream silence-emit, not a downstream
+underrun.
+
+### The four P0 fixes
+
+1. **Input gate threshold + hysteresis** (lens 06 / S1, audit's
+   smoking-gun candidate). The v0.6.9 input gate fired on intra-speech
+   RMS dips at -55 dBFS, emitting a full chunk of zeros directly to
+   the writer — bypassing SOLA, both resamplers, and inference, and
+   incrementing zero counters. -55 dBFS is only ~6 dB below typical
+   QuadCast room ambient; brief dips between syllables, on consonant
+   onsets, and on fricatives routinely cross it.
+   - Default `input_gate_dbfs`: **-55 → -75** (well below room ambient).
+   - New `input_gate_hysteresis_ms = 200`: gate must observe ≥200 ms
+     of continuously-below-threshold input before firing. Voice
+     transients no longer trigger zero-emission; only sustained
+     silence does.
+   - Bug fix: `input_gate_dbfs` was on `EngineConfig` but never in
+     `AppConfig`'s forwarded fields — user overrides in
+     `~/.config/woys/config.toml` were silently ignored. The on-disk
+     `input_gate_dbfs = -200.0` alireza set during the rc3 falsifier
+     never reached the engine. rc4 plumbs it through.
+
+2. **SOLA fallback shortfall** (lens 03). When `_best_offset` picks
+   any offset other than `-search` (fallback path or non-optimal
+   alignment), the natural per-call output is `search` samples short
+   of the optimum. Untracked, this drains the downstream output buffer
+   at ~7 ms/sec at chunk=0.15 with 18 % fallback rate — a
+   buffer-size-INDEPENDENT mechanism that mechanism-perfectly explains
+   the flat A/B/C audible response. rc4 zero-pads the shortfall in
+   `audio/sola.py` so output stays length-stable, and exposes the
+   total drain as `sola_drain_ms`.
+
+3. **PortAudio overflow flag dropped** (lens 01 F1, engine.py:1490).
+   `data, _ = in_stream.read(chunk_mic)` discarded the `overflowed`
+   flag PortAudio returns on mic-side ring underruns. rc4 captures it
+   as `input_overflows`. Pre-rc4 every mic-side drop was completely
+   unobservable.
+
+4. **`prefer_pw_cat` sleeper from rc1** (lens 09). rc1 flipped pw-cat
+   back on with hand-wavy "smaller chunks dodge the v0.6.7 race"
+   reasoning that didn't address the race mechanism. The user's audible
+   symptom — sample-exact zeros, ~40 ms quantized — matches v0.6.7's
+   documented per-quantum gap pattern more closely than pacat's
+   underrun pattern. rc4 reverts to pacat. `prefer_pw_cat` was also
+   missing from `AppConfig`'s forwarded fields, so even if the user
+   wanted to opt back in there was no on-disk surface; rc4 adds it.
+
+### New instrumentation (so the next debug cycle isn't blind)
+
+The audit found that of 13 silence-emit paths and 20 except blocks in
+the engine, **only 2 were honestly counted** (`dropped_chunks`,
+`queue_full_events`). rc4 adds five new counters surfaced in
+`woys diag` output and the TUI STATUS reply:
+
+- `input_overflows` — sd.InputStream ring underruns
+- `gated_chunks` — input gate fires (post-hysteresis)
+- `nan_chunks` — RVC vocoder NaN-sanitize fires
+- `sola_fallback_count` — SOLA correlation-search fallbacks
+- `sola_drain_ms` — cumulative ms of zero-pad SOLA emitted to keep
+  output length-stable
+
+After running rc4 in Telegram, `woys diag` will tell us which
+mechanism actually fired — the next iteration is data-driven instead
+of hypothesis-driven.
+
+### Migration
+
+`config_schema_version` bumped 9 → 10:
+- `input_gate_dbfs == -55.0` (rc1+ default sentinel) → -75.0
+- `prefer_pw_cat == True` (rc1+ default sentinel) → False
+- Cascading from earlier schemas works as before.
+- Explicit non-default values (e.g. `input_gate_dbfs = -200.0`,
+  `prefer_pw_cat = false`) are preserved.
+
+`AppConfig` gains three forwarded fields:
+- `input_gate_dbfs`
+- `input_gate_hysteresis_ms` (new at rc4)
+- `prefer_pw_cat`
+
+### What rc4 still requires
+
+Real-mic Telegram test. Then read `woys diag` (or the TUI status line)
+to see which of `gated_chunks`, `nan_chunks`, `sola_fallback_count`,
+`input_overflows` incremented most. Whichever one dominated is the
+P0 we shipped against; if cuts persist, the dominant remaining
+mechanism is now visible in numbers and we iterate from there. Do
+NOT tag v0.7.0 yet — the post-rc4 measurement is the ship gate.
+
+### Audit artifacts
+
+The full audit lives in `docs/16-audit/`:
+- `00-brainstorm.md` — pre-audit hypothesis seed
+- `01-signal-path.md` through `10-diagnostic-self-audit.md` — 9 agents'
+  per-lens findings
+- `synthesis.md` — ranked P0/P1/P2 with falsifiable tests
+- `waveform-evidence/` — analysis of the rc2 sweep captures + a
+  user-runnable Telegram capture script
+
+### Tests
+
+- `tests/test_v070_migration.py::test_rc3_users_pulled_forward_to_rc4` —
+  schema-9 → schema-10 transition for `input_gate_dbfs` and
+  `prefer_pw_cat`, top-level + profiles.
+- `tests/test_v070_migration.py::test_rc4_explicit_gate_overrides_preserved` —
+  `input_gate_dbfs = -200.0` and `prefer_pw_cat = false` are NOT
+  bumped (they're not the rc1+ default sentinel).
+- `tests/test_sola.py::test_sola_pads_fallback_shortfall_to_input_length` —
+  fallback chunk emits the expected length and increments counters.
+- `tests/test_sola.py::test_sola_no_drain_on_clean_alignment` — no
+  drain on periodic input where the search finds the optimum.
+- `tests/test_sola.py::test_sola_reset_clears_fallback_counters` —
+  reset() wipes the per-session counters.
+- `_best_offset` signature changed from `int` to `tuple[int, bool]`;
+  existing tests updated.
+- `tests/test_v068_polish.py` pin still asserts `output_latency_ms ==
+  280` (rc3 value) — unchanged by rc4.
+
 ## [0.7.0rc3] — 2026-05-07 — Pull rc2's output buffer further back; this is the last rung
 
 User audibly rejected rc2's `output_latency_ms = 220` in real-world
