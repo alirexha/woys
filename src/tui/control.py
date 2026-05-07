@@ -50,12 +50,33 @@ from pathlib import Path
 logger = logging.getLogger("woys.control")
 
 
-def control_socket_path() -> Path:
+def _runtime_dir() -> Path:
+    """Resolve the user's runtime dir for woys ephemera (control socket,
+    slow-chunk log, etc.). Prefers XDG_RUNTIME_DIR (mode 0700 by spec);
+    falls back to /tmp/woys-<uid>/ for systems that don't set it."""
     base = os.environ.get("XDG_RUNTIME_DIR")
-    root = Path(base) if base else Path("/tmp") / f"woys-{os.getuid()}"
-    out = (Path(root) / "woys" / "control.sock") if base else (root / "control.sock")
+    if base:
+        return Path(base) / "woys"
+    return Path("/tmp") / f"woys-{os.getuid()}"
+
+
+def control_socket_path() -> Path:
+    out = _runtime_dir() / "control.sock"
     out.parent.mkdir(parents=True, exist_ok=True)
     return out
+
+
+def runtime_path(name: str) -> Path:
+    """Return `<runtime_dir>/<name>` and ensure the parent exists.
+
+    B13 / corr-012 / sec-002: replaces predictable `/tmp/woys-*` paths
+    that were symlink-attackable on multi-user systems. XDG_RUNTIME_DIR
+    is mode 0700 by the systemd-logind contract, so the symlink TOCTOU
+    surface closes.
+    """
+    rt = _runtime_dir()
+    rt.mkdir(parents=True, exist_ok=True)
+    return rt / name
 
 
 HandlerFn = Callable[[str], str]

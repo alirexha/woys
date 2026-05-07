@@ -252,10 +252,13 @@ class VCClientApp(App[int]):
             # v0.6.9 round 5 — dump slow_chunk_log to a file the user can cat.
             # Socket reply stays small; full breakdown lives on disk so multi-
             # line output isn't truncated by the recv buffer.
-            from pathlib import Path as _P
+            # B13 / corr-012 / sec-002: write under XDG_RUNTIME_DIR (mode 0700
+            # by spec) instead of `/tmp/woys-slow-chunks.txt` (predictable
+            # path, symlink-attackable on multi-user systems).
+            from tui.control import runtime_path
 
             log = list(self.engine.stats.slow_chunk_log)
-            out_path = _P("/tmp/woys-slow-chunks.txt")
+            out_path = runtime_path("slow-chunks.txt")
             lines = [
                 "# slow chunk log — chunks where total_ms > chunk_seconds * 1000",
                 f"# session count: {len(log)} late, "

@@ -250,6 +250,18 @@ class InferenceClient:
             if h.proc.is_alive():
                 h.proc.kill()
                 h.proc.join(timeout=1.0)
+        # B15 / corr-027: confirm the child actually exited before unlinking
+        # the shared-memory regions. mp's `proc.kill(); proc.join()` should
+        # reap the PID via the shared resource_tracker, but defensively we
+        # also poll `/proc/<pid>` to guarantee it's gone — without this,
+        # an unlink while the child still maps the shm produces a
+        # ResourceWarning (and on some kernels an OSError) that the
+        # contextlib.suppress below would swallow, leaking the segment.
+        if h.proc.pid is not None:
+            proc_path = Path(f"/proc/{h.proc.pid}")
+            wait_deadline = time.perf_counter() + 0.5
+            while proc_path.exists() and time.perf_counter() < wait_deadline:
+                time.sleep(0.01)
         # Close pipes.
         for c in (h.parent_send, h.parent_recv):
             with contextlib.suppress(Exception):
@@ -258,7 +270,10 @@ class InferenceClient:
         for shm in (h.input_shm, h.output_shm):
             with contextlib.suppress(Exception):
                 shm.close()
-            with contextlib.suppress(Exception):
+            # Narrow the suppress scope: only swallow FileNotFoundError
+            # (already-cleaned by another process / kernel), not arbitrary
+            # bugs.
+            with contextlib.suppress(FileNotFoundError):
                 shm.unlink()
         self._handles = None
 

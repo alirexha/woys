@@ -166,10 +166,10 @@ def test_safe_process_returns_none_and_bumps_counter_on_failure() -> None:
     assert "#1" in eng.stats.last_error
 
 
-def test_safe_process_logs_first_three_then_samples() -> None:
-    """First three failures log in detail; #4-#99 increment silently;
-    every 100th renews `last_error` so the TUI still reflects an
-    ongoing failure mode."""
+def test_safe_process_logs_first_three_then_circuit_breaker_fires() -> None:
+    """First three failures log in detail; #4-#49 increment silently;
+    at #50 the B14 circuit breaker fires `_stop_event` so the engine
+    exits cleanly rather than serving silence indefinitely."""
     eng = _make_engine_with_stub_inference(raise_exc=RuntimeError("boom"))
     audio = np.zeros(160, dtype=np.float32)
 
@@ -181,18 +181,47 @@ def test_safe_process_logs_first_three_then_samples() -> None:
         assert eng.stats.last_error is not None
         assert f"#{expected_n}" in eng.stats.last_error
 
-    # Failures 4-99 increment silently (last_error left from previous tick).
+    # Failures 4-49 increment silently (last_error left from previous tick).
     eng.stats.last_error = "marker"
-    for _ in range(96):  # bring dropped_chunks to 99
+    for _ in range(46):  # bring dropped_chunks to 49
         eng._safe_process_streaming_16k(audio)
-    assert eng.stats.dropped_chunks == 99
+    assert eng.stats.dropped_chunks == 49
     assert eng.stats.last_error == "marker"
+    assert not eng._stop_event.is_set()
 
-    # Failure #100 renews last_error.
+    # Failure #50 trips the circuit breaker.
     eng._safe_process_streaming_16k(audio)
-    assert eng.stats.dropped_chunks == 100
-    assert eng.stats.last_error != "marker"
-    assert "#100" in eng.stats.last_error
+    assert eng.stats.dropped_chunks == 50
+    assert eng._stop_event.is_set()
+    assert eng.stats.last_error is not None
+    assert "stopping" in eng.stats.last_error.lower()
+    assert "50 consecutive" in eng.stats.last_error
+
+
+def test_safe_process_consecutive_drops_resets_on_success() -> None:
+    """The circuit breaker only fires on truly *consecutive* failures —
+    a single successful chunk between failures resets the counter."""
+    # Stub that fails for the first 3 calls, then succeeds.
+    state = {"calls": 0}
+
+    eng = _make_engine_with_stub_inference(raise_exc=None)
+    real_proc = eng._process_streaming_16k
+
+    def flaky(audio: np.ndarray) -> np.ndarray:
+        state["calls"] += 1
+        if state["calls"] <= 3:
+            raise RuntimeError("transient")
+        return real_proc(audio)
+
+    eng._process_streaming_16k = flaky  # type: ignore[method-assign]
+    audio = np.full(160, 0.5, dtype=np.float32)
+
+    for _ in range(3):
+        eng._safe_process_streaming_16k(audio)
+    assert eng._consecutive_drops == 3
+    eng._safe_process_streaming_16k(audio)  # success
+    assert eng._consecutive_drops == 0
+    assert not eng._stop_event.is_set()
 
 
 def test_safe_process_passes_through_on_success() -> None:
