@@ -4,6 +4,89 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc8] — 2026-05-07 — Inference tail-chunk capture (instrumentation only); no behavior change
+
+rc7's `gc.disable()` was a real win on the typical case (inference
+p50 65.7 → 39.9 ms in alireza's Telegram diag) but the tail spike
+did NOT move (p99 was 97.5 → 95.9; max was 110.4 → 110.0). The
+spread *widened* because GC was a uniform tax on the typical case;
+the tail is a different mechanism with different cause.
+
+rc8 is pure instrumentation to find that mechanism. **No behavior
+change. No fix.** rc9 fixes whatever rc8's data reveals.
+
+### What changed
+
+`src/audio/engine.py`:
+- `EngineStats` gains `tail_chunk_log: list[dict]`. Capped at 50.
+- `_run_loop` captures a tail-chunk entry whenever `inf_ms > 2× p50
+  of the recent inference deque` (gated to wait for ≥16 prior
+  samples so the threshold is stable). Each entry records:
+  - `chunk_idx`, `inf_ms`, `inf_p50_ref` (the threshold at capture
+    time)
+  - `cv_ms`, `rmvpe_ms`, `rvc_ms` (per-session breakdown)
+  - `audio16_len` (the actual model-input length — varies due to
+    soxr resample-stream emit jitter)
+  - `mic_read_ms` (correlate with mic-side cadence)
+  - `input_rms` (correlate with voicing energy)
+
+`src/woys/cli.py`:
+- `cmd_diag` prints the captured tail log at end-of-session, one
+  line per entry. Empty list = no chunks crossed the 2× threshold
+  (which is rare and itself informative).
+
+### What did NOT change
+
+- No defaults bumped. No migration. No version-tied config.
+- No tests changed.
+- No fix attempted. The cuDNN config swap (option C from the user's
+  rc8 candidate list) was deferred — that's a guess that risks
+  autotune-lump regression at startup. rc8 measures first, rc9
+  fixes whatever is actually causing the tail.
+- No new deps. No `pynvml` for inline GPU temp/clock — that would
+  bias the timing of the chunk we're observing. Use `nvidia-smi
+  --loop=1` in another terminal during the test (runbook below).
+
+Per-call cost: when tail-capture fires (rare), one `sorted()` of a
+≤32-element deque + a dict construction. ~50 µs. Below noise.
+
+### What rc8 still requires
+
+Real-mic Telegram test. While diag runs, **also run nvidia-smi in a
+second terminal**:
+
+    nvidia-smi --query-gpu=temperature.gpu,clocks.current.graphics,clocks.current.memory,power.draw \
+               --format=csv -l 1
+
+Watch for temperature spikes / clock drops during the diag window.
+Then `woys diag --duration 30` produces the per-stage percentiles
+PLUS the tail-chunk log.
+
+The next rc's target depends on what the tail chunks have in common:
+
+- **All slow chunks have the same `audio16_len`** → input shape
+  triggers a different cuDNN algo path. Fix in rc9: pre-warm
+  broader shape range + maybe switch to EXHAUSTIVE.
+- **`rvc_ms` dominates the tail (>> cv_ms / rmvpe_ms)** → the RVC
+  vocoder is the variable session. Fix: investigate vocoder-
+  specific hardware path (NSF source module).
+- **Slow chunks correlate with high `input_rms`** → voicing
+  intensity drives compute (rare but possible).
+- **Slow chunks correlate with mic_read_ms spikes** → mic-side
+  pressure spilling into engine timing.
+- **No common signature + nvidia-smi shows clock drops at the
+  matching wall-times** → GPU thermal/clock is the cause; fix is
+  RT priority + maybe `nvidia-smi --lock-gpu-clocks`.
+- **No common signature, GPU clock stable** → CUDA stream
+  contention from another process (KDE compositor, picom). Fix:
+  pin CUDA stream or RT priority on the engine main thread.
+
+### Verification
+
+98/98 fast tests pass; mypy --strict clean; ruff format clean.
+
+DO NOT auto-tag.
+
 ## [0.7.0rc7] — 2026-05-07 — Disable Python GC during the engine's lifetime; attack the inference tail spike
 
 rc6's per-stage instrumentation pinned the source of the live
