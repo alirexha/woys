@@ -25,10 +25,20 @@ from __future__ import annotations
 import sys
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
-if TYPE_CHECKING:
-    pass
+
+def _ensure_tui_path() -> None:
+    """Make `tui.control` importable when `woys tray` is invoked directly.
+
+    The cli.py dispatcher already inserts `src/` into sys.path before any
+    subcommand runs; this helper exists for `python -m woys.tray` and for
+    `_engine_status` being called from a test that didn't go through cli.
+    """
+    repo_root = Path(__file__).resolve().parent.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
 
 _ICON_SIZE = 64
@@ -54,8 +64,7 @@ def _make_icon_image(running: bool) -> Any:
 def _engine_status() -> tuple[bool, str]:
     """Ping the TUI control socket. Returns (running, raw_reply)."""
     try:
-        repo_root = sys.path[0]
-        sys.path.insert(0, str(repo_root))
+        _ensure_tui_path()
         from tui.control import send_command
 
         reply = send_command("STATUS", timeout=0.5)
@@ -65,6 +74,7 @@ def _engine_status() -> tuple[bool, str]:
 
 
 def _on_toggle(_icon: Any, _item: Any) -> None:
+    _ensure_tui_path()
     from tui.control import send_command
 
     send_command("TOGGLE")

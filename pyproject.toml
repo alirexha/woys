@@ -62,11 +62,6 @@ dev = [
     "mypy>=1.13",
     "py-spy>=0.3.14",
 ]
-# fairseq is needed for the PyTorch hubert/contentvec embedder (recon §9).
-# It's notoriously brittle on modern Python; isolate as an extra so the rest
-# of the install can succeed even if fairseq fails. Try `pip install fairseq`
-# only if needed for embedder fallback.
-fairseq = ["fairseq>=0.12"]
 # pyworld is only needed for harvest/dio f0 detectors (RMVPE/Crepe/Fcpe don't
 # need it). Optional — installs C extensions, sometimes painful.
 worldpitch = ["pyworld>=0.3.4"]

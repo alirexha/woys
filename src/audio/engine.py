@@ -174,11 +174,12 @@ class EngineConfig:
     sid: int = 0
     threshold: float = 0.3
 
-    # Embedder selection (v0.2.0):
-    #   "onnx"    — direct ORT contentvec-f.onnx call (default, fastest, no torch+fairseq)
-    #   "fairseq" — upstream FairseqHubert PyTorch path; needs the [fairseq] extra installed.
-    # Misconfiguration / missing fairseq → fall back to "onnx" with a warning,
-    # never crash the engine. (Brief Phase A.)
+    # Embedder selection. Only "onnx" is supported (direct ORT contentvec-f.onnx
+    # call). The fairseq PyTorch path was removed in v0.8.0 — it had no tests,
+    # was opt-in only via the now-deleted [fairseq] extra, and the
+    # `extract_features()[0]` indexing would have broken on fairseq API drift
+    # (corr-002). The field stays in EngineConfig for backwards-compat with
+    # existing config.toml files (any value other than "onnx" raises early).
     embedder: str = "onnx"
 
     # Routing
@@ -820,36 +821,6 @@ class _StreamResampler:
         return np.asarray(out, dtype=np.float32).reshape(-1)
 
 
-class _FairseqEmbedder:
-    """Wrapper that lazy-loads FairseqHubert; tracks the active mode for stats."""
-
-    def __init__(self, hubert_path: Path) -> None:
-        # Imports are deferred until extract() is called so users without the
-        # `[fairseq]` extra never pay the torch import cost.
-        import torch
-        from fairseq import checkpoint_utils  # type: ignore[import-not-found]
-
-        models, _, _ = checkpoint_utils.load_model_ensemble_and_task([str(hubert_path)], suffix="")
-        model = models[0]
-        model.eval()
-        if torch.cuda.is_available():
-            model = model.to("cuda:0")
-        self._torch = torch
-        self.model = model
-        self.dev = next(model.parameters()).device
-
-    def extract(self, audio_np: NDArrayF32) -> NDArrayF32:
-        torch = self._torch
-        with torch.no_grad():
-            feats_t = torch.from_numpy(audio_np.reshape(1, -1)).to(self.dev)
-            padding_mask = torch.zeros(feats_t.shape, dtype=torch.bool, device=self.dev)
-            logits = self.model.extract_features(
-                source=feats_t, padding_mask=padding_mask, output_layer=12
-            )
-            out = logits[0].detach().to(torch.float32).cpu().numpy()
-        return out  # type: ignore[no-any-return]
-
-
 class RvcSessionPool:
     """Per-path cache of `ort.InferenceSession` objects.
 
@@ -986,11 +957,9 @@ class RealtimeEngine:
         # Default 16k matches the amitaro-only assumption v0.4.x baked in.
         self._rvc_output_sr: int = 16_000
 
-        # Active embedder mode after _ensure_sessions(). Either "onnx" or
-        # "fairseq" — falls back from "fairseq" to "onnx" automatically if
-        # the fairseq import or model load fails (Phase A spec).
+        # Active embedder mode. Only "onnx" is supported (v0.8.0 removed the
+        # fairseq path); kept as an attribute because diag/CLI displays it.
         self.active_embedder: str = "onnx"
-        self._fairseq: _FairseqEmbedder | None = None
 
         # SOLA streaming state (Phase B). v0.5.0 fix: SOLA operates at the
         # OUTPUT rate (model_sr — varies per voice: 16k for amitaro, 40k for
@@ -1087,29 +1056,17 @@ class RealtimeEngine:
         self.stats.trt_active_for = dict(_TRT_ACTIVE_PER_SESSION)
         self.stats.trt_init_errors = dict(_TRT_INIT_ERRORS)
 
-        # Resolve embedder mode. ONNX is the default; "fairseq" is opt-in via
-        # config and degrades gracefully when the package isn't installed.
-        if self.cfg.embedder == "fairseq" and self._fairseq is None:
-            hubert_path = MODELS_DIR / "hubert_base.pt"
-            try:
-                if not hubert_path.exists():
-                    raise FileNotFoundError(
-                        f"hubert_base.pt missing at {hubert_path} — "
-                        "run `scripts/download_weights.py` to fetch it"
-                    )
-                self._fairseq = _FairseqEmbedder(hubert_path)
-                self.active_embedder = "fairseq"
-                print(f"[engine] embedder=fairseq (hubert_base.pt @ {hubert_path})")
-            except Exception as e:
-                msg = (
-                    f"fairseq embedder unavailable ({type(e).__name__}: {e}); "
-                    "falling back to ONNX contentvec"
-                )
-                print(f"[engine] {msg}")
-                self.stats.last_error = msg
-                self.active_embedder = "onnx"
-        else:
-            self.active_embedder = "onnx"
+        # Resolve embedder mode. v0.8.0 removed the fairseq path — only "onnx"
+        # is supported. Any non-"onnx" value in config is reported and the
+        # engine falls back to onnx (so old config.toml files don't crash).
+        if self.cfg.embedder != "onnx":
+            msg = (
+                f"unknown embedder {self.cfg.embedder!r}; v0.8.0 only supports "
+                f'"onnx". Falling back.'
+            )
+            print(f"[engine] {msg}")
+            self.stats.last_error = msg
+        self.active_embedder = "onnx"
 
     @staticmethod
     def _auto_pick_fp16(fp32_path: Path, *, allow: bool) -> Path:
@@ -1328,9 +1285,7 @@ class RealtimeEngine:
     # ---- inference ----------------------------------------------------------
 
     def _extract_feats(self, audio16k: NDArrayF32) -> NDArrayF32:
-        """Embedder dispatch — see `EngineConfig.embedder` and `active_embedder`."""
-        if self.active_embedder == "fairseq" and self._fairseq is not None:
-            return self._fairseq.extract(audio16k.astype(np.float32, copy=False))
+        """Embedder dispatch (always ONNX contentvec since v0.8.0)."""
         assert self._cv is not None
         # Cast input to whatever dtype this contentvec ONNX expects (fp16 or fp32).
         in_dtype = np.float16 if "float16" in self._cv_input_dtype else np.float32
