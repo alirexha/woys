@@ -4,6 +4,138 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.8.0rc1] — 2026-05-07 — Multiprocessing inference; close the LESSONS §19 threading tax
+
+The v0.7.0 rc series exhausted code-only knobs against the inference
+tail (rc7 gc.disable, rc9 broader pre-warm, rc10 cuDNN EXHAUSTIVE,
+rc11 SCHED_FIFO, rc12 ORT memory) and bottomed out at p99 ≈ 85 ms
+with a writer_jitter ≈ 79 ms / xrun rate ~1.7 / s on this hardware.
+The rc12 postmortem (`docs/16-audit/13-rc10-12-findings.md`)
+narrowed the cause: the engine's `vcclient-engine` daemon thread
+ran inference alongside the writer / watchdog / stderr-reader
+threads, all contending for the GIL during numpy ops between ONNX
+sessions. Tight-loop inference (no daemon threads) hit p50 = 21 ms
+on the same hardware — a ~23 ms threading tax.
+
+**v0.8.0 closes the threading tax by running inference in a child
+process with its own CUDA context.** Parent's audio I/O thread no
+longer competes for the GIL.
+
+### Architecture
+
+- `src/audio/inference_worker.py` — child entry point. Loads cv +
+  rmvpe + rvc ONNX sessions, applies all rc7–rc12 wins
+  (gc.disable, EXHAUSTIVE cuDNN, kSameAsRequested arena, max
+  workspace, SCHED_FIFO when allowed, broader pre-warm covering
+  every soxr-emitted shape). Owns the inference loop forever;
+  doesn't spawn per-call.
+- `src/audio/inference_client.py` — parent-side wrapper. Spawns
+  the child via `multiprocessing` `spawn` start method (NOT fork —
+  CUDA contexts don't survive fork), creates two `SharedMemory`
+  regions for input/output arrays (zero-copy via numpy buffer
+  protocol), creates two simplex Pipes for control + small
+  metadata. Handles graceful shutdown, child crash + restart,
+  and parent-death watchdog (child exits when `os.getppid() == 1`).
+- `src/audio/engine.py` — `RealtimeEngine.start()` spawns the
+  client when `cfg.inference_subprocess=True` (default). Pulls
+  rvc_output_sr / is_half / active_embedder from the child's
+  ready response. `_infer()` delegates to `client.infer()`,
+  populates `EngineStats` from the per-call timings the child
+  reports. `_maybe_swap_model()` delegates to `client.swap_model()`
+  on subprocess swaps. `stop()` tears down the client cleanly.
+
+### IPC overhead
+
+Pickle serializes only the small control dict
+(`{"cmd": "infer", "input_shape": tuple, "f0_up_key": int, ...}`)
+— audio arrays go through SharedMemory zero-copy. Per-call
+overhead measured ~5 ms on this host (well under the 25 ms p50
+target).
+
+### Verification under contested GPU
+
+`woys diag --seconds 30` ran in CC's autonomous loop while alireza
+had CS2 running on the same GPU (3.5 GB VRAM, ~50% compute load
+shared). Side-by-side same-conditions A/B:
+
+```
+                   in-process     subprocess    Δ
+  p50 inference    70.6 ms         68.7 ms     tied
+  writer_jitter    92.3 ms         26.8 ms    −71%
+  xruns / 30 s     42              1          −98%
+  queue_full       127             125        tied
+```
+
+**Inference latency is tied between modes** because the GPU is
+externally contested (CS2 takes a chunk of the time-slice).
+**writer_jitter and xruns dramatically improved** — exactly the
+expected effect of moving inference out of the parent's thread
+schedule. The audio I/O loop now produces output at consistent
+cadence even when inference takes longer than chunk_seconds, and
+the writer thread has clean GIL access to drain pacat.
+
+### Targets vs reality (with CS2 running)
+
+| Target | Hit? | Notes |
+|---|---|---|
+| p50 inference ≤ 25 ms | NO (68 ms) | GPU-contention bound today |
+| p99 inference ≤ 50 ms | NO (220 ms) | GPU-contention bound today |
+| writer_jitter ≤ 20 ms | CLOSE (27) | from 92 — within noise of target |
+| xruns ≤ 2 / 30 s | YES (1) | met decisively |
+
+Tight-loop predicted p50 ≈ 21 ms with quiet GPU. **The inference
+targets need a quiet GPU** to validate. With CS2 closed, expected
+p50 ≈ 25–30 ms (subprocess inference + ~5 ms IPC overhead) and
+p99 should drop in proportion.
+
+### What stayed
+
+All rc7–rc12 wins are preserved:
+- rc7 gc.disable() — both parent AND child (child has its own
+  toggle via `EngineConfig.inference_subprocess_disable_gc`)
+- rc8 tail_chunk_log
+- rc9 broader pre-warm — runs inside the child during startup
+- rc10 cuDNN EXHAUSTIVE — child's session config
+- rc11 SCHED_FIFO RT priority — both parent engine thread AND
+  child main thread
+- rc12 kSameAsRequested arena + max workspace — child's session
+  config
+
+### What did NOT change
+
+- `EngineConfig.inference_subprocess: bool = True` flag exposes
+  an emergency escape: `inference_subprocess=False` → legacy
+  in-process path, used by tests (test_embedder, test_voice_quality,
+  test_engine_sola_integration, test_pacat_health) that need direct
+  access to `_infer` etc.
+- No `config_schema_version` bump — the new field has a sensible
+  default, no migration needed for existing configs.
+
+### What rc1 still requires
+
+Real-mic Telegram test **with CS2 closed** (or any other
+GPU-heavy workload). Then `woys diag --seconds 30`:
+
+- inference p50 should drop from in-process baseline (44 ms with
+  quiet GPU) to ~25–30 ms.
+- writer_jitter should stay ≤ 30 ms.
+- xruns should stay ≤ 2.
+- Audible cuts should be gone.
+
+If audible cuts persist with quiet GPU and good numbers: tag
+v0.8.0 + start v0.8.1 (TensorRT EP).
+
+If audible cuts persist with bad inference numbers: profile the
+IPC overhead via `scripts/profile_engine.py` (existing helper from
+rc6). Likely candidates: pickle for metadata, sched_yield()
+between recv and inference, or a missed sync.
+
+### Verification
+
+98/98 fast tests pass; mypy --strict clean; ruff format clean.
+
+DO NOT auto-tag. Telegram verdict + diag dump determine ship.
+
 ## [0.7.0rc12] — 2026-05-07 — ORT arena + cudnn workspace tweaks; null result, GPU clock variance confirmed as the dominant cause
 
 ### Background — GPU clock data captured during rc11 diag
