@@ -115,6 +115,42 @@ DEFAULT_RMVPE = MODELS_DIR / "rmvpe_wrapped.onnx"
 DEFAULT_CONTENTVEC = MODELS_DIR / "contentvec-f.onnx"
 
 
+# B9 / arch-004 / arch-005 — single source of truth for "this EngineConfig
+# field is user-visible". AppConfig's forwarded set, profiles._PROFILE_FIELDS,
+# vcprofile.py snapshot keys, and the migration code's allowlist all derive
+# from this. New EngineConfig field added without listing it here will fail
+# tests/test_engine_config_drift.py — that's the design.
+#
+# Excluded categories:
+#   - System-only knobs that need an engine restart anyway (session_pool_size,
+#     cpu_affinity_core, realtime_priority, eager_warmup, pacat_writer_queue_size,
+#     prime_silence_seconds, pacat_watchdog_interval_s, threshold).
+#   - Path-typed model defaults (rvc_model, rmvpe_model, contentvec_model) —
+#     handled with bespoke str↔Path conversion at the AppConfig boundary.
+#   - Subprocess / TRT toggles (inference_subprocess, use_tensorrt) —
+#     experimental, intentionally kept out of the user-tunable surface.
+USER_VISIBLE_ENGINE_FIELDS: tuple[str, ...] = (
+    "f0_up_key",
+    "sid",
+    "chunk_seconds",
+    "mic_rate",
+    "sink_rate",
+    "sink_name",
+    "monitor",
+    "output_latency_ms",
+    "output_process_time_ms",
+    "embedder",
+    "sola_enabled",
+    "sola_crossfade_ms",
+    "sola_search_ms",
+    "sola_context_ms",
+    "input_gain_db",
+    "input_gate_dbfs",
+    "input_gate_hysteresis_ms",
+    "prefer_pw_cat",
+)
+
+
 @dataclass
 class EngineConfig:
     rvc_model: Path = DEFAULT_RVC_MODEL
@@ -991,6 +1027,14 @@ class RealtimeEngine:
         # each chunk. The TUI / socket sets it via `request_model_swap`.
         self._pending_model_swap: Path | None = None
         self._swap_lock = threading.Lock()
+        # B5 / corr-003: TUI poll sites previously checked
+        # `_pending_model_swap is None` to know "swap done" — but the slot was
+        # cleared at the START of `_maybe_swap_model`, before the actual work.
+        # So the TUI replied "done" while the worker was still loading the new
+        # model (~600 ms cold-cache cuDNN tune). Add an Event that's set AFTER
+        # the swap completes; TUI waits on this instead.
+        self._swap_done = threading.Event()
+        self._swap_done.set()  # initial state = idle, no swap in flight
         # Promoted so _maybe_swap can flush the SOLA tail through the same
         # pacat process the worker already owns. v0.5.2: protected by
         # `_pacat_lock` so the watchdog can swap the handle atomically.
@@ -1215,6 +1259,7 @@ class RealtimeEngine:
         """
         with self._swap_lock:
             self._pending_model_swap = Path(path)
+            self._swap_done.clear()  # signal "swap in flight" to TUI poll sites
 
     def _maybe_swap_model(self) -> None:
         """Worker-side hook: if a swap was queued, flush SOLA tail then
@@ -1225,6 +1270,8 @@ class RealtimeEngine:
             self._pending_model_swap = None
         if target is None:
             return
+        # The actual swap work happens below. `_swap_done` stays cleared
+        # until we either complete the work or hit a fatal error path.
         # Drain SOLA's held-back tail so the last ~50 ms of the *old* voice
         # plays out before the new session takes over. Tail is at the OLD
         # model's output rate, not necessarily 16 kHz. v0.5.2: route through
@@ -1243,8 +1290,10 @@ class RealtimeEngine:
         # v0.8.0 — subprocess swap path. Child owns the session pool;
         # tell it to swap, wait for the new RVC sample-rate response,
         # then rebuild the output resampler in the parent if the rate
-        # changed. Falls back to the in-process path on
-        # InferenceError (child went away mid-swap).
+        # changed. On InferenceError (child died, swap timed out) we
+        # used to silently `return` and let the engine continue running
+        # in a state where every chunk drops (B6 / corr-004). Now: stop
+        # the engine cleanly and surface the error to the TUI.
         if self._inf_client is not None:
             from audio.inference_client import InferenceError
 
@@ -1257,13 +1306,20 @@ class RealtimeEngine:
                     self._rebuild_sola_for_rate(new_sr)
                 self._rvc_output_sr = new_sr
                 self.reset_streaming_state()
+                self._swap_done.set()
                 return
             except InferenceError as e:
-                self.stats.last_error = f"subprocess swap failed: {e}"
-                # Fall through to legacy path so the engine isn't
-                # broken — but in subprocess mode the in-process
-                # _rvc isn't loaded, so the legacy path will fail.
-                # Return without doing anything; user can retry.
+                # B6 / corr-004: do NOT silently fall through. The in-process
+                # _rvc isn't loaded in subprocess mode, so the legacy path
+                # would fail every chunk. Better to stop and surface the
+                # error than serve silence indefinitely.
+                self.stats.last_error = (
+                    f"subprocess swap failed: {e}. Stopping engine — "
+                    f"flip `inference_subprocess=false` to fall back to "
+                    f"in-process inference."
+                )
+                self._swap_done.set()
+                self._stop_event.set()
                 return
 
         # Legacy in-process path. Existing _cv (contentvec) and _rmvpe
@@ -1281,6 +1337,9 @@ class RealtimeEngine:
             self._resampler_out = _StreamResampler(new_sr, self.cfg.sink_rate)
         self._rvc_output_sr = new_sr
         self.reset_streaming_state()
+        # B5: signal "swap complete" AFTER all the work. TUI poll sites
+        # waiting on `_swap_done.is_set()` now correctly observe done-state.
+        self._swap_done.set()
 
     # ---- inference ----------------------------------------------------------
 

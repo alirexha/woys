@@ -300,15 +300,12 @@ class VCClientApp(App[int]):
 
                 self.call_from_thread(apply_main)
 
-                # Wait for the engine worker to actually apply the swap.
-                deadline = time.time() + 10.0
-                while time.time() < deadline:
-                    if (
-                        self.engine._pending_model_swap is None
-                        and Path(str(self.engine.cfg.rvc_model)) == new_path.resolve()
-                    ):
-                        break
-                    time.sleep(0.02)
+                # B5 / corr-003: wait on `_swap_done` Event (set AFTER the
+                # worker finishes the swap), not on `_pending_model_swap` —
+                # the latter is cleared at the START of the swap, so the
+                # JOB used to report "done" while the worker was still
+                # cuDNN-tuning for ~600 ms.
+                self.engine._swap_done.wait(timeout=10.0)
                 self._swap_in_flight = None
 
             jid = self._jobs.submit(do_swap)
@@ -323,13 +320,8 @@ class VCClientApp(App[int]):
                     self._apply_profile_named(target)
 
                 self.call_from_thread(apply_main)
-                # Mirror the swap-complete poll above so the JOB reflects the
-                # *audio path's* swap, not just the config write.
-                deadline = time.time() + 10.0
-                while time.time() < deadline:
-                    if self.engine._pending_model_swap is None:
-                        break
-                    time.sleep(0.02)
+                # B5: same wait-on-Event pattern as MODEL above.
+                self.engine._swap_done.wait(timeout=10.0)
                 self._swap_in_flight = None
 
             jid = self._jobs.submit(do_profile)
@@ -415,11 +407,8 @@ class VCClientApp(App[int]):
                 self._apply_profile_named(next_name)
 
             self.call_from_thread(apply_main)
-            deadline = time.time() + 10.0
-            while time.time() < deadline:
-                if self.engine._pending_model_swap is None:
-                    break
-                time.sleep(0.02)
+            # B5: wait on the swap-done Event, not the request flag.
+            self.engine._swap_done.wait(timeout=10.0)
             self._swap_in_flight = None
 
         self._jobs.submit(_runner)
