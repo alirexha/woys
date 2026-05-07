@@ -103,3 +103,77 @@ def test_rc4_drift_regression(name: str) -> None:
     assert name in USER_VISIBLE_ENGINE_FIELDS
     assert name in _PROFILE_FIELDS
     assert name in {f.name for f in fields(AppConfig)}
+
+
+# ---- v0.9.0 add-on: forwarding-site drift ------------------------------------
+# B9 + B50 caught the case where AppConfig defaults and EngineConfig defaults
+# diverged. They did NOT catch the case where the explicit `EngineConfig(...)`
+# construction sites in cli.py / app.py forget to forward a USER_VISIBLE field.
+# That's exactly how rc4's `prefer_pw_cat` drift (and v0.9.0-rc1's
+# `prefer_native_pw` drift, caught the same way) became real cuts. AST-walk
+# the source files and assert every site forwards every field.
+
+import ast
+
+
+def _engine_config_call_kwargs(source: str) -> list[set[str]]:
+    """Return the kwarg names from each `EngineConfig(...)` call in `source`."""
+    tree = ast.parse(source)
+    out: list[set[str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = None
+            if isinstance(func, ast.Name) and func.id == "EngineConfig":
+                name = func.id
+            elif isinstance(func, ast.Attribute) and func.attr == "EngineConfig":
+                name = func.attr
+            if name == "EngineConfig":
+                kwargs = {kw.arg for kw in node.keywords if kw.arg is not None}
+                out.append(kwargs)
+    return out
+
+
+# Fields that are intentionally not forwarded by callers (they use the
+# EngineConfig default; the user can't tune them via config.toml).
+# Keep this list tight — anything here is a deliberate exception, not
+# a forgotten plumb.
+_NOT_FORWARDED_AT_CONSTRUCTION = {
+    "mic_rate",
+    "sink_rate",
+    "sink_name",
+}
+
+
+@pytest.mark.parametrize(
+    "source_path",
+    [
+        REPO / "src" / "woys" / "cli.py",
+        REPO / "src" / "tui" / "app.py",
+    ],
+)
+def test_engine_config_construction_forwards_user_visible_fields(
+    source_path: Path,
+) -> None:
+    """Every `EngineConfig(...)` call in cli.py / app.py must explicitly
+    forward every USER_VISIBLE field that's expected to be plumbed (i.e.
+    not in `_NOT_FORWARDED_AT_CONSTRUCTION`). This catches the rc4-class
+    drift bug at the construction site, not just the default-value layer.
+    """
+    from audio.engine import USER_VISIBLE_ENGINE_FIELDS
+
+    expected_fields = set(USER_VISIBLE_ENGINE_FIELDS) - _NOT_FORWARDED_AT_CONSTRUCTION
+
+    src = source_path.read_text()
+    call_kwarg_sets = _engine_config_call_kwargs(src)
+    if not call_kwarg_sets:
+        pytest.skip(f"no EngineConfig() calls found in {source_path.name}")
+
+    for i, kwargs in enumerate(call_kwarg_sets):
+        missing = expected_fields - kwargs
+        assert not missing, (
+            f"{source_path.name}: EngineConfig() call #{i + 1} is missing "
+            f"forwarded fields: {sorted(missing)}\n"
+            f"This is the v0.9.0-rc1 prefer_native_pw drift class — every "
+            f"user-visible field must be plumbed at every construction site."
+        )

@@ -62,6 +62,7 @@ class AppConfig:
     input_gate_dbfs: float = _E.input_gate_dbfs
     input_gate_hysteresis_ms: float = _E.input_gate_hysteresis_ms
     prefer_pw_cat: bool = _E.prefer_pw_cat
+    prefer_native_pw: bool = _E.prefer_native_pw
     # TUI / app-only settings (not in EngineConfig).
     autostart_engine: bool = False
     enable_dbus: bool = True  # reserved for future D-Bus wiring (currently unused)

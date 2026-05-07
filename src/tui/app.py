@@ -174,6 +174,7 @@ class VCClientApp(App[int]):
                 input_gate_dbfs=self.cfg.input_gate_dbfs,
                 input_gate_hysteresis_ms=self.cfg.input_gate_hysteresis_ms,
                 prefer_pw_cat=self.cfg.prefer_pw_cat,
+                prefer_native_pw=self.cfg.prefer_native_pw,
             )
         )
         self.no_pw_setup = no_pw_setup
