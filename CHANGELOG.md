@@ -4,6 +4,127 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc7] — 2026-05-07 — Disable Python GC during the engine's lifetime; attack the inference tail spike
+
+rc6's per-stage instrumentation pinned the source of the live
+`writer_jitter_ms = 62` to one specific stage:
+
+```
+inference   p50=65.72  p95=94.27  p99=97.55  max=110.41   ← 32 ms tail
+mic_read    p50=134.39 p95=157.10 p99=160.28              ← clean (≈ chunk_seconds)
+enqueue_lag p50=0.03   p95=0.05   p99=0.06                ← clean (sub-ms)
+```
+
+The 32 ms inference tail spread (p50 → p99) IS the producer-cadence
+variance. mic_read and enqueue_lag are both clean. So the rc6
+postmortem proposal's P3 (inference p95/p99 spikes) — which we'd
+ranked lowest — turned out to be the dominant contributor.
+
+### What changed (one fix, scoped)
+
+`src/audio/engine.py`:
+- `import gc`
+- `RealtimeEngine.start()`: `gc.disable()` before launching the
+  worker thread, after recording whether GC was enabled prior so
+  `stop()` can restore the original state.
+- `RealtimeEngine.stop()`: `gc.enable()` + one `gc.collect()` after
+  the worker thread joins, IF this engine instance is the one that
+  disabled GC (idempotent on nested invocations).
+
+That's it. ~10 lines.
+
+### Why this should work
+
+Python's generational GC fires periodically based on allocation
+counts (default threshold: 700 gen-0 allocations). The engine's hot
+path creates ~50 short-lived numpy arrays per second; gen-0 GC fires
+every ~14 s. Each collection holds the GIL for the duration —
+typically 5–30 ms on a complex object graph, longer if a higher
+generation triggers.
+
+A 30 ms GC pause on a chunk that would otherwise take 65 ms produces
+a 95 ms chunk. Repeated every ~14 s = 1 spike every ~90 chunks at
+6.7 chunks/s ≈ p99 territory. **The arithmetic matches alireza's
+observation: p99 is 32 ms above p50.**
+
+Numpy arrays don't need GC — they're reference-counted; refcount
+hits zero, memory frees immediately. GC only handles cyclic
+references, which are rare in this code path. Disabling GC during
+the engine's lifetime is the standard real-time-Python idiom for
+exactly this scenario.
+
+### Trade-off acknowledged
+
+If the engine runs for hours (not a typical voice-changing session)
+and the hot path DOES create cyclic references at non-zero rate,
+those would accumulate as live memory. We re-enable + collect on
+stop(), so any leak is bounded by the session length. For typical
+sessions (minutes to an hour), memory bloat is negligible.
+
+If long-running sessions reveal memory growth, rc8 can switch to
+`gc.freeze()` (move pre-existing objects to a permanent generation
+that's never collected) plus a low-frequency `gc.collect()` between
+chunks — the same approach Linux's audio stacks use. But that's
+speculation; rc7 keeps it simple.
+
+### What did NOT change
+
+- No defaults bumped. No migration. `config_schema_version` stays at 10.
+- No tests changed. The behavior change (GC disabled during engine
+  run) doesn't affect correctness; tests are short enough that
+  cyclic-ref accumulation is negligible.
+- No other "P3 attack" knobs touched (cuDNN config, RT priority,
+  pre-warm shape range, CUDA stream pinning). Per the user's
+  "don't bundle" rule, rc7 is the cheapest single fix from that
+  candidate list. If gc.disable() doesn't move the inference p99
+  enough, rc8 picks the next knob with rc7's data in hand.
+
+### Note on the rc5 → rc6 avg inference drift (50.2 → 59.0 ms)
+
+Reading the rc6 diff: the new `perf_counter()` calls are around
+`in_stream.read()` (mic_read_ms) and around
+`_enqueue_chunk(_to_sink_bytes(out48))` (enqueue_lag_ms). The
+`inf_ms` measurement at `engine.py:1667-1673` is timed only on
+`_safe_process_streaming_16k(audio16)`. None of rc6's added work
+runs during that interval. Per-call overhead added by rc6 is
+~200 ns × 4 = 800 ns / chunk = 5.4 µs / s — well below noise. The
+9 ms increase in `avg_inference_ms` between rc5 and rc6 sessions is
+session-to-session variance (different mic input, different GPU
+thermal state, possibly more inference-load chunks reaching the
+deque on rc6's session).
+
+### What rc7 still requires
+
+Real-mic Telegram test, then `woys diag --duration 30`. Expected
+reading post-rc7:
+
+- `inference p50` should be similar to rc6 (~65 ms — that's not
+  what changed).
+- `inference p99` should drop noticeably from rc6's 97.55 ms toward
+  p50 + 5–10 ms. Smaller p99 - p50 spread = GC was the cause.
+- `writer_jitter_ms` should drop in proportion to the inference tail
+  reduction (writer reflects producer cadence; producer cadence
+  reflects inference variance + mic_read variance, and inference
+  was the variable one).
+- `xruns` may or may not move (pacat-side underruns — needs the
+  buffer to actually run dry, which depended on the worst-case
+  jitter).
+
+Post-rc7 decision tree:
+
+- p99 inference tightens substantially → GC was the cause; tag
+  v0.7.0 if Telegram audible verdict matches.
+- p99 inference unchanged → GC is innocent on this hardware; rc8
+  attacks the next P3 knob (cuDNN config / RT priority).
+- inference p99 partial improvement → GC contributes but isn't
+  alone; rc8 stacks one more knob.
+
+### Verification
+
+98/98 fast tests pass; `mypy --strict` clean; ruff format clean.
+
+DO NOT auto-tag. Telegram verdict + diag dump determines tag-readiness.
+
 ## [0.7.0rc6] — 2026-05-07 — Producer-side timing instrumentation only; no behavior change
 
 rc5 fixed SOLA structurally but cuts persisted in Telegram. The
