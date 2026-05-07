@@ -322,20 +322,23 @@ class EngineStats:
     #                        non-zero rate during real-speech is
     #                        evidence for the C-class hypothesis from
     #                        the audit.
-    #   sola_fallback_count — SOLA's correlation search fell below
-    #                        threshold and the algorithm zero-padded
-    #                        the shortfall instead of letting the
-    #                        output buffer drain. Reflects how often
-    #                        chunks would have shrunk if rc4's pad
-    #                        weren't there.
-    #   sola_drain_ms      — total samples (in ms) of zero-padding
-    #                        SOLA emitted to keep output ≈ input
-    #                        length. Cumulative since session start.
+    #   sola_fallback_count — SOLA's alignment search peak correlation
+    #                        fell below `corr_threshold`; the algorithm
+    #                        used `offset = 0` (centered, no shift). In
+    #                        rc5 this no longer affects emit length —
+    #                        SOLA always emits `chunk_n` samples per call
+    #                        regardless of fallback — so this counter is
+    #                        purely a "how often is the search giving up"
+    #                        diagnostic, not a cuts driver.
+    #
+    # rc4's `sola_drain_ms` (cumulative ms of zero-padding) was removed
+    # in rc5 because the pad path itself was removed. SOLA emits
+    # constant-size chunks now (`docs/16-audit/11-rc4-postmortem.md`
+    # §"Proposed rc5 scope"). Drain is structurally zero by construction.
     input_overflows: int = 0
     gated_chunks: int = 0
     nan_chunks: int = 0
     sola_fallback_count: int = 0
-    sola_drain_ms: float = 0.0
 
     # Rolling latency window for the TUI.
     _recent_inference: deque[float] = field(default_factory=lambda: deque(maxlen=32))
@@ -1130,11 +1133,18 @@ class RealtimeEngine:
         out_len = full_out.shape[0]
         ratio = out_len / max(in_len, 1)
         # Drop the leading "context" portion in the model output. Keep the
-        # last `ctx_drop_out` samples as the part that overlaps with the
-        # previous emit + the new chunk's worth of audio.
-        ctx_drop_in = max(
-            history_len - cf, 0
-        )  # samples of pure history (no overlap with prev emit)
+        # last `ctx_drop_out` samples — sized to match SOLA's contract:
+        #   chunk_n + cf + search   when SOLA is enabled (rc5 — gives the
+        #                           alignment search positional slack so
+        #                           emit length stays constant)
+        #   chunk_n + cf            when SOLA is disabled (legacy path —
+        #                           emit length variable, no slack needed)
+        # The pre-rc5 implementation always trimmed to chunk_n + cf even
+        # with SOLA enabled; the search then ate samples from the input
+        # to find alignment, shrinking the emit. See
+        # `docs/16-audit/11-rc4-postmortem.md` for why that was wrong.
+        sola_search = self._sola_input_cfg.search_samples if self._sola is not None else 0
+        ctx_drop_in = max(history_len - cf - sola_search, 0)
         ctx_drop_out = round(ctx_drop_in * ratio)
         emitted_region = full_out[ctx_drop_out:]
 
@@ -1656,21 +1666,15 @@ class RealtimeEngine:
                     # never raises out of the loop on a transient pacat fault.
                     self._enqueue_chunk(self._to_sink_bytes(out48))
 
-                    # v0.7.0-rc4 — pull SOLA's per-call drain counters
-                    # into engine stats. SOLA pads its fallback
-                    # shortfall with zeros (see `audio/sola.py`) so the
-                    # output stream stays length-stable; the counters
-                    # tell us how often the pad fired and how many ms
-                    # of zero-pad were emitted cumulatively. Voice-
-                    # activity-correlated SOLA fallback counts are
-                    # evidence for the SOLA-fallback class of cuts.
+                    # v0.7.0-rc5 — pull SOLA's threshold-fallback count
+                    # into engine stats. The rc4 `sola_drain_ms` (zero-
+                    # pad bookkeeping) is gone because the pad itself is
+                    # gone — SOLA emits constant-size chunks now. A
+                    # non-zero fallback count means the alignment search
+                    # is giving up (peak corr below threshold); it's a
+                    # diagnostic, not a cuts driver.
                     if self._sola is not None:
                         self.stats.sola_fallback_count = self._sola.fallback_count
-                        self.stats.sola_drain_ms = (
-                            self._sola.cumulative_drain_samples * 1000.0 / self._sola.cfg.rate
-                            if self._sola.cfg.rate > 0
-                            else 0.0
-                        )
 
                     # Optional self-monitor → host default output.
                     if monitor_stream is not None:

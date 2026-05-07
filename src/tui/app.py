@@ -236,14 +236,15 @@ class VCClientApp(App[int]):
                 f"avg_inf_ms={s.avg_inference_ms:.1f} "
                 f"max_total_ms={s.max_total_ms:.1f} "
                 f"late_chunks={s.late_chunks}/{s.chunks_processed} "
-                # v0.7.0-rc4 — surface the previously-invisible
-                # silent-drop counters. Reading these post-session
-                # tells the user which mechanism actually fired.
+                # v0.7.0-rc4/rc5 — silent-drop counters. rc5 dropped
+                # `sola_drain_ms` (zero-pad bookkeeping) — see
+                # `docs/16-audit/11-rc4-postmortem.md`. `sola_fallback`
+                # now means "alignment search gave up" only; it doesn't
+                # affect emit length under rc5's constant-output SOLA.
                 f"gated={s.gated_chunks} "
                 f"input_overflows={s.input_overflows} "
                 f"nan_chunks={s.nan_chunks} "
                 f"sola_fallback={s.sola_fallback_count} "
-                f"sola_drain_ms={s.sola_drain_ms:.1f} "
                 f"queue_full={s.queue_full_events} "
                 f"dropped={s.dropped_chunks}"
             )

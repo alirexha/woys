@@ -1308,3 +1308,85 @@ fp16 / pre-warm as no-ops, kept the cuDNN heuristic switch (cheap and
 removes a startup tax), and documented the threading tax as the
 v0.8.x prerequisite. The brief is a starting hypothesis; deviation is
 fine when the data is in.
+
+## 20. v0.7.0-rc1→rc5 retrospective — three meta-lessons from one bug
+
+The persistent-cuts saga ran across four release candidates before
+landing a structurally correct fix in rc5. rc1/rc2/rc3 walked
+`output_latency_ms` 80→220→280; rc4 bundled four P0 fixes from a
+9-agent audit, made things audibly worse, but produced the
+counter dump that finally diagnosed the real cause. rc5 fixed
+SOLA's per-call output contract (upstream-style constant emit
+length) and stopped there. Full chronology in
+`docs/16-audit/synthesis.md` and `docs/16-audit/11-rc4-postmortem.md`.
+
+### Lesson — sequential falsification beats bundled fixes for load-bearing bugs
+
+rc4 bundled four P0 fixes (input gate threshold + hysteresis, SOLA
+zero-pad, PortAudio overflow capture, prefer_pw_cat=False). Three
+were wrong; the SOLA pad actively made cuts worse by injecting
+35 ms / s of explicit silence. The bundle cost a full rc cycle of
+real-world test time.
+
+If each P0 had had a single-config-line falsifier (which most did),
+sequential testing would have ruled out three of them in 15-minute
+each-test passes. The user's instinct to do exactly that with the
+rc3→rc4 falsifier (`input_gate_dbfs = -200.0`) was right and we
+should have stuck with it. Bundle when the fixes are mutually-
+dependent or when the change cost dominates the test cost; don't
+bundle just because the audit's synthesis gave you a punch list.
+
+For load-bearing bugs — bugs the user evaluates by ear, not by
+counter — the marginal cost of one more test is small and the
+marginal cost of "fix that was wrong" is large.
+
+### Lesson — convergence from agents reading the same source is one signal, not three
+
+The rc4 audit's P0-1 (input gate at -55 dBFS) had three lenses
+(signal-path, concurrency, engine-internals) independently flagging
+it. The synthesis weighted that as strong convergence and ranked it
+top. The post-rc4 measurement showed `gated_chunks = 0` — the gate
+never fired at all on the user's hardware.
+
+The flaw in the weighting: all three lenses were reading the same
+code path from different angles, not three independent
+observations. It's not "three agents converged on a diagnosis"
+— it's "one diagnosis with three plausibility arguments behind
+it." That's worth less than one agent making one observation
+backed by a runtime measurement.
+
+When ranking audit findings: a single live counter beats N
+code-read plausibility arguments. The audit had no live counter
+on the gate before rc4 shipped — that should have downgraded the
+hypothesis until rc4's instrumentation gave it an empirical
+signal.
+
+### Lesson — for vendored algorithms, diff first, audit second
+
+The structurally correct rc5 SOLA contract was sitting in
+`upstream/server/voice_changer/VoiceChangerV2.py:233-285` the
+entire time. Twenty minutes of comparing our `process()` to
+upstream's would have produced rc5 directly, skipping rc4
+entirely.
+
+The audit was the right shape for novel mechanisms (the input gate
+behavior, the PipeWire publish path, the host environment); it
+was the wrong shape for an algorithm we already had a reference
+implementation of. For SOLA specifically, the right move was
+"diff against upstream" not "audit our implementation in
+isolation." Generalization: when a subsystem is vendored, the
+first question on a regression isn't "what's wrong with our code"
+— it's "have we drifted from the reference."
+
+### Bonus — instrumentation pays for itself within ONE release
+
+rc4's headline value wasn't its fixes (three were wrong) — it was
+the five new counters. The very next ship test (`woys diag` with
+real Telegram input) used those counters to falsify the audit's
+top three P0s in 10 seconds and to surface the real mechanism
+(`sola_drain_ms = 35.5 ms / s`) directly. Pre-rc4, that signal was
+invisible. Post-rc4, it dominated the next debug cycle.
+
+Rule for future audits: ship the instrumentation BEFORE or
+ALONGSIDE the fix. Never afterwards. The fix may be wrong; the
+counter that proves it wrong is the load-bearing artifact.

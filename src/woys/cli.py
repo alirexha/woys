@@ -279,21 +279,31 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     print(f"  player xruns     : {s.xruns}  (pacat-only — pw-cat does not report)")
     print(f"  queue-full events: {s.queue_full_events}")
     print(f"  player restarts  : {s.pacat_restarts}")
-    # v0.7.0-rc4 — silent-drop counters previously invisible to woys-diag.
-    # `gated_chunks` is the input-gate fire count; `input_overflows` is
-    # mic-side ring underruns; `nan_chunks` is RVC NaN-sanitize fires;
-    # `sola_fallback_count` / `sola_drain_ms` is SOLA's per-call
-    # length-shortfall. Each one is a previously-unobservable cuts
-    # contributor; together with `dropped_chunks` they cover every
-    # silence-emit path the audit `docs/16-audit/synthesis.md` catalogued.
+    # v0.7.0-rc4/rc5 — silent-drop counters previously invisible to
+    # woys-diag. rc5 dropped `sola_drain_ms` (zero-pad bookkeeping) —
+    # SOLA emits constant-size chunks now and never pads silence; see
+    # `docs/16-audit/11-rc4-postmortem.md`. `sola_fallback_count` is
+    # now a pure "alignment search gave up" diagnostic and does NOT
+    # imply audio cuts under rc5.
     print(f"  input overflows  : {s.input_overflows}")
     print(f"  gated chunks     : {s.gated_chunks}  (input gate fired)")
     print(f"  nan chunks       : {s.nan_chunks}  (RVC vocoder NaN sanitize)")
     print(
         f"  sola fallbacks   : {s.sola_fallback_count}  "
-        f"(drain padded: {s.sola_drain_ms:.1f} ms cumulative)"
+        f"(alignment search peak corr below threshold; emit length unaffected in rc5+)"
     )
     print(f"  dropped chunks   : {s.dropped_chunks}  (inference exceptions)")
+    # v0.7.0-rc5 — inference budget overrun rate. `late_chunks` is
+    # already stored; the ratio is the threading-tax visibility surface
+    # the rc4 postmortem flagged as missing. > ~0.05 means the engine
+    # routinely runs past its chunk budget — that's the v0.8.x
+    # threading-tax track, not something rc5 attempts to fix.
+    if s.chunks_processed > 0:
+        overrun = s.late_chunks / s.chunks_processed
+        print(
+            f"  overrun ratio    : {overrun:.3f}  "
+            f"({s.late_chunks}/{s.chunks_processed} chunks past budget)"
+        )
     if s.last_error:
         print(f"  last_error       : {s.last_error}")
 

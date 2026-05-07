@@ -85,15 +85,27 @@ def _hann_fade(n: int) -> tuple[NDArrayF32, NDArrayF32]:
 def _best_offset(
     tail: NDArrayF32, head: NDArrayF32, search: int, threshold: float
 ) -> tuple[int, bool]:
-    """Find the integer shift `k` (within ±search) that maximizes the
-    normalized correlation between `tail[-overlap:]` and `head[k : k + overlap]`.
+    """Find the integer shift `k` in `[0, search]` that maximizes the
+    normalized correlation between `tail[-overlap:]` and
+    `head[k : k + overlap]`.
 
     Returns `(offset, fell_back)`. `fell_back=True` means the peak
     correlation was below `threshold` (silence / de-correlated content)
-    and `offset` is `0` regardless of which shift won.
+    and `offset` is `0` in that case.
+
+    v0.7.0-rc5: switched from bidirectional `[-search, +search]` to
+    one-sided `[0, search]` to match upstream w-okada's SOLA contract
+    (`upstream/server/voice_changer/VoiceChangerV2.py:248-266`). The
+    practical effect: emit window is `head[offset : offset + chunk_n]`
+    instead of `head[search + offset : search + offset + chunk_n]`,
+    so the algorithm can produce a constant-size emit per call
+    regardless of which offset wins. Bidirectional search would let
+    us recover from "model emitted slightly early" cases too, but
+    real RVC's bias is purely toward late emission, so one-sided is
+    sufficient and matches the reference implementation.
     """
     overlap = len(tail)
-    if overlap == 0 or len(head) < overlap + 2 * search:
+    if overlap == 0 or len(head) < overlap + search:
         return 0, True
 
     # Normalize tail once.
@@ -103,9 +115,8 @@ def _best_offset(
 
     best_offset = 0
     best_corr = -np.inf
-    for k in range(-search, search + 1):
-        start = search + k  # head's first sample we read at offset k
-        slice_ = head[start : start + overlap]
+    for k in range(search + 1):
+        slice_ = head[k : k + overlap]
         if slice_.shape[0] != overlap:
             continue
         s_norm = float(np.linalg.norm(slice_))
@@ -124,135 +135,127 @@ def _best_offset(
 class SOLAStream:
     """Stateful SOLA crossfader.
 
-    Feed `process(new_audio)` one chunk at a time. The first call passes
-    its full input straight through (no history yet). Subsequent calls
-    crossfade against the saved tail from the previous output.
+    Feed `process(new_audio)` one chunk at a time. Each call returns
+    exactly `chunk_n` samples — the constant emit length. The
+    algorithm's alignment search slides the emit window inside the
+    leading `crossfade + search` samples of the input, so picking a
+    non-zero offset never shrinks the emit; the search slack lives
+    in the input, not the output.
 
-    The optional `context_samples` is *not* applied here — that's the model's
-    business. SOLAStream only knows about the *output* stream. The engine
-    is expected to:
-      - feed `context + new_chunk` into the model
-      - trim the leading context samples from the model output
-      - hand the trimmed output to `process()`
+    The contract:
+      - Engine feeds `new_audio` of length `chunk_n + crossfade + search`.
+      - First chunk: emit `new_audio[:chunk_n]`, hold the last
+        `crossfade` samples as `prev_tail`, discard the trailing
+        `search` slack (no prev_tail to align against on first call).
+      - Subsequent chunks: search `new_audio[:crossfade + search]` for
+        the offset `k ∈ [0, search]` whose `crossfade`-sample window
+        best correlates with `prev_tail`. Emit
+        `new_audio[k : k + chunk_n]`. Crossfade the leading
+        `crossfade` samples of emit with `prev_tail`. Save the new
+        `prev_tail` from the last `crossfade` samples of `new_audio`
+        (a fixed temporal position regardless of which offset won).
 
-    This keeps SOLA model-agnostic.
+    Streaming guarantee: output is causal. Latency floor is
+    `crossfade + search` (the trailing region the caller must keep
+    available for the next call's search).
+
+    Matches the upstream w-okada SOLA contract at
+    `upstream/server/voice_changer/VoiceChangerV2.py:248-285`. The
+    pre-rc5 implementation emitted `len(new_audio) - cf - search -
+    offset` samples (variable length); the rc4 zero-pad covered the
+    symptom by injecting silence and was audibly worse than letting
+    the buffer drain. rc5 fixes the math instead of padding over it.
+    See `docs/16-audit/11-rc4-postmortem.md`.
     """
 
     def __init__(self, cfg: SOLAConfig | None = None) -> None:
         self.cfg = cfg or SOLAConfig()
         self._fade_out, self._fade_in = _hann_fade(self.cfg.crossfade_samples)
-        # The "kept tail" carries the *unfaded* end of the previous emit so we
-        # can correlate against it next time. We store length=crossfade_samples.
+        # The "kept tail" carries the *unfaded* tail of the previous
+        # input so we can correlate against it next time. Length =
+        # crossfade_samples. Sourced from `new_audio[-cf:]` of the
+        # previous call (a fixed temporal position; matches upstream).
         self._prev_tail: NDArrayF32 | None = None
-        # v0.7.0-rc4 — counters for the per-call output drain. When
-        # `_best_offset` picks any offset other than `-search`, the
-        # algorithm's natural output is short by `search + offset`
-        # samples vs the optimum. Untracked, this drains the downstream
-        # output buffer at a buffer-size-independent rate (~7 ms/sec at
-        # chunk=0.15 with 18 % fallback rate per audit lens 03). We now
-        # zero-pad the shortfall to keep output ≈ input length and
-        # surface the totals so woys-diag / woys status can attribute
-        # cuts to SOLA fallback drain rather than to the output buffer.
+        # Threshold-fallback events: the alignment search's peak
+        # correlation fell below `corr_threshold`, so the algorithm
+        # used `offset = 0` (centered, no shift). Voice-correlated
+        # spikes in this counter are evidence the corr_threshold or
+        # search_ms tuning is off; they no longer indicate output drain
+        # (rc5 emits constant `chunk_n` samples per call regardless).
         self.fallback_count: int = 0
-        self.cumulative_drain_samples: int = 0
 
     def reset(self) -> None:
         self._prev_tail = None
         self.fallback_count = 0
-        self.cumulative_drain_samples = 0
 
     @property
     def context_samples(self) -> int:
         return self.cfg.context_samples
 
     def process(self, new_audio: NDArrayF32) -> NDArrayF32:
-        """Consume the next chunk's model output; return the part to emit.
+        """Consume the next chunk's model output; return `chunk_n`
+        samples to emit.
 
-        Streaming guarantee: the bytes returned are *causal* — they only
-        depend on the current and prior chunks, never on a chunk we haven't
-        seen yet. Latency floor is `crossfade_samples` (the trailing region
-        we hold back to crossfade with the next chunk).
+        `chunk_n` is implied by the input length:
+          chunk_n = len(new_audio) - crossfade_samples - search_samples
+
+        That is, the caller is expected to feed `chunk_n + cf + search`
+        samples per call. If the input is shorter than `cf + search`
+        we fall back to "hold everything as prev_tail, emit nothing"
+        (warmup case). If `chunk_n == 0` the call is also a warmup.
         """
         cfg = self.cfg
         cf = cfg.crossfade_samples
+        search = cfg.search_samples
         new_audio = np.ascontiguousarray(new_audio.astype(np.float32, copy=False))
 
-        if self._prev_tail is None:
-            # First chunk: emit everything except the trailing crossfade
-            # region (held back for next call).
-            if new_audio.shape[0] <= cf:
-                # New chunk too small to hold back a tail — emit nothing,
-                # save what we have, await the next chunk.
-                self._prev_tail = new_audio.copy()
-                return np.zeros(0, dtype=np.float32)
-            self._prev_tail = new_audio[-cf:].copy()
-            return new_audio[:-cf].astype(np.float32, copy=False)
+        # Implied chunk length given the upstream contract.
+        chunk_n = new_audio.shape[0] - cf - search
 
-        # Need at least crossfade + 2*search samples in the new chunk to do
-        # a meaningful correlation; otherwise fall back to centered overlap.
-        head_needed = cf + 2 * cfg.search_samples
-        fell_back = False
-        if new_audio.shape[0] >= head_needed:
-            offset, fell_back = _best_offset(
-                self._prev_tail,
-                new_audio[:head_needed],
-                cfg.search_samples,
-                cfg.corr_threshold,
+        if chunk_n <= 0:
+            # Input too small to extract a chunk_n emit. Hold
+            # everything (or the last cf samples if input ≥ cf) as the
+            # next prev_tail; emit nothing. The next call's input will
+            # straddle this one in the engine's history-fed model
+            # input, so saving prev_tail here keeps continuity.
+            self._prev_tail = (
+                new_audio[-cf:].copy() if new_audio.shape[0] >= cf else new_audio.copy()
             )
-        else:
-            offset = 0
-            fell_back = True
+            return np.zeros(0, dtype=np.float32)
 
-        # Aligned head: the part of new_audio that overlaps with prev_tail.
-        head_start = cfg.search_samples + offset if new_audio.shape[0] >= head_needed else 0
-        head_end = head_start + cf
-        if head_end > new_audio.shape[0]:
-            # Not enough new samples to fill an overlap region; can't crossfade.
-            # Emit prev_tail directly, save current as the new prev_tail.
-            emit = self._prev_tail.copy()
-            self._prev_tail = new_audio.copy()
+        if self._prev_tail is None:
+            # First chunk: no prev_tail to align against. Emit the
+            # leading chunk_n samples; save the next cf as prev_tail.
+            # The trailing `search` slack is unused on first call.
+            emit = new_audio[:chunk_n].astype(np.float32, copy=True)
+            self._prev_tail = new_audio[-cf:].copy()
             return emit
 
-        head = new_audio[head_start:head_end]
-        crossfaded = self._prev_tail * self._fade_out + head * self._fade_in
+        # Subsequent chunks: search for the offset in [0, search] that
+        # best aligns prev_tail with new_audio[k : k + cf].
+        offset, fell_back = _best_offset(
+            self._prev_tail, new_audio[: cf + search], search, cfg.corr_threshold
+        )
+        if fell_back:
+            self.fallback_count += 1
 
-        # Emit the crossfaded region followed by the bulk of new_audio after
-        # the overlap, holding back the new trailing crossfade for next call.
-        body_start = head_end
-        body_end = max(body_start, new_audio.shape[0] - cf)
-        body = new_audio[body_start:body_end]
-        new_tail = new_audio[max(body_start, new_audio.shape[0] - cf) :]
-        # Pad new_tail to cf samples (rare: short chunks).
-        if new_tail.shape[0] < cf:
-            pad = np.zeros(cf - new_tail.shape[0], dtype=np.float32)
-            new_tail = np.concatenate([pad, new_tail])
-        self._prev_tail = new_tail[-cf:].copy()
+        # Emit window: chunk_n samples starting at `offset`.
+        emit_start = offset
+        emit_end = offset + chunk_n
+        emit = new_audio[emit_start:emit_end].astype(np.float32, copy=True)
 
-        out: NDArrayF32 = np.concatenate([crossfaded, body]).astype(np.float32, copy=False)
+        # Crossfade the leading cf samples of emit with prev_tail. The
+        # Hann pair sums to 1, so amplitude is preserved.
+        if emit.shape[0] >= cf:
+            emit[:cf] = self._prev_tail * self._fade_out + emit[:cf] * self._fade_in
 
-        # v0.7.0-rc4 — pad fallback shortfall. When `_best_offset` picks
-        # `offset != -search` (either fallback or just a non-optimal
-        # alignment), the natural output is `search + offset` samples
-        # short of the optimum. Untracked, this drains the downstream
-        # output buffer at chunk_seconds-search/chunk_seconds rate during
-        # any sustained voicing burst that doesn't beat corr_threshold.
-        # Zero-padding the shortfall keeps output ≈ input length; the
-        # alternative (let the buffer drain) was hypothesised by the
-        # audit synthesis as an independent contributor to the persistent
-        # cuts. The pad is a small click at the body→pad boundary, but
-        # the next chunk's crossfade smooths it; cumulative drain on the
-        # other hand caused audible mid-utterance dropouts and was the
-        # P0 we're closing.
-        expected_len = new_audio.shape[0] - cf
-        if expected_len > 0 and out.shape[0] < expected_len:
-            shortfall = expected_len - out.shape[0]
-            self.cumulative_drain_samples += shortfall
-            if fell_back:
-                self.fallback_count += 1
-            pad = np.zeros(shortfall, dtype=np.float32)
-            out = np.concatenate([out, pad]).astype(np.float32, copy=False)
+        # Save new prev_tail from the END of new_audio — a fixed
+        # temporal position regardless of which offset won. The next
+        # chunk's input will overlap this region, so the next search
+        # correlates against a known location in the audio stream.
+        self._prev_tail = new_audio[-cf:].copy()
 
-        return out
+        return emit
 
     def flush(self) -> NDArrayF32:
         """Emit and clear any held-back tail. Call once on engine shutdown."""
