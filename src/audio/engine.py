@@ -1250,26 +1250,82 @@ class RealtimeEngine:
         self._thread = threading.Thread(target=self._run_loop, name="vcclient-engine", daemon=True)
         self._thread.start()
 
-    def _warmup_realtime_pipeline(self, n_chunks: int = 4) -> None:
-        """v0.6.9 — pre-run a few synthetic chunks through the *full* realtime
-        pipeline (cv → rmvpe → rvc) so cuDNN's algo cache is populated for the
-        actual shapes we feed at runtime. `RvcSessionPool.warmup` only warms
-        the rvc session; the cv and rmvpe sessions still cold-start the first
-        few real chunks otherwise.
+    def _warmup_realtime_pipeline(self, n_chunks_per_shape: int = 4) -> None:
+        """v0.6.9 — pre-run synthetic chunks through the *full* realtime
+        pipeline (cv → rmvpe → rvc) so cuDNN's algo cache is populated for
+        the actual shapes we feed at runtime. `RvcSessionPool.warmup` only
+        warms the rvc session; the cv and rmvpe sessions still cold-start
+        the first few real chunks otherwise.
+
+        v0.7.0-rc9 — extended to pre-warm EVERY unique input length
+        soxr's stream resampler can emit, not just the nominal one. The
+        rc8 tail-chunk capture pinned the inference p99=96 ms / max=110 ms
+        spike to a shape mismatch: pre-rc9 warmup ran `_infer` with
+        `chunk_n = chunk_seconds * 16000 = 2400` samples. The realtime
+        path calls `_infer` with `model_input.shape[0] = history_len +
+        audio16_len`, where `audio16_len` is whatever
+        `_StreamResampler(48k → 16k).process(7200)` emits. Soxr
+        alternates between two specific values (1957 / 2447 in alireza's
+        QuadCast 2 S session, plus the typical 2400) — every chunk with
+        a non-cached shape costs cuDNN a fallback slow path, ~80 ms
+        inference vs ~40 ms cached. See
+        `docs/16-audit/12-rc5-writer-jitter-probe.md` and the rc8
+        tail_chunk_log dump.
+
+        rc9 fix: drive a probe `_StreamResampler` with synthetic 48k
+        input, capture every unique `audio16_len` it emits, and pre-warm
+        `_infer` with `history_len + audio16_len` for each. Probe is
+        independent of the real `_resampler_in` (which doesn't exist
+        until `_run_loop` builds it anyway), so its filter state can't
+        leak into realtime.
         """
         if self._cv is None or self._rmvpe is None or self._rvc is None:
             return
-        chunk_n = round(self.cfg.chunk_seconds * 16_000)
-        if chunk_n <= 0:
+        chunk_n_mic = round(self.cfg.chunk_seconds * self.cfg.mic_rate)
+        if chunk_n_mic <= 0:
             return
+
         rng = np.random.default_rng(42)
-        # Tiny noise so RMVPE doesn't see exact-zero (which can short-circuit).
-        dummy = rng.standard_normal(chunk_n).astype(np.float32) * 0.001
-        for _ in range(n_chunks):
-            try:
-                self._infer(dummy)
-            except Exception:
-                break
+
+        # Step 1: probe soxr to enumerate the realtime shape set. Run
+        # ~20 chunks so the resampler's polyphase filter settles and we
+        # see every steady-state emit length (the alternation pattern in
+        # the rc8 dump cycles every ~10 chunks).
+        unique_audio16_lens: set[int] = set()
+        if self.cfg.mic_rate != 16_000:
+            probe = _StreamResampler(self.cfg.mic_rate, 16_000)
+            for _ in range(20):
+                dummy_48k = rng.standard_normal(chunk_n_mic).astype(np.float32) * 0.001
+                out_chunk = probe.process(dummy_48k)
+                if out_chunk.size > 0:
+                    unique_audio16_lens.add(int(out_chunk.shape[0]))
+        else:
+            # mic_rate == internal — no resample, audio16_len is fixed.
+            unique_audio16_lens.add(chunk_n_mic)
+
+        if not unique_audio16_lens:
+            # Fall back to the pre-rc9 single-shape behavior so a
+            # surprising probe failure doesn't skip warmup entirely.
+            unique_audio16_lens.add(round(self.cfg.chunk_seconds * 16_000))
+
+        # Step 2: pre-warm `_infer` with `history_len + audio16_len`
+        # for each unique shape. Matches the realtime concat at
+        # `_process_streaming_16k`. Multiple iterations per shape so
+        # cuDNN's heuristic cache settles to a stable algo choice.
+        history_len = self._sola_input_cfg.context_samples + self._sola_input_cfg.crossfade_samples
+        for audio16_len in sorted(unique_audio16_lens):
+            model_input_len = history_len + audio16_len
+            if model_input_len <= 0:
+                continue
+            dummy = rng.standard_normal(model_input_len).astype(np.float32) * 0.001
+            for _ in range(n_chunks_per_shape):
+                try:
+                    self._infer(dummy)
+                except Exception:
+                    # If one shape fails, try the rest — the realtime
+                    # path's `_safe_process_streaming_16k` will catch
+                    # any inference failure that survives warmup.
+                    break
 
     def stop(self, timeout: float = 2.0) -> None:
         self._stop_event.set()

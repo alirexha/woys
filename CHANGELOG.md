@@ -4,6 +4,104 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc9] — 2026-05-07 — Pre-warm cuDNN on every shape soxr can emit; the targeted fix for the inference tail
+
+rc8's `tail_chunk_log` produced the smoking gun. Every chunk where
+`inf_ms > 2× p50` had `audio16_len ∈ {1957, 2447}` (with one-off
+`1958/2446` neighbors). Typical fast chunks ran at audio16_len that
+wasn't logged because the pre-rc9 warmup matched neither pattern —
+it warmed `chunk_n = chunk_seconds × 16000 = 2400` directly into
+`_infer`, but realtime's `_process_streaming_16k` calls `_infer`
+with `model_input.shape[0] = history_len + audio16_len`, a shape
+soxr's `_StreamResampler` decides on each call.
+
+Verified the probe locally before shipping:
+
+```
+unique sizes: [1957, 1958, 2446, 2447]
+first 30 emits: 1958, 2446, 2447, 2447, 2446, 2447, 2447, 2446, 1958,
+                2446, 2447, 2447, 2446, 2447, 2447, 2446, 2447, 2447,
+                1957, 2447, 2446, 2447, 2447, 2446, 2447, 2447, 2446,
+                2447, 2447, 1957
+```
+
+2400 never appears. The pre-rc9 warmup was wasting effort on a shape
+that doesn't occur in realtime. cuDNN's algo cache for the four
+shapes that DO occur (1957/1958/2446/2447) was being populated by
+the realtime path itself — the FIRST encounter of each shape paid
+the heuristic-lookup cost mid-Telegram-call, manifesting as the 80–
+100 ms tail spikes alireza heard.
+
+### What changed
+
+`src/audio/engine.py: _warmup_realtime_pipeline` rewritten:
+
+1. **Probe soxr.** Build a fresh `_StreamResampler(mic_rate, 16000)`,
+   feed it 20 synthetic 48 k chunks, collect every unique
+   `audio16_len` it emits. Filter state can't leak — the probe
+   instance is local to warmup.
+2. **Pre-warm `_infer` with each shape.** For each unique
+   `audio16_len`, build a `model_input_len = history_len +
+   audio16_len` dummy and call `_infer` 4 times so cuDNN's heuristic
+   cache settles to a stable algo choice for that shape.
+3. **Fallback.** If the probe yields no shapes (degenerate `mic_rate
+   == 16000` or any unforeseen failure), fall back to the pre-rc9
+   single-shape behavior so warmup never silently skips entirely.
+
+Cost: 4 unique shapes × 4 iterations × ~50 ms per `_infer` ≈ 0.8 s
+added to engine startup. Pre-rc9 warmup was ~0.2 s. Net startup
+cost: +0.6 s. Acceptable — warmup is one-time.
+
+### What did NOT change
+
+- cuDNN config stays `HEURISTIC`. The user's `Possibly also` (switch
+  to a benchmark mode) was deferred per the no-bundling rule. If
+  rc9's broader pre-warm alone tightens the tail, we never needed
+  the config change. If it doesn't tighten enough, rc10 swaps
+  `HEURISTIC → EXHAUSTIVE` (with rc9's broader pre-warm in place,
+  EXHAUSTIVE's autotune lump is paid during warmup not realtime —
+  the lump that v0.7.0-rc1 originally rejected EXHAUSTIVE over).
+- No defaults bumped. No migration. `config_schema_version` stays
+  at 10.
+- No tests changed. Warmup runs in `start()`, isn't directly
+  unit-tested today.
+- No other code paths touched. `gc.disable()` from rc7 stays.
+  rc8's `tail_chunk_log` stays.
+
+### What rc9 still requires
+
+Real-mic Telegram test, then `woys diag --duration 30`. Expected:
+
+- `inference p99` should drop substantially from rc8's 95.9 ms
+  toward p50 + a few ms (target: ≤ 50 ms). Smaller spread = the
+  shape-mismatch hypothesis was right.
+- `tail_chunk_log` should be **empty or near-empty**. If a few
+  entries remain, examine their `audio16_len` — if they're new
+  values not in the probe's set (e.g., 1956, 2448), soxr's
+  steady-state has more shapes than 30 probe iterations captured;
+  rc10 would bump the probe count.
+- `writer_jitter_ms` should drop in proportion to the inference
+  tail reduction.
+- If audible cuts are gone: tag v0.7.0.
+
+If rc9's tail doesn't tighten:
+
+- Inspect rc9's tail_chunk_log. If `audio16_len` matches probe
+  set but inference is still slow: cuDNN's heuristic algo for
+  those shapes is genuinely slow. rc10 = `HEURISTIC →
+  EXHAUSTIVE`.
+- If `audio16_len` is a new value: probe missed it. rc10 = bump
+  probe iterations.
+- If new pattern entirely (e.g., correlated with input_rms or
+  rvc_ms dominance): different mechanism; rc10 reads the new
+  signature.
+
+### Verification
+
+98/98 fast tests pass; mypy --strict clean; ruff format clean.
+
+DO NOT auto-tag. Telegram verdict + the rc9 tail dump gates ship.
+
 ## [0.7.0rc8] — 2026-05-07 — Inference tail-chunk capture (instrumentation only); no behavior change
 
 rc7's `gc.disable()` was a real win on the typical case (inference
