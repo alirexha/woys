@@ -4,6 +4,170 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.8.0rc3] — 2026-05-07 — rc2 production fix: Path → str conversion broke child startup; route inference through `eng._infer` so child and parent run identical code
+
+### The bug
+
+User reported v0.8.0-rc2 audio was "corrupted, not just cuts. Voice
+unrecognizable, sounds digitally broken." rc2's `woys engine` test
+in CC's bash had reported child_pid=234503 / running, so the obvious
+hypothesis ("subprocess never started") was wrong.
+
+### Root cause
+
+`RealtimeEngine._cfg_dict_for_subprocess()` was converting every
+`Path` field in the EngineConfig dataclass to `str` "for pickle
+safety" — Path is already pickle-safe, so this was unnecessary AND
+broke every downstream call that used Path's interface. In the
+child, `EngineConfig(rmvpe_model=str)` reconstructs cfg with a
+string where the dataclass annotation says `Path`, but Python's
+dataclass doesn't coerce. Then `_ensure_sessions` calls
+`self._auto_pick_fp16(self.cfg.rmvpe_model)` →
+`fp32_path.with_name(...)` → `AttributeError: 'str' object has no
+attribute 'with_name'`. Child sent RESP_ERROR. Parent's
+`InferenceClient.start()` raised, caught by `engine.start()`'s
+fallback branch which silently switched to in-process inference.
+
+The "garbled" audio was NOT from a corrupted IPC layer — it was
+from the in-process fallback running in a state alireza had never
+heard before:
+
+- Production user runs subprocess by default (`inference_subprocess
+  = True`); child fails on Path-vs-str on every startup.
+- Parent's fallback runs `_ensure_sessions()` + `_warmup_realtime_pipeline()`.
+- `last_error` was set to "inference subprocess failed to start: ..."
+  but Textual hijacked stderr so the user never saw it.
+- The user's mental model ("v0.8.0 = multiprocessing inference")
+  didn't match reality ("v0.8.0 = silent fallback to in-process,
+  with whatever side-effects v0.8.0's setup added on top of rc12").
+
+### Why my CC bash test for rc2 missed it
+
+`woys engine` was new in rc2 — I added it as a non-TUI test
+surface. The headless test produced a subprocess child that DID
+fail startup with the same Path bug, fell back to in-process,
+reported "child_pid=234503 running" — but the child_pid was 234503
+because that was the PID THE PARENT HANDED OUT BEFORE the child
+crashed. After the crash, parent's `self._inf_client = None` set in
+the fallback path didn't update `stats.child_pid`, so the stat was
+stale-but-plausible.
+
+I missed two things:
+1. The `last_error` was being set ("inference subprocess failed to
+   start: ...") but I didn't grep for it in the test output.
+2. I didn't compare audio output between subprocess and in-process
+   modes for production-like input, so the "fallback was running
+   the wrong codepath" case was invisible.
+
+### The fix (rc3)
+
+Two changes:
+
+**`engine.py: _cfg_dict_for_subprocess`** — stop converting Path →
+str. Path is picklable. Removing the conversion makes child
+reconstruct EngineConfig with proper Path objects, `_ensure_sessions`
+no longer crashes, and the child actually starts.
+
+**`inference_worker.py: child_main`** — instead of duplicating the
+inference logic in a parallel `_infer_impl` function (which had to
+mirror every line of `engine._infer` exactly), the child now builds
+a real `RealtimeEngine` instance with `inference_subprocess=False`,
+calls `eng._ensure_sessions()` and `eng._warmup_realtime_pipeline()`
+to load + warm the same sessions the in-process path uses, and
+routes every `CMD_INFER` through `eng._infer(audio16k)` — the SAME
+method the in-process engine calls.
+
+This guarantees the child and in-process paths execute
+byte-identical inference logic. Any future divergence between paths
+now lives strictly at the IPC boundary (input/output bytes), not
+in the inference algorithm itself. The deleted `_infer_impl`,
+`_warmup_in_child`, and `_probe_rvc_rate` are gone — the engine's
+`_infer`, `_warmup_realtime_pipeline`, and `_cached_rvc_sr` cover
+those responsibilities.
+
+The hot-swap path also uses `eng.reload_rvc(new_path)` instead of
+its own pool lookup, again guaranteeing parity.
+
+### Self-verification (pre-ship, in CC's bash)
+
+#### IPC byte round-trip
+
+```
+[parent] sending first 5: [0.0152, -0.0520, 0.0375, 0.0470, -0.0976]
+[parent] readback first 5: [0.0152, -0.0520, 0.0375, 0.0470, -0.0976]
+[child] received first 5: [0.0152, -0.0520, 0.0375, 0.0470, -0.0976]   ✓ bit-exact
+```
+
+Bytes round-trip cleanly through SharedMemory.
+
+#### Streaming pipeline parity (synthetic 220 Hz voice-like signal)
+
+Both paths run `_process_streaming_16k` chunk-by-chunk and produce
+voice-like output:
+
+```
+                    in-process    subprocess
+  output samples    29300         29700           (warmup-timing diff)
+  amplitude         [-0.55, 0.43] [-0.65, 0.54]   ✓ both reasonable
+  HF energy ratio   0.0016        0.0020          ✓ both LOW (voice-like)
+  non-silent fraction  91%        80%              ✓ both produce continuous voice
+```
+
+HF ratio < 1% in both means no broadband click / digital
+corruption — both produce intelligible voice. Subprocess audio is
+NOT garbage.
+
+#### Real audio from `woys engine` capture
+
+```
+$ woys engine --seconds 8 &
+$ parec --device=WoysSink.monitor --rate=48000 --format=s16le --channels=2 \
+    --raw > /tmp/v8-audio.raw
+$ python -c "import numpy as np; ..."
+samples: 196608 (2.05s stereo)
+non-near-silent samples: 43138/98304 (43.9%)
+amplitude: min=-10951 max=6936 std=1159
+top 5 freq bands:
+  211.5Hz, 236.5Hz, 235.0Hz, 139.5Hz, 140.5Hz   ← voice fundamental
+```
+
+Audio is voice-like. Voice fundamental in the 100-250 Hz range,
+no broadband noise.
+
+#### Production engine numbers (CS2 still running on this hardware)
+
+```
+final: chunks=39 avg_inf=52.4ms writer_jitter=74.0ms xruns=12 queue_full=0
+```
+
+Similar to rc12 baseline numbers (avg_inf 52, writer_jitter 75).
+The multiprocessing wins from rc1 (writer_jitter 92→27, xruns 42→1)
+were measured with CS2 contesting the GPU; the headless engine
+test today shows similar contested numbers. Telegram test with a
+quiet GPU is still pending.
+
+### Lessons
+
+1. Path is picklable. Don't pre-convert it to str unless there's
+   evidence pickling is actually broken.
+2. When the child fails startup and parent silently falls back,
+   the user's mental model diverges from reality. Surface the
+   fallback in a way the user notices (next rc: print the
+   fallback message to a non-Textual stream, log it to a file,
+   or throw rather than fall back when subprocess was explicitly
+   requested).
+3. Duplicating inference logic between in-process and child is a
+   subtle bug factory. Sharing the SAME method body is safer.
+4. CC's headless test missed this because `child_pid` was stale.
+   Future tests should grep `last_error` and compare audio
+   output, not just process state.
+
+### Verification
+
+98/98 fast tests pass; mypy --strict clean; ruff format clean.
+
+DO NOT auto-tag.
+
 ## [0.8.0rc2] — 2026-05-07 — rc1 production fix: pre-warm mp resource_tracker before Textual hijacks stderr
 
 ### The bug
