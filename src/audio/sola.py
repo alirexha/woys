@@ -213,14 +213,15 @@ class SOLAStream:
         chunk_n = new_audio.shape[0] - cf - search
 
         if chunk_n <= 0:
-            # Input too small to extract a chunk_n emit. Hold
-            # everything (or the last cf samples if input ≥ cf) as the
-            # next prev_tail; emit nothing. The next call's input will
-            # straddle this one in the engine's history-fed model
-            # input, so saving prev_tail here keeps continuity.
-            self._prev_tail = (
-                new_audio[-cf:].copy() if new_audio.shape[0] >= cf else new_audio.copy()
-            )
+            # Input too small to extract a chunk_n emit. Hold the last cf
+            # samples as the next `_prev_tail` if available; otherwise
+            # reset state so the next normal chunk takes the first-chunk
+            # path (no crossfade) instead of trying to crossfade against
+            # an under-sized tail. (B22 / audio-002 — see review.)
+            if new_audio.shape[0] >= cf:
+                self._prev_tail = new_audio[-cf:].copy()
+            else:
+                self._prev_tail = None
             return np.zeros(0, dtype=np.float32)
 
         if self._prev_tail is None:
@@ -258,9 +259,19 @@ class SOLAStream:
         return emit
 
     def flush(self) -> NDArrayF32:
-        """Emit and clear any held-back tail. Call once on engine shutdown."""
+        """Emit and clear any held-back tail. Call once on engine shutdown.
+
+        B22 / audio-009: apply a linear fade-out so the tail doesn't end
+        with a hard cutoff at a non-zero amplitude — the click at session
+        end was a small but audible UX nit on every shutdown.
+        """
         if self._prev_tail is None:
             return np.zeros(0, dtype=np.float32)
-        out = self._prev_tail
+        n = self._prev_tail.shape[0]
+        if n > 1:
+            fade = np.linspace(1.0, 0.0, n, dtype=np.float32)
+            out = (self._prev_tail * fade).astype(np.float32, copy=False)
+        else:
+            out = self._prev_tail
         self._prev_tail = None
         return out

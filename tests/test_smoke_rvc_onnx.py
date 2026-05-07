@@ -7,6 +7,7 @@ no SOLA crossfade) and acts as the floor.
 
 from __future__ import annotations
 
+import sys
 import wave
 from pathlib import Path
 
@@ -22,6 +23,17 @@ MODELS = Path.home() / ".local" / "share" / "woys" / "models"
 WAV = PROJECT_ROOT / "tests" / "fixtures" / "sine_voiced_1s.wav"
 
 LATENCY_FLOOR_MS = 80.0  # Phase 1 budget for inference-only.
+
+# B24 / quality-020 / test-016: import the production f0-coarse function
+# instead of re-implementing it. Pre-v0.8.0 this test had its own copy
+# that drifted from the engine version (missed the early-exit added in
+# B56 / perf-003, for instance). Single source of truth.
+if str(PROJECT_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
+if str(PROJECT_ROOT / "src" / "server") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "src" / "server"))
+
+from audio.engine import to_pitch_coarse as _to_pitch_coarse  # noqa: E402
 
 
 def _have_models() -> bool:
@@ -47,20 +59,6 @@ def _make_session(path: Path) -> ort.InferenceSession:
         providers.append(("CUDAExecutionProvider", {"device_id": 0}))
     providers.append("CPUExecutionProvider")
     return ort.InferenceSession(str(path), sess_options=so, providers=providers)
-
-
-def _to_pitch_coarse(pitchf: np.ndarray, target_len: int) -> tuple[np.ndarray, np.ndarray]:
-    f0_min, f0_max = 50.0, 1100.0
-    f0_mel_min = 1127.0 * np.log(1 + f0_min / 700.0)
-    f0_mel_max = 1127.0 * np.log(1 + f0_max / 700.0)
-    pitch = np.zeros(target_len, dtype=np.float32)
-    n = min(len(pitchf), target_len)
-    pitch[-n:] = pitchf[:n]
-    f0_mel = 1127.0 * np.log(1 + pitch / 700.0)
-    mask = f0_mel > 0
-    f0_mel[mask] = (f0_mel[mask] - f0_mel_min) * 254 / (f0_mel_max - f0_mel_min) + 1
-    f0_mel = np.clip(f0_mel, 1.0, 255.0)
-    return np.rint(f0_mel).astype(np.int64), pitch
 
 
 @pytest.mark.gpu

@@ -329,7 +329,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
             print("  tensorrt         : enabled but no sessions loaded yet")
     else:
         print("  tensorrt         : disabled by config")
-    print(f"  player backend   : {engine._player_backend or 'unknown'}")
+    print(f"  player backend   : {engine.player_backend or 'unknown'}")
     print(f"  chunks_processed : {s.chunks_processed}")
     print(f"  avg total e2e    : {s.avg_total_ms:.1f} ms")
     print(f"  avg inference    : {s.avg_inference_ms:.1f} ms")
@@ -376,9 +376,9 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
             return float("nan")
         return float(_np.percentile(samples, p))
 
-    inf_samples = list(s._recent_inference)
-    mic_samples = list(s._recent_mic_read_ms)
-    enq_samples = list(s._recent_enqueue_lag_ms)
+    inf_samples = s.inference_samples()
+    mic_samples = s.mic_read_samples_ms()
+    enq_samples = s.enqueue_lag_samples_ms()
     print("  ---- per-stage timing (rolling window, ms) ----")
     print(
         f"  inference        p50={_pct(inf_samples, 50):6.2f}  "
