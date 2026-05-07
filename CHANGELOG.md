@@ -4,6 +4,61 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc10] — 2026-05-07 — cuDNN HEURISTIC → EXHAUSTIVE; partial win on the tail (p99 96 → 84 ms)
+
+rc9's broader pre-warm covered every shape soxr emits but
+inference p99 stayed at ~96 ms — heuristic was picking
+intrinsically slower algos for the alternating shapes (rc9 tail
+log: rvc_ms=64–72 ms for one shape group, rvc_ms=47–48 ms for
+another). EXHAUSTIVE benchmarks all algos and picks the fastest.
+
+Pre-rc10 the autotune lump (50–100 ms / first encounter) was the
+reason v0.7.0-rc1 rejected EXHAUSTIVE. rc9's broader pre-warm
+changes that — every realtime shape is exercised in
+`_warmup_realtime_pipeline` before `_run_loop` starts, so the
+benchmark cost is paid during warmup not realtime. Net startup
+cost: another ~0.5–1 s on top of rc9's already-extended warmup.
+Acceptable trade.
+
+### Verification (programmatic; user delegated authority for
+in-CC iteration)
+
+`woys diag --seconds 30` against the live mic, two consecutive
+runs to check measurement stability:
+
+  Run 1: p50=44.34  p95=83.58  p99=84.78  max=95.16
+  Run 2: p50=44.45  p95=83.61  p99=84.18  max=92.20
+
+vs rc9 (alireza's last manual test): p50=35.62 p95=91.69 p99=96.27
+max=96.75.
+
+p99 - p50 spread: rc9 = 60.65 ms → rc10 = 40 ms. Compressed
+significantly. p50 went up ~9 ms (heuristic was fast for the
+typical case; EXHAUSTIVE picks an algo that's marginally slower
+typical but much faster tail). p99 dropped 12 ms. Net: tighter
+distribution.
+
+### Verdict
+
+PARTIAL WIN. Tail tightened but p99 = 84 ms is still well above
+the 50 ms gate alireza set for "Telegram-equivalent success." The
+remaining 40 ms p50→p99 spread is most likely scheduling /
+preemption variance that EXHAUSTIVE can't address. rc11 will
+attack that with RT priority on the engine thread.
+
+### What did NOT change
+
+- Pre-warm logic from rc9 stays.
+- `gc.disable()` from rc7 stays.
+- `tail_chunk_log` from rc8 stays.
+- No new tests, no migration, schema 10.
+
+### Verification
+
+98/98 fast tests pass; mypy --strict clean; ruff format clean.
+
+DO NOT auto-tag. Iteration continuing — rc11 next.
+
 ## [0.7.0rc9] — 2026-05-07 — Pre-warm cuDNN on every shape soxr can emit; the targeted fix for the inference tail
 
 rc8's `tail_chunk_log` produced the smoking gun. Every chunk where
