@@ -23,29 +23,29 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-# Fields that participate in a profile snapshot. Keep this list in sync with
-# AppConfig — anything *not* listed here is considered "global" and is not
-# overridden by a profile use.
-_PROFILE_FIELDS = (
-    "rvc_model",
-    "f0_up_key",
-    "sid",
-    "chunk_seconds",
-    "monitor",
-    "embedder",
-    "output_latency_ms",
-    "sola_enabled",
-    "sola_crossfade_ms",
-    "sola_search_ms",
-    "sola_context_ms",
-    "input_gain_db",
-)
 
-
-def _ensure_tui_path() -> None:
+def _ensure_audio_path() -> None:
     repo_root = Path(__file__).resolve().parent.parent
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
+
+
+# B9 / arch-005 — derive _PROFILE_FIELDS from the single source of truth
+# in `audio.engine.USER_VISIBLE_ENGINE_FIELDS`. Adding a user-visible
+# EngineConfig field there now automatically makes it survive a profile
+# save/use cycle. Pre-v0.8.0, this was a hand-maintained tuple that lost
+# `input_gate_dbfs`, `prefer_pw_cat`, etc. — exactly the rc4 drift class.
+_ensure_audio_path()
+from audio.engine import USER_VISIBLE_ENGINE_FIELDS as _ENGINE_FIELDS  # noqa: E402
+
+# `rvc_model` is a profile field too, but it's stored as a string at this
+# layer (Path on EngineConfig). Prepend explicitly.
+_PROFILE_FIELDS: tuple[str, ...] = ("rvc_model", *_ENGINE_FIELDS)
+
+
+def _ensure_tui_path() -> None:
+    """Alias kept for backwards compat — same as `_ensure_audio_path`."""
+    _ensure_audio_path()
 
 
 def _profiles_bag(cfg: Any) -> dict[str, dict[str, Any]]:
