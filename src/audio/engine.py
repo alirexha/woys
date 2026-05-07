@@ -248,10 +248,29 @@ class EngineConfig:
     # (via os.sched_setaffinity). Reduces L2/L3 cache-miss jitter on the
     # i7-10750H. None = no pinning.
     cpu_affinity_core: int | None = None
-    # Opt-in process-priority bump. Requires CAP_SYS_NICE (or root). On
-    # PermissionError we log + continue at SCHED_OTHER. OFF by default
-    # per Brief §6 — capability requirement is a host-setup concern.
-    realtime_priority: bool = False
+    # v0.7.0-rc11 — engine thread runs SCHED_FIFO at priority 60 by
+    # default. The rc10 dump showed inference p99 = 84 ms after
+    # EXHAUSTIVE cuDNN trimmed shape-driven variance, but a 40 ms
+    # p50 → p99 spread remains. The most likely remaining cause is
+    # KDE / picom compositor preemption of the engine thread mid-
+    # inference. SCHED_FIFO at priority 60 prevents user-space
+    # preemption (KDE compositing, browser, etc. run at SCHED_OTHER
+    # niced 0) while staying below typical PipeWire/ALSA threads
+    # (priority 80–88) and well below kernel RT (98–99).
+    #
+    # Pre-rc11 this field was named the same and was opt-in (default
+    # False) per Brief §6 — but the implementation only called
+    # `os.nice(-10)`, which raises priority within SCHED_OTHER and
+    # does NOT prevent preemption by another SCHED_OTHER task. rc11
+    # rewrites `_apply_thread_priority` to actually call
+    # `sched_setscheduler(SCHED_FIFO, 60)`, falling back to nice(-10)
+    # then to a logged warning if RT is denied.
+    #
+    # Falls back cleanly: hosts without `RLIMIT_RTPRIO ≥ 60` (and
+    # without CAP_SYS_NICE) get the old nice(-10) behavior. The
+    # default `True` is safe — worst case is "no improvement" on
+    # locked-down systems, never a hang or crash.
+    realtime_priority: bool = True
 
 
 @dataclass
@@ -1605,8 +1624,14 @@ class RealtimeEngine:
         """Pin to `cpu_affinity_core` and optionally raise priority.
 
         Called from inside whichever thread should be pinned; affinity /
-        nice are per-thread on Linux. Permission failures degrade to a
-        warning in `last_error` rather than aborting the engine.
+        scheduling class are per-thread on Linux.
+
+        v0.7.0-rc11 — `realtime_priority=True` now actually requests
+        SCHED_FIFO at priority 60 instead of just nice(-10). On hosts
+        with RLIMIT_RTPRIO ≥ 60 (or CAP_SYS_NICE), the thread becomes
+        non-preemptible by user-space SCHED_OTHER tasks (KDE compositing,
+        picom, browser, etc.). Falls back cleanly to nice(-10), then to
+        a logged warning, on locked-down systems.
         """
         if self.cfg.cpu_affinity_core is not None:
             try:
@@ -1615,11 +1640,22 @@ class RealtimeEngine:
                 self.stats.last_error = f"affinity[{label}] failed ({type(e).__name__}: {e})"
         if self.cfg.realtime_priority:
             try:
-                os.nice(-10)
-            except (OSError, PermissionError) as e:
-                self.stats.last_error = (
-                    f"realtime_priority[{label}] denied ({type(e).__name__}); needs CAP_SYS_NICE"
-                )
+                # Linux-only API. AttributeError on platforms (Windows,
+                # macOS) where sched_setscheduler isn't exposed.
+                param = os.sched_param(60)
+                os.sched_setscheduler(0, os.SCHED_FIFO, param)
+            except (OSError, PermissionError, AttributeError) as rt_err:
+                # RLIMIT_RTPRIO too low (or no CAP_SYS_NICE) → fall back
+                # to nice(-10). Same behavior as pre-rc11.
+                try:
+                    os.nice(-10)
+                except (OSError, PermissionError) as nice_err:
+                    self.stats.last_error = (
+                        f"realtime_priority[{label}] denied "
+                        f"(SCHED_FIFO: {type(rt_err).__name__}: {rt_err}; "
+                        f"nice -10: {type(nice_err).__name__}: {nice_err}); "
+                        f"needs CAP_SYS_NICE or RLIMIT_RTPRIO ≥ 60"
+                    )
 
     def _run_loop(self) -> None:
         import sounddevice as sd

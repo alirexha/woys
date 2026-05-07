@@ -4,6 +4,71 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc11] — 2026-05-07 — Engine thread → SCHED_FIFO prio 60; null result, variance is GPU-side
+
+### What changed
+
+`src/audio/engine.py: _apply_thread_priority` rewritten to actually
+request `SCHED_FIFO` at priority 60 instead of just `os.nice(-10)`.
+Falls back to nice(-10), then to a logged warning, on hosts without
+RLIMIT_RTPRIO ≥ 60 or CAP_SYS_NICE.
+
+`EngineConfig.realtime_priority` default flipped `False → True` so
+new sessions get RT scheduling automatically when the host allows
+it.
+
+### Verification — RT engaged but p99 didn't move
+
+```
+$ python -c "import os; os.sched_setscheduler(0, os.SCHED_FIFO,
+  os.sched_param(60)); print(os.sched_getscheduler(0))"
+SCHED_FIFO 60 SET OK    (alireza's CachyOS allows ulimit -r = 99)
+
+$ woys diag --seconds 30   (rc11)
+inference  p50=44.25  p95=83.30  p99=86.18  max=96.23  (n=32)
+
+vs rc10:   p50=44.34  p95=83.58  p99=84.78  max=95.16
+```
+
+Identical within noise. RT priority engaged successfully but did
+NOT tighten the inference tail. **The 40 ms p50 → p99 spread is
+not CPU-side preemption variance.**
+
+### Implication
+
+The variance source is GPU-side. Candidates ranked:
+
+1. **GPU clock state changes.** RTX 2070 Mobile boost/throttle —
+   audit lens 07 saw clocks bouncing 360↔1260 MHz at idle, alireza's
+   earlier nvidia-smi correlation showed 1185–1755 MHz with brief
+   boost spikes to 1905 MHz under load. If the GPU drops to base
+   clock between inferences, that chunk takes longer.
+2. **CUDA workspace / kernel selection variance.** Even with
+   EXHAUSTIVE picking the fastest algo per shape, the algo's
+   per-call cost can vary based on workspace allocation and memory
+   layout.
+3. **Other process GPU contention.** picom is compositing on the
+   same GPU. Browser, etc.
+
+rc12 will instrument GPU clock state during a diag run and try
+either `cudnn_conv_use_max_workspace=1` or document the
+`nvidia-smi --lock-gpu-clocks` runbook depending on what the
+nvidia-smi data reveals.
+
+### What did NOT change
+
+- rc7 gc.disable() stays.
+- rc8 tail_chunk_log stays.
+- rc9 broader pre-warm stays.
+- rc10 cuDNN EXHAUSTIVE stays.
+- No tests, no migration, schema 10.
+
+### Verification
+
+98/98 fast tests pass; mypy --strict clean; ruff format clean.
+
+DO NOT auto-tag. Iteration continuing.
+
 ## [0.7.0rc10] — 2026-05-07 — cuDNN HEURISTIC → EXHAUSTIVE; partial win on the tail (p99 96 → 84 ms)
 
 rc9's broader pre-warm covered every shape soxr emits but
