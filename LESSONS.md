@@ -1472,3 +1472,147 @@ stays on standby, not shipped.
 rc1 is now Fix 2 (native PipeWire client). rc2 is Fix 3
 (mitigations doc). rc3 / final tag combines both. Fix 1 is
 documented in this lesson and dropped from the v0.9.0 scope.
+
+## 24. v0.9.0-rc1 — native PipeWire client landed; pre-flight bench discipline saved a fix
+
+The v0.9.0 brief listed three fixes; rc1 was the headline architecture
+change — replace the pacat / pw-cat subprocess on the playback path
+with a native PipeWire client targeting the per-quantum gap pathology
+the audit's lens 08 identified.
+
+### What worked
+
+The four-option investigation (`docs/19-pw-investigation.md`) hit the
+right answer by being honest about what each option could actually
+achieve at the RT-thread layer:
+
+- A (`sounddevice`/PortAudio) blocked: Arch's portaudio links ALSA +
+  JACK, no Pulse host API. Couldn't target WoysSink by name.
+- A.5 (`pipewire-python`) blocked: explicitly does not support
+  streaming; wraps the pw-cat subprocess we're trying to replace.
+- B (`ctypes`/`cffi` against libpipewire) viable but loses the
+  RT-purity the cffi trampoline was supposed to give: any Python
+  on the RT thread (even just reference-counting on a closure)
+  reintroduces a different flavor of GIL-induced gap.
+- C (small native helper binary) — Python is OFF the RT thread
+  entirely. Helper is ~250 LOC. Pipe protocol on stdin/stderr.
+  The "subprocess hop" the audit suspected isn't the problem; the
+  problem was "subprocess reads stdin SYNCHRONOUSLY in the RT
+  callback chain." Our helper decouples those layers via a SPSC
+  ring buffer.
+
+The architectural distinction — "subprocess is fine; SYNCHRONOUS
+stdin-read on the RT thread is not" — was the load-bearing insight.
+WebFetch of upstream `pw-cat.c` confirmed pw-cat does the latter; our
+helper avoids it by design.
+
+### What hurt
+
+The v0.9.0-rc1 build caught the rc4 drift class for the THIRD time
+(after the original rc4 catch and the v0.8.0 review's B9 contract
+test). The new `prefer_native_pw` field landed cleanly on EngineConfig
+and AppConfig (matching defaults; B9's existing test passed) — but
+the explicit `EngineConfig(...)` constructor calls in `cli.py` and
+`tui/app.py` use a hand-typed kwarg list that doesn't include the new
+field. So setting `prefer_native_pw = true` in config.toml had no
+effect, and the engine silently fell to the pacat path. The first live
+integration test caught it (xruns=12 in pacat mode despite the flag).
+
+The B50 test (added in v0.8.0) checks AppConfig matches EngineConfig
+defaults. It does NOT check that the construction sites in cli.py /
+app.py forward every user-visible field. New AST-walk test asserts
+every `EngineConfig(...)` call passes every `USER_VISIBLE_ENGINE_FIELDS`
+kwarg. As a side effect, `woys diag` now respects user config for
+voice-shape fields (f0_up_key, sid, monitor, sola_*) instead of
+silently ignoring them.
+
+### Lesson — drift hides at every plumbing layer
+
+Three rounds of catching this pattern, three different surfaces:
+
+1. **rc4** caught it in `AppConfig` (input_gate_dbfs, prefer_pw_cat
+   missing from `_E.foo` forwarding).
+2. **v0.8.0/B9** caught the AppConfig→default mismatch class.
+3. **v0.9.0-rc1** caught it at the `EngineConfig(...)` *call site*
+   list.
+
+Each round added a test for the previous round's mistake. The
+generalizable rule: **every layer that translates between config and
+runtime is a drift surface.** Test contract per layer, not per field.
+
+For v0.10.x: refactor the construction sites to take a single
+`from_app_config(cfg)` factory that walks `USER_VISIBLE_ENGINE_FIELDS`
+programmatically and forwards them all. Eliminates the manual kwarg
+list entirely. Filed as a v0.10 follow-up; not in scope for v0.9.
+
+### Lesson — the audit's signature was right; trust the FFT
+
+The audit's lens 08 fingered 21.33 / 42.67 ms onset-periodicity FFT
+peaks. Those are exactly one and two PipeWire quanta at the system's
+default 1024/48000 setting. v0.7.x walked output_latency_ms ladders
+for three rcs without addressing the actual pathology because the
+mental model was "the buffer is too short" (wrong) instead of "the RT
+thread reads stdin synchronously" (right).
+
+When a cut signature is sample-exact-quantized and the periodicity
+matches a documented system parameter, the cause is in the
+quantum-aligned layer. Don't tune the buffer.
+
+### Verification status at rc1 ship
+
+- 120 fast tests pass.
+- Helper builds clean (gcc + libpipewire-0.3 dev headers).
+- Live engine smoke (6s, prefer_native_pw=true): xruns=0 (vs 11-12
+  in pacat), queue_full=0, dropped=0, clean shutdown.
+- Telegram-specific cut reduction is the user's verdict, pending.
+
+## 25. v0.9.0-rc2 — mitigations doc; reaffirming that woys never owns boot params
+
+The third v0.9.x deliverable is a doc: `docs/20-mitigations-tuning.md`.
+Walks the user through the boot-param edit, security tradeoff,
+measurement template, revert procedure, and an explicit "why woys
+does NOT modify boot params" section.
+
+### What worked
+
+The brief was unambiguous: "user edits their own boot config; woys
+never touches it." Doc-only is the right shape for this fix because
+the user's security posture is not woys's call to make.
+
+The §7 combination table — three independent levers (mitigations off,
+linux-rt, native PipeWire client) with an explicit "apply IN SEQUENCE,
+not together, measure after each" — is the operationally honest
+framing. Combining them all at once means you can't tell which lever
+moved the needle.
+
+### Lesson — when a fix is conceptually a host-tuning recommendation, write the doc, not the script
+
+The temptation when shipping autonomous work is to "make it one
+command" — `woys host enable-mitigations`. Brief explicitly banned
+this. Reasons (cataloged in the doc's §6):
+
+1. Sudo escalation across user-home boundary.
+2. Reboot required to apply; woys can't safely reboot the user.
+3. Security tradeoff is the user's call, with full context.
+4. Reversibility belongs in the user's workflow.
+
+Generalization: **for tools that need to change host state outside
+the user's home dir AND require a reboot to apply, the right
+deliverable is a doc that the user reads and decides on, not a
+script.** The doc IS the feature.
+
+## §23-§25 summary — what v0.9.x actually delivered
+
+- Fix 1 (ORT IO binding): deferred. Empirical 200-pass bench on this
+  hardware showed -1.6%/-0.8% avg (slightly slower than baseline) on
+  chunk=0.15/0.10. The brief's "10-30% inference win" was the v0.8.0
+  reviewer's generic estimate; predicate failed on this stack.
+  Documented in §23.
+- Fix 2 (native PipeWire client): shipped as v0.9.0-rc1. Helper
+  binary ~250 LOC of C, opt-in via `prefer_native_pw=true` for one
+  release of soak before the v0.9.1 default flip. Smoke-tested clean.
+- Fix 3 (mitigations doc): shipped as v0.9.0-rc2. Doc-only, honest
+  about cost / benefit / revert. Includes the lever-combination
+  sequence guidance.
+
+The Telegram-specific verification of Fix 2 is the user's call.
