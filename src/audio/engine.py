@@ -1057,6 +1057,10 @@ class RealtimeEngine:
         # Last write timestamp (perf_counter). Writer thread updates it;
         # used to compute `writer_jitter_ms`.
         self._last_writer_ts: float | None = None
+        # B14 / corr-015: circuit-breaker counter. Reset on every successful
+        # chunk; if it climbs to 50 consecutive failures, `_stop_event` is
+        # set so the engine exits cleanly rather than serving silence.
+        self._consecutive_drops: int = 0
 
         # v0.5.0 session pool — shared cache so swap = pointer swap.
         self._rvc_pool = RvcSessionPool(
@@ -1287,6 +1291,17 @@ class RealtimeEngine:
                     if full.size > 0:
                         self._enqueue_chunk(self._to_sink_bytes(full))
 
+        # B10 / corr-005: wait for the writer queue to drain before swapping
+        # the model. Without this barrier, OLD-rate audio sitting in the
+        # queue (up to ~2 s worth at queue_size=8 + chunk_seconds=0.25)
+        # plays AFTER the swap completes — user hears the old voice for
+        # seconds after triggering a swap. 300 ms timeout caps the wait
+        # so a stuck pacat/pw-cat doesn't deadlock the swap.
+        if self._writer_queue is not None:
+            drain_deadline = time.perf_counter() + 0.3
+            while time.perf_counter() < drain_deadline and not self._writer_queue.empty():
+                time.sleep(0.005)
+
         # v0.8.0 — subprocess swap path. Child owns the session pool;
         # tell it to swap, wait for the new RVC sample-rate response,
         # then rebuild the output resampler in the parent if the rate
@@ -1501,9 +1516,12 @@ class RealtimeEngine:
         without spinning up the full audio thread.
         """
         try:
-            return self._process_streaming_16k(audio16)
+            result = self._process_streaming_16k(audio16)
+            self._consecutive_drops = 0
+            return result
         except Exception as e:
             self.stats.dropped_chunks += 1
+            self._consecutive_drops += 1
             n = self.stats.dropped_chunks
             if n <= 3:
                 self.stats.last_error = f"inference dropped chunk #{n}: {type(e).__name__}: {e}"
@@ -1511,6 +1529,18 @@ class RealtimeEngine:
                 self.stats.last_error = (
                     f"inference still dropping chunks (total #{n}): {type(e).__name__}: {e}"
                 )
+            # B14 / corr-015: circuit breaker on sustained inference failure.
+            # Voice changer feeding Discord — "stopped" is better than
+            # "silently giving them silence." Threshold 50 ≈ 7-12 seconds
+            # at chunk_seconds in [0.15, 0.25]; long enough to ride out a
+            # transient cuDNN tune but short enough to surface a genuine
+            # broken state.
+            if self._consecutive_drops >= 50 and not self._stop_event.is_set():
+                self.stats.last_error = (
+                    f"engine stopping: {n} consecutive inference failures. "
+                    f"Last: {type(e).__name__}: {e}"
+                )
+                self._stop_event.set()
             return None
 
     def _process_streaming_16k(self, new_chunk_16k: NDArrayF32) -> NDArrayF32:
@@ -1988,6 +2018,16 @@ class RealtimeEngine:
                 # Back off a bit before retrying so we don't spin.
                 time.sleep(0.5)
                 continue
+            # B11 / corr-007: if stop fired while we were opening the new
+            # proc (a slow path — _open_pacat takes ~50-200 ms), do NOT
+            # install the new handle. Kill it instead so the engine's
+            # finally-block teardown sees a stable `_pacat_proc` and the
+            # new proc doesn't leak fds.
+            if self._stop_event.is_set():
+                with contextlib.suppress(Exception):
+                    new_proc.terminate()
+                    new_proc.wait(timeout=0.5)
+                return
             with self._pacat_lock:
                 # Discard the dead handle (caller already detected death).
                 self._pacat_proc = new_proc
@@ -2079,7 +2119,12 @@ class RealtimeEngine:
             prime_n = int(self.cfg.sink_rate * self.cfg.prime_silence_seconds)
             if prime_n > 0 and initial_proc.stdin is not None:
                 silence = np.zeros(prime_n * self.cfg.output_channels, dtype=np.float32).tobytes()
-                with contextlib.suppress(BrokenPipeError, OSError):
+                # B12 / corr-011: take `_pacat_lock` for the prime-silence
+                # write. Pre-v0.8.0 this was safe by accident (writer/watchdog
+                # threads weren't started yet at this point in start()), but
+                # the order was fragile. Locking makes it explicit so a
+                # future reorder doesn't introduce a race.
+                with self._pacat_lock, contextlib.suppress(BrokenPipeError, OSError):
                     initial_proc.stdin.write(silence)
                     initial_proc.stdin.flush()
             self._writer_queue = queue.Queue(maxsize=self.cfg.pacat_writer_queue_size)

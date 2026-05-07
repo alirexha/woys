@@ -692,7 +692,10 @@ def main(argv: list[str] | None = None) -> int:
             print(send_command("STATUS"))
         elif args.cmd == "slow":
             print(send_command("SLOW"))
-            slow_path = Path("/tmp/woys-slow-chunks.txt")
+            # B13: read from the same XDG_RUNTIME_DIR location the TUI writes.
+            from tui.control import runtime_path
+
+            slow_path = runtime_path("slow-chunks.txt")
             if slow_path.exists():
                 print("---")
                 print(slow_path.read_text(), end="")
