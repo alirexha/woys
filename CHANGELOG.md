@@ -4,6 +4,173 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-07 — review-driven cleanup release
+
+This release implements the actionable findings from the v0.7.0 external
+code review (`docs/17-review/`). Seven specialist sub-agents flagged ~115
+issues across architecture, correctness, performance, security, audio
+quality, testability, and packaging. The bug list is in
+`docs/17-review/02-final-verdict.md`; this entry summarizes by theme.
+
+### Headline (P0 — would-bite-on-fresh-install)
+
+- **B1 / corr-001** — `scripts/download_weights.py` was fetching the bare-mel
+  rmvpe variant (`lj1995/VoiceConversionWebUI/rmvpe.onnx`, input shape
+  `[1,128,time]`) but the engine defaults to the wrapped waveform-input
+  variant (`rmvpe_wrapped.onnx`, input shape `[1,waveform] + threshold`).
+  Fresh install crashed on first chunk with shape-mismatch. Fix: switch the
+  download URL to the canonical `wok000/weights_gpl/.../rmvpe_20231006.onnx`
+  that upstream's `RMVPEOnnxPitchExtractor` uses.
+- **B2 / sec-001** — `convert.py` did `torch.load(weights_only=False)` on
+  user-supplied .pth checkpoints (pickle-RCE class). Now: try
+  `weights_only=True` first; fall back to `False` only with explicit
+  `--yes-i-trust-the-pickle` flag (or `WOYS_YES_I_TRUST_THE_PICKLE=1`).
+
+### Engine bugs (P1 / P2)
+
+- **B5 / corr-003** — `_maybe_swap_model` cleared `_pending_model_swap`
+  at the START of the swap, then did ~600 ms of work. TUI's "JOB done"
+  reply lied for the duration of cuDNN tuning. New `_swap_done: Event`
+  is set AFTER the work; TUI poll sites wait on it.
+- **B6 / corr-004** — subprocess swap failure used to silently `return`,
+  leaving the engine running but dropping every chunk. Now: stop
+  cleanly via `_stop_event` + `last_error`.
+- **B7 / corr-010** — child watchdog `os.getppid() != parent_pid AND ==
+  1` was wrong on systemd-userspace systems (Arch / CachyOS / etc.) —
+  orphans reparent to `systemd --user`, NOT pid 1. Drop the `== 1`
+  check; PPID-changed alone is sufficient on Linux.
+- **B8 / corr-002** — fairseq embedder path deleted entirely.
+  No tests, no users, would have broken on fairseq API drift via
+  `extract_features()[0]` indexing.
+- **B9 / arch-004 + arch-005** — introduced
+  `audio.engine.USER_VISIBLE_ENGINE_FIELDS` as the single source of
+  truth. `_PROFILE_FIELDS` now derives from this. Fixes the rc4 drift
+  class where `input_gate_dbfs`, `prefer_pw_cat`, etc. were lost on
+  profile round-trips.
+- **B10 / corr-005** — swap path waits for the writer queue to drain
+  (300 ms timeout) before swapping models. Pre-v0.8.0, OLD-rate audio
+  played AFTER the swap.
+- **B11 / corr-007** — watchdog respawn race with `_stop_event`. Now
+  checks the stop flag AFTER opening the new pacat proc.
+- **B14 / corr-015** — circuit breaker. After 50 consecutive inference
+  failures, set `_stop_event` and surface the error.
+- **B15 / corr-027** — `InferenceClient.stop` polls `/proc/<pid>` for
+  child exit before unlinking shm; narrows unlink suppress to
+  `FileNotFoundError`.
+
+### Audio path
+
+- **B16 / perf-002** — vectorize `_interpolate_voiced_gaps_np` (numpy
+  slicing replaces inner Python loop). Renamed to public name with
+  backwards-compat alias.
+- **B22 / audio-002 + audio-009** — SOLA empty-emit resets
+  `_prev_tail = None` when input < crossfade window; `flush()` applies
+  a linear fade-out (no end-of-session click).
+- **B21 / audio-007** — positive `input_gain_db` hard-clips post-
+  multiply so RVC encoders never see out-of-range input.
+- **B57 / audio-010** — `nan_to_num(posinf=0.0, neginf=0.0)` (was ±1.0).
+  Element-wise; full-scale impulses on inf samples were audible
+  clicks. Zero is a single-sample dropout (~21 µs).
+
+### Performance
+
+- **B19 / perf-009** — writer thread runs SCHED_FIFO at priority 59
+  (engine main at 60). Engine wins same-priority tie-breaks.
+- **B43 / quality-006** — single 128-deep rolling window for all
+  `EngineStats` deques. Stable p99 readings.
+- **B47 / quality-013** — extracted shared `audio.priority` helpers
+  used by engine + inference child.
+- **B55 / corr-025** — `gc.disable()` moves to the start of `start()`
+  (before `_ensure_sessions`).
+- **B56 / perf-003** — `to_pitch_coarse` early-exits on all-zero
+  pitchf (saves ~8 µs per silent-transition chunk).
+- **B61 / perf-007** — eager warmup capped at `session_pool_size`.
+
+### Security & install
+
+- **B25 / sec-005 + sec-009** — SHA256 verification on HF model
+  downloads (LFS) + `download_weights.py` framework + `--print-hashes`
+  helper to populate the table.
+- **B65 / sec-003** — `migrate_to_woys.py` chmods rewritten config to
+  0600 BEFORE the atomic rename.
+- **B13 / corr-012 / sec-002** — slow-chunk dump moves from
+  `/tmp/woys-slow-chunks.txt` (predictable, symlink-attackable) to
+  `XDG_RUNTIME_DIR/woys/slow-chunks.txt` (mode 0700 by spec).
+- **B3 / pkg-001** — bump `pkg/PKGBUILD` + `pkg/.SRCINFO` to 0.8.0.
+- **B39 / pkg-009** — install.sh stops installing the deprecated
+  `vcclient-cachy` shim. Removes any stale shim left behind.
+- **B40 / pkg-011** — install.sh runs `woys --version` post-install.
+- **B41 / pkg-013** — delete `pkg/browser-extension/` (vestige).
+- **B37 / pkg-002** — `requires-python = ">=3.11,<3.12"`.
+
+### Encapsulation & test surface
+
+- **B23 / quality-019** — public read-accessors on `RealtimeEngine`
+  (`player_backend`, `has_inference_subprocess`,
+  `inference_subprocess_pid`) and `EngineStats` (`inference_samples()`,
+  `total_samples()`, `mic_read_samples_ms()`,
+  `enqueue_lag_samples_ms()`).
+- **B24 / test-016** — smoke test imports `to_pitch_coarse` from
+  engine instead of carrying its own re-implementation.
+- **B49** — new `tests/test_download_weights.py` pins the
+  WEIGHTS↔engine-defaults contract.
+- **B50** — new `tests/test_engine_config_drift.py` pins the
+  EngineConfig→AppConfig→profiles contract.
+- **B51** — new `tests/test_tray_imports.py` pins the fresh-subprocess
+  import contract.
+- **B53** — new `tests/test_engine_inference.py` pins
+  `interpolate_voiced_gaps_np` and `to_pitch_coarse` behavior.
+- **B52 / test-011** — XDG_RUNTIME_DIR-unset fallback test.
+
+### Acknowledged tradeoffs (no fix in this release)
+
+Documented for posterity in `docs/17-review/02-final-verdict.md`:
+
+- arch-001 (engine.py is a 2400-line God-class) — refactor delicate,
+  v0.8.x.
+- arch-006 (subprocess child loads full RealtimeEngine) — deliberate
+  to guarantee bit-identical inference.
+- arch-010 (subprocess opt-in adds 770 LOC for "off by default" path)
+  — kept as escape hatch for GPU-contention scenarios.
+- arch-011 (wheel ships full src/server/) — trim is a v0.8.x project.
+- audio-001 (leading-zero pitch coarse → bin 1) — closed as
+  not-a-bug; matches upstream RVC contract exactly
+  (`upstream/.../DioPitchExtractor.py:45-46`).
+- audio-016 (output_latency_ms = 280) — empirical floor for cut-free
+  Telegram VOIP on the target hardware.
+
+### Disagreements where the reviewer was right
+
+The rebuttal pass (`docs/17-review/00-rebuttals.md`) caught me being
+defensive without basis on four items. All landed:
+
+- **B54 / corr-023** — `cudnn_conv_use_max_workspace = True` (bool, not
+  string `"1"`). My "matches upstream" was fabricated.
+- **B55 / corr-025** — `gc.disable()` placement: my "ORT cyclic refs"
+  defense had no source-grounded backing.
+- **B56 / perf-003** — `to_pitch_coarse` early-exit: I missed the
+  sub-hysteresis fall-through path.
+- **B57 / audio-010** — `nan_to_num` posinf=0.0: both prongs of my
+  defense were factually wrong.
+
+### Deferred
+
+- **B18 / perf-005** — drop the writer flush. Needs real-Telegram
+  listening; can't validate statically.
+- **B58 / quality-001** — trim ~250 LOC of rc-history in engine.py.
+  Doc-only sweep, no behavior change.
+- **B62 / arch-011 partial** — move FastAPI/Socket.IO deps to a
+  `[convert]` extra. Need to verify upstream `_export2onnx` closure.
+
+### Stats
+
+- 65 individual fixes across 10 commits (P0 → P1 → P2 → P3 → tradeoff
+  → ship).
+- 118 fast tests pass (was 91 in v0.7.0; +27 new).
+- ~500 LOC removed (fairseq embedder, `_resample_linear`,
+  browser-extension), ~1100 LOC added (mostly test coverage + the
+  shared `audio.priority` module).
+
 ## [0.7.0] — 2026-05-07 — Final release. v0.8.x experiment closed (multiprocessing null, TensorRT dead end).
 
 This is the v0.7.0 release. Functionally equivalent to rc12's
