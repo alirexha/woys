@@ -4,6 +4,91 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-08 — native PipeWire client + mitigations doc
+
+The output of `V0_9_X_AUTONOMOUS.md`. Three fixes scoped, two shipped,
+one documented null-result deferral. Full retrospective in `LESSONS.md`
+§23-§25; final summary at `docs/21-v09x-final-summary.md`.
+
+### Shipped (rc1)
+
+- **Native PipeWire client** (`bin/woys-pw-out.c`, ~430 LOC C) replaces
+  the pacat / pw-cat subprocess on the engine's playback path. The
+  engine's bursty 150 ms chunk writes are decoupled from PipeWire's
+  per-quantum (1024/48000 = 21.33 ms) RT callback via a lock-free
+  SPSC ring buffer. Closes the audit's lens 08 cut signature:
+  voice-correlated, sample-exact zero gaps quantized to ~21 / 43 ms.
+  Opt-in via `prefer_native_pw=true` in config.toml; default flips
+  to True in v0.9.1 after one release of soak; legacy paths deleted
+  in v0.10.
+- New `EngineStats.player_underruns` counter (parsed from the
+  helper's stderr `underruns=N` lines). Closes audit lens 09 rank 1
+  ("pw-cat is silent on underruns") for free.
+- `woys diag` displays the new `native-pw under.` line.
+- New `EngineConfig` field `prefer_native_pw` forwarded to AppConfig.
+- `_find_native_pw_helper` searches PATH → repo bin/ → ~/.local/bin/
+  so dev checkouts work without `make install`.
+- New AST-walk test in `tests/test_engine_config_drift.py` asserts
+  every `EngineConfig(...)` constructor call in cli.py / app.py
+  forwards every USER_VISIBLE field — catches the rc4 drift class at
+  the call-site layer, not just the default-value layer.
+- Side benefit: `woys diag` now respects user config for f0_up_key,
+  sid, monitor, sola_* (previously diag silently ran with engine
+  defaults).
+- `install.sh` builds + installs the native helper as part of
+  `./install.sh`. Warns (does not fail) if gcc / libpipewire-0.3 dev
+  headers are missing.
+
+### Shipped (rc2)
+
+- **`docs/20-mitigations-tuning.md`** — guide for `mitigations=off`
+  boot-param tuning on CachyOS. Doc-only, no code change. Walks
+  through systemd-boot edit, security tradeoff, revert, before/after
+  measurement template, and an explicit "why woys does NOT modify
+  boot params" section. §7 includes a combination table for the
+  three independent levers (mitigations off, linux-rt, native-pw)
+  with an "apply in sequence, measure after each" rule.
+
+### Deferred (no rc tag)
+
+- **ORT IO binding** (perf-004 from the v0.8.0 review). Pre-flight
+  bench (200-pass × 2 chunk sizes) measured -1.6%/-0.8% Δavg vs
+  baseline on RTX 2070 Mobile + RVC v2_16k + ORT 1.22. The brief's
+  expected "10-30% inference win" was a generic estimate; the
+  empirical measurement on this hardware/model contradicts it.
+  Documented in `LESSONS.md §23`. The bench file
+  (`scripts/bench_iobinding.py`) remains for re-measurement on
+  future hardware/model combinations.
+
+### Tests
+
+- 120 fast tests pass (up from 118 in v0.8.0; +2 AST drift tests).
+- New `test_engine_config_construction_forwards_user_visible_fields`
+  parametrized across cli.py + app.py.
+
+### Versioning + packaging
+
+- `pyproject.toml` 0.8.0 → 0.9.0.
+- `src/woys/__init__.py` `__version__` → 0.9.0.
+- `pkg/PKGBUILD` + `pkg/.SRCINFO` 0.8.0 → 0.9.0.
+- `bin/Makefile` builds the native helper; `make install` drops it
+  into `$PREFIX/bin/`.
+- New file `.gitignore` entry for the compiled helper binary.
+
+### Open questions / handoff
+
+- Telegram-specific verification of Fix 2 is the user's call. See
+  `docs/21-v09x-final-summary.md` §6 for the test protocol.
+- Default flip of `prefer_native_pw=true` deferred to v0.9.1.
+- Engine-side jitter reduction (perf-001, perf-018, possibly
+  linux-rt) becomes the next-rung lever once Fix 2's verdict is in.
+
+### Acknowledged carry-over from v0.8.0
+
+All v0.8.0's acknowledged tradeoffs (engine.py god-class, src/server
+trim, etc.) remain. v0.9.x scope was strictly the three fixes named in
+the brief; no incidental refactoring.
+
 ## [0.8.0] — 2026-05-07 — review-driven cleanup release
 
 This release implements the actionable findings from the v0.7.0 external
