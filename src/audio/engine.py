@@ -1465,15 +1465,22 @@ class RealtimeEngine:
         self._thread.start()
 
     def _cfg_dict_for_subprocess(self) -> dict[str, Any]:
-        """Convert EngineConfig to a pickle-safe dict for spawn. Path
-        fields become strings; everything else passes through."""
+        """Convert EngineConfig to a dict for spawn pickling.
+
+        v0.8.0-rc3 — DO NOT convert Path → str. Path is picklable;
+        converting drops Path's interface (`with_name`, `parent`,
+        etc.) so engine code in the child crashes with
+        `AttributeError: 'str' object has no attribute 'with_name'`
+        in `_auto_pick_fp16`. The crash forced the parent's
+        `start()` to fall back to in-process inference silently,
+        which is why CC's bash test passed but real Telegram audio
+        sounded "broken" — production was running in-process all
+        along, but stderr was hijacked by Textual so the fallback's
+        `last_error` was never visible.
+        """
         from dataclasses import asdict
 
-        d = asdict(self.cfg)
-        for k, v in list(d.items()):
-            if isinstance(v, Path):
-                d[k] = str(v)
-        return d
+        return asdict(self.cfg)
 
     def _warmup_realtime_pipeline(self, n_chunks_per_shape: int = 4) -> None:
         """v0.6.9 — pre-run synthetic chunks through the *full* realtime

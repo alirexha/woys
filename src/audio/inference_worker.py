@@ -139,11 +139,14 @@ def child_main(
     if cfg_dict.get("inference_subprocess_disable_gc", True):
         gc.disable()
 
-    # Step 3: load ORT sessions. We import + use engine helpers from
-    # within the child so we share session-creation logic exactly with
-    # the in-process path. Importing `engine` here is fine because the
-    # child has its own Python interpreter — there's no shared ORT
-    # state with the parent.
+    # Step 3: build a RealtimeEngine instance in legacy in-process mode
+    # and let it load sessions / pre-warm. The child then routes every
+    # CMD_INFER through `eng._infer()` — the SAME method the
+    # in-process path runs. This guarantees the child and in-process
+    # paths execute byte-identical inference logic; v0.8.0-rc1/rc2's
+    # parallel `_infer_impl` had drifted (or appeared to drift via
+    # subtle layout / view differences) from `_infer`, producing
+    # garbled audio in production despite shape-correct IPC.
     try:
         _ort_preload_dlls()
         # Make `audio.engine` importable from the child.
@@ -151,58 +154,23 @@ def child_main(
         if str(_src_root) not in sys.path:
             sys.path.insert(0, str(_src_root))
 
-        from audio.engine import (
-            EngineConfig,
-            RvcSessionPool,
-            _FairseqEmbedder,
-            _interpolate_voiced_gaps_np,
-            _make_session,
-            _to_pitch_coarse,
-        )
+        from audio.engine import EngineConfig, RealtimeEngine
 
-        cfg = EngineConfig(
-            **{k: v for k, v in cfg_dict.items() if k in EngineConfig.__dataclass_fields__}
-        )
+        # Reconstruct the same EngineConfig the parent has, but force
+        # `inference_subprocess=False` so this in-child engine uses
+        # the legacy in-process inference (no recursive child spawn).
+        cfg_kwargs = {k: v for k, v in cfg_dict.items() if k in EngineConfig.__dataclass_fields__}
+        cfg_kwargs["inference_subprocess"] = False
+        cfg = EngineConfig(**cfg_kwargs)
 
-        cv = _make_session(cfg.contentvec_model)
-        rmvpe = _make_session(cfg.rmvpe_model)
-        rvc_pool = RvcSessionPool(max_size=cfg.session_pool_size)
-        rvc = rvc_pool.get_or_create(cfg.rvc_model)
-
-        cv_input_dtype = cv.get_inputs()[0].type
-        rmvpe_input_dtype = rmvpe.get_inputs()[0].type
-        is_half = rvc.get_inputs()[0].type != "tensor(float)"
-        rvc_output_sr = _probe_rvc_rate(rvc)
-
-        # Step 4: optional fairseq embedder. Mirrors engine's lazy load.
-        fairseq_embedder: _FairseqEmbedder | None = None
-        active_embedder = "onnx"
-        if cfg.embedder == "fairseq":
-            try:
-                from pathlib import Path as _P  # noqa: PLC0415
-
-                hubert_path = _P(str(cfg.contentvec_model)).parent / "hubert_base.pt"
-                if hubert_path.exists():
-                    fairseq_embedder = _FairseqEmbedder(hubert_path)
-                    active_embedder = "fairseq"
-            except (ImportError, FileNotFoundError, RuntimeError):
-                active_embedder = "onnx"
-
-        # Step 5: pre-warm. Same logic as engine._warmup_realtime_pipeline
-        # — probe soxr to get the realtime shape set, then run _infer_impl
-        # for each shape so EXHAUSTIVE cuDNN benchmarks every algo at
-        # warmup time, not realtime.
-        _warmup_in_child(
-            cv=cv,
-            rmvpe=rmvpe,
-            rvc=rvc,
-            cfg=cfg,
-            cv_input_dtype=cv_input_dtype,
-            rmvpe_input_dtype=rmvpe_input_dtype,
-            is_half=is_half,
-            fairseq_embedder=fairseq_embedder,
-            active_embedder=active_embedder,
-        )
+        eng = RealtimeEngine(cfg)
+        eng._ensure_sessions()
+        # _ensure_sessions populated _cv / _rmvpe / _rvc / dtypes /
+        # _is_half / _rvc_output_sr / active_embedder / _fairseq.
+        eng._warmup_realtime_pipeline()  # broader-shape pre-warm (rc9)
+        rvc_output_sr = eng._rvc_output_sr
+        is_half = eng._is_half
+        active_embedder = eng.active_embedder
     except Exception as e:
         traceback.print_exc(file=sys.stderr)
         with contextlib.suppress(Exception):
@@ -249,10 +217,13 @@ def child_main(
         if cmd == CMD_SWAP_MODEL:
             try:
                 new_path = Path(msg["path"])
-                rvc = rvc_pool.get_or_create(new_path)
-                is_half = rvc.get_inputs()[0].type != "tensor(float)"
-                rvc_output_sr = _probe_rvc_rate(rvc)
-                cfg.rvc_model = new_path
+                # Same hot-swap path the in-process engine uses —
+                # `reload_rvc()` updates the RVC session via the
+                # cached pool, refreshes _is_half, recomputes the
+                # output sample rate, and resets streaming state.
+                eng.reload_rvc(new_path)
+                rvc_output_sr = eng._rvc_output_sr
+                is_half = eng._is_half
                 with contextlib.suppress(Exception):
                     child_send.send(
                         {
@@ -276,40 +247,38 @@ def child_main(
             try:
                 shape = tuple(msg["input_shape"])
                 size = int(np.prod(shape))
-                # Read input from shared memory. `np.frombuffer` would
-                # give a zero-copy view but it's READ-ONLY, which
-                # forces ORT to copy host → device on each call.
-                # `np.ndarray(buffer=...)` gives a writable view that
-                # ORT can use directly. Cost: still zero-copy from
-                # shm; ORT internally manages the host→device copy.
                 in_buf = input_shm.buf
                 assert in_buf is not None
-                audio16k: NDArrayF32 = np.ndarray(shape, dtype=np.float32, buffer=in_buf)
-                # Update per-call config knobs from message — these are
-                # cheap to ship per-call and let the parent control
-                # f0_up_key without restarting the child.
-                f0_up_key = int(msg.get("f0_up_key", cfg.f0_up_key))
-                sid = int(msg.get("sid", cfg.sid))
-                threshold = float(msg.get("threshold", cfg.threshold))
+                # Copy out of shared memory into a fresh contiguous
+                # buffer. ORT may capture references to numpy arrays
+                # internally; if it captures a view into shm, the
+                # parent's next write could mutate ORT's input
+                # mid-flight. Copying once decouples ORT from shm.
+                audio16k_view: NDArrayF32 = np.ndarray(shape, dtype=np.float32, buffer=in_buf)
+                audio16k: NDArrayF32 = np.ascontiguousarray(audio16k_view).copy()
+                # Per-call knobs — mutate the in-child engine's cfg so
+                # `eng._infer` reads the parent's intent. self.cfg is
+                # the canonical source for f0/sid/threshold inside
+                # `_infer`, so this is the single point of control.
+                eng.cfg.f0_up_key = int(msg.get("f0_up_key", cfg.f0_up_key))
+                eng.cfg.sid = int(msg.get("sid", cfg.sid))
+                eng.cfg.threshold = float(msg.get("threshold", cfg.threshold))
 
-                t_cv0 = time.perf_counter()
-                result, cv_ms, rmvpe_ms, rvc_ms, nan_replaced = _infer_impl(
-                    audio16k=audio16k,
-                    cv=cv,
-                    rmvpe=rmvpe,
-                    rvc=rvc,
-                    is_half=is_half,
-                    cv_input_dtype=cv_input_dtype,
-                    rmvpe_input_dtype=rmvpe_input_dtype,
-                    fairseq_embedder=fairseq_embedder,
-                    active_embedder=active_embedder,
-                    f0_up_key=f0_up_key,
-                    sid=sid,
-                    threshold=threshold,
-                    interpolate_fn=_interpolate_voiced_gaps_np,
-                    pitch_coarse_fn=_to_pitch_coarse,
-                    t_cv0=t_cv0,
-                )
+                # Snapshot per-stage timings BEFORE the call (eng's
+                # _infer mutates self.stats.last_cv_ms etc.).
+                prev_nan_chunks = eng.stats.nan_chunks
+                t_full = time.perf_counter()
+                # SAME _infer the in-process path runs. Guarantees
+                # bit-identical inference logic across the two paths;
+                # any divergence between paths now lives in the IPC
+                # boundary, not the inference algorithm itself.
+                result = eng._infer(audio16k)
+                # Per-stage timings come from eng.stats, populated by
+                # _infer before it returned.
+                cv_ms = eng.stats.last_cv_ms
+                rmvpe_ms = eng.stats.last_rmvpe_ms
+                rvc_ms = eng.stats.last_rvc_ms
+                nan_replaced = eng.stats.nan_chunks > prev_nan_chunks
                 if nan_replaced:
                     nan_chunks_total += 1
 
@@ -361,184 +330,6 @@ def child_main(
         input_shm.close()
     with contextlib.suppress(Exception):
         output_shm.close()
-
-
-def _probe_rvc_rate(rvc_session: Any) -> int:
-    """Probe RVC session for its native output rate. Returns 16000 if
-    probing fails — the historical default for amitaro-style v1
-    models. Mirrors `engine._cached_rvc_sr` logic minus the cache
-    (the child loads sessions one at a time, no need to cache rate
-    lookups across instantiations)."""
-    try:
-        import onnxruntime as ort  # noqa: F401, PLC0415
-
-        # Read from session metadata — RVC v2 ONNX exports embed the
-        # output rate as a custom_metadata_map entry.
-        meta = rvc_session.get_modelmeta().custom_metadata_map
-        if "samplingRate" in meta:
-            return int(meta["samplingRate"])
-    except Exception:
-        pass
-    return 16_000
-
-
-def _warmup_in_child(
-    *,
-    cv: Any,
-    rmvpe: Any,
-    rvc: Any,
-    cfg: Any,
-    cv_input_dtype: str,
-    rmvpe_input_dtype: str,
-    is_half: bool,
-    fairseq_embedder: Any,
-    active_embedder: str,
-) -> None:
-    """Replicates `engine._warmup_realtime_pipeline` using the child's
-    own session handles. Same shape probe + per-shape iteration."""
-    from audio.engine import _StreamResampler
-
-    chunk_n_mic = round(cfg.chunk_seconds * cfg.mic_rate)
-    if chunk_n_mic <= 0:
-        return
-
-    rng = np.random.default_rng(42)
-
-    unique_audio16_lens: set[int] = set()
-    if cfg.mic_rate != 16_000:
-        probe = _StreamResampler(cfg.mic_rate, 16_000)
-        for _ in range(20):
-            dummy_48k = rng.standard_normal(chunk_n_mic).astype(np.float32) * 0.001
-            out_chunk = probe.process(dummy_48k)
-            if out_chunk.size > 0:
-                unique_audio16_lens.add(int(out_chunk.shape[0]))
-    else:
-        unique_audio16_lens.add(chunk_n_mic)
-
-    if not unique_audio16_lens:
-        unique_audio16_lens.add(round(cfg.chunk_seconds * 16_000))
-
-    # SOLA's history sizing — matches engine._sola_input_cfg.
-    from audio.sola import SOLAConfig
-
-    sola_cfg = SOLAConfig(
-        rate=16_000,
-        crossfade_ms=cfg.sola_crossfade_ms,
-        search_ms=cfg.sola_search_ms,
-        context_ms=cfg.sola_context_ms,
-        corr_threshold=cfg.sola_corr_threshold,
-    )
-    history_len = sola_cfg.context_samples + sola_cfg.crossfade_samples
-
-    from audio.engine import _interpolate_voiced_gaps_np, _to_pitch_coarse
-
-    for audio16_len in sorted(unique_audio16_lens):
-        model_input_len = history_len + audio16_len
-        if model_input_len <= 0:
-            continue
-        dummy = rng.standard_normal(model_input_len).astype(np.float32) * 0.001
-        for _ in range(4):
-            try:
-                _infer_impl(
-                    audio16k=dummy,
-                    cv=cv,
-                    rmvpe=rmvpe,
-                    rvc=rvc,
-                    is_half=is_half,
-                    cv_input_dtype=cv_input_dtype,
-                    rmvpe_input_dtype=rmvpe_input_dtype,
-                    fairseq_embedder=fairseq_embedder,
-                    active_embedder=active_embedder,
-                    f0_up_key=cfg.f0_up_key,
-                    sid=cfg.sid,
-                    threshold=cfg.threshold,
-                    interpolate_fn=_interpolate_voiced_gaps_np,
-                    pitch_coarse_fn=_to_pitch_coarse,
-                    t_cv0=time.perf_counter(),
-                )
-            except Exception:
-                break
-
-
-def _infer_impl(
-    *,
-    audio16k: NDArrayF32,
-    cv: Any,
-    rmvpe: Any,
-    rvc: Any,
-    is_half: bool,
-    cv_input_dtype: str,
-    rmvpe_input_dtype: str,
-    fairseq_embedder: Any,
-    active_embedder: str,
-    f0_up_key: int,
-    sid: int,
-    threshold: float,
-    interpolate_fn: Any,
-    pitch_coarse_fn: Any,
-    t_cv0: float,
-) -> tuple[NDArrayF32, float, float, float, bool]:
-    """Mirrors `engine._infer` exactly — same pipeline, same NaN
-    sanitization, same per-stage timing collection. Returned as a
-    plain tuple so the child can ship per-stage ms back to the
-    parent over the metadata pipe.
-    """
-    # Step 1: contentvec features (or fairseq).
-    if active_embedder == "fairseq" and fairseq_embedder is not None:
-        feats = fairseq_embedder.extract(audio16k.astype(np.float32, copy=False))
-    else:
-        in_dtype = np.float16 if "float16" in cv_input_dtype else np.float32
-        audio_in = audio16k.reshape(1, -1).astype(in_dtype)
-        feats_raw = cv.run(["unit12"], {"audio": audio_in})[0]
-        feats = feats_raw.astype(np.float32, copy=False)
-    if np.isnan(feats).any():
-        feats = np.nan_to_num(feats, nan=0.0)
-    t_cv1 = time.perf_counter()
-
-    # Step 2: rmvpe pitch.
-    rm_dtype = np.float16 if "float16" in rmvpe_input_dtype else np.float32
-    pitchf_raw = rmvpe.run(
-        ["pitchf"],
-        {
-            "waveform": audio16k.reshape(1, -1).astype(rm_dtype),
-            "threshold": np.array([threshold], dtype=rm_dtype),
-        },
-    )[0]
-    pitchf = pitchf_raw.astype(np.float32).squeeze()
-    pitchf = interpolate_fn(pitchf)
-    t_rmvpe1 = time.perf_counter()
-
-    # Step 3: rvc vocoder.
-    feats_2x = np.repeat(feats, 2, axis=1)
-    pitch_coarse, pitchf_aligned = pitch_coarse_fn(pitchf, target_len=feats_2x.shape[1])
-    pitch_coarse = pitch_coarse[: feats_2x.shape[1]].reshape(1, -1)
-    if f0_up_key != 0:
-        pitchf_aligned = pitchf_aligned * (2.0 ** (f0_up_key / 12.0))
-    pitchf_aligned = pitchf_aligned[: feats_2x.shape[1]].reshape(1, -1).astype(np.float32)
-
-    feats_dtype = np.float16 if is_half else np.float32
-    out = rvc.run(
-        ["audio"],
-        {
-            "feats": feats_2x.astype(feats_dtype),
-            "p_len": np.array([feats_2x.shape[1]], dtype=np.int64),
-            "pitch": pitch_coarse,
-            "pitchf": pitchf_aligned,
-            "sid": np.array([sid], dtype=np.int64),
-        },
-    )[0]
-    result = np.array(out).astype(np.float32).squeeze()
-    nan_replaced = False
-    if np.isnan(result).any() or np.isinf(result).any():
-        result = np.nan_to_num(result, nan=0.0, posinf=1.0, neginf=-1.0)
-        nan_replaced = True
-    t_rvc1 = time.perf_counter()
-
-    cv_ms = (t_cv1 - t_cv0) * 1000.0
-    rmvpe_ms = (t_rmvpe1 - t_cv1) * 1000.0
-    rvc_ms = (t_rvc1 - t_rmvpe1) * 1000.0
-
-    return result, cv_ms, rmvpe_ms, rvc_ms, nan_replaced
 
 
 __all__ = [
