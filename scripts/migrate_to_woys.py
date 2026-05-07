@@ -188,6 +188,10 @@ def _rewrite_config_toml(config_path: Path, *, dry_run: bool, log: list[str]) ->
     # Atomic write via .tmp + rename so a crash mid-write can't corrupt config.
     tmp = config_path.with_suffix(config_path.suffix + ".tmp")
     _toml_dump(rewritten, tmp)
+    # B65 / sec-003: enforce 0600 BEFORE the atomic rename so the file is
+    # never world-readable, even briefly. Pre-v0.8.0 we relied on the
+    # caller's umask, which on a typical user (022) inherited 0644.
+    os.chmod(tmp, 0o600)
     os.replace(tmp, config_path)
 
 

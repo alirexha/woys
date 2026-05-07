@@ -137,6 +137,18 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
     api = HfApi()
     info = api.repo_info(repo)
     siblings = getattr(info, "siblings", None) or []
+    # B25 / sec-009: build a name → expected SHA map from the HF API. lfs files
+    # have a `lfs` blob with `sha256`; small (non-lfs) files surface their git
+    # blob_id in `blob_id` (which is *not* SHA256 but *is* a stable content
+    # hash that detects mid-flight tampering). We verify lfs SHAs hard, treat
+    # blob_id as informational.
+    lfs_sha_by_name: dict[str, str] = {}
+    for s in siblings:
+        lfs_obj = getattr(s, "lfs", None)
+        if lfs_obj is not None:
+            sha = getattr(lfs_obj, "sha256", None)
+            if isinstance(sha, str) and len(sha) == 64:
+                lfs_sha_by_name[s.rfilename] = sha
     entries = [s.rfilename for s in siblings if s.rfilename.endswith((".onnx", ".index"))]
     if not entries:
         raise RuntimeError(f"no .onnx / .index files found in {repo}")
@@ -145,6 +157,21 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
     landed: list[Path] = []
     for rfn in entries:
         cached = hf_hub_download(repo_id=repo, filename=rfn)
+        # B25: verify SHA256 of the cache file against the HF API's reported
+        # value. If the cache was tampered with after hf_hub_download wrote
+        # it, this catches it; legitimate upstream rehashes invalidate the
+        # local cache (user re-downloads via `--force` of huggingface_hub).
+        expected = lfs_sha_by_name.get(rfn)
+        if expected is not None:
+            actual = _sha256_of(Path(cached))
+            if actual != expected:
+                raise RuntimeError(
+                    f"SHA256 mismatch for {rfn} from {repo}:\n"
+                    f"  expected {expected}\n"
+                    f"  actual   {actual}\n"
+                    f"Refusing to install. Try `huggingface-cli download "
+                    f"{repo} --force-download` to refresh the cache."
+                )
         # Drop into models_dir under a sensible local name (basename only,
         # de-conflict with prefix if needed).
         base = Path(rfn).name
@@ -162,9 +189,20 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
 
             shutil.copy2(cached, local)
         size_mib = local.stat().st_size / (1024 * 1024)
-        print(f"  [get ] {local.name}  ({size_mib:.1f} MiB)")
+        verified = " [sha256 verified]" if expected else ""
+        print(f"  [get ] {local.name}  ({size_mib:.1f} MiB){verified}")
         landed.append(local)
     return landed
+
+
+def _sha256_of(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def cli_models_list(models_dir: Path = MODELS_DIR) -> int:
