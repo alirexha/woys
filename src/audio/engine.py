@@ -340,11 +340,37 @@ class EngineStats:
     nan_chunks: int = 0
     sola_fallback_count: int = 0
 
+    # v0.7.0-rc6 — per-stage producer-side timing for the writer-jitter
+    # investigation. The rc5 postmortem
+    # (`docs/16-audit/12-rc5-writer-jitter-probe.md`) attributed the
+    # live `writer_jitter_ms = 62` to producer-side cadence variance,
+    # not consumer-side. These two new stages plus the existing
+    # inference timing sum to per-iteration wall time:
+    #
+    #   mic_read_ms       blocking read of chunk_mic samples (PortAudio
+    #                     / ALSA — should hover near chunk_seconds *
+    #                     1000 in steady state; variance reflects
+    #                     ALSA period scheduling + USB iso jitter)
+    #   inference_ms      RVC inference (existing, percentiles new)
+    #   enqueue_lag_ms    output resample + _to_sink_bytes + put_nowait
+    #                     (should be sub-ms in steady state; spikes
+    #                     mean GC pause / GIL contention / queue full)
+    #
+    # `woys diag` surfaces p50/p95/p99 of each so we can attribute the
+    # 62 ms cadence variance to a specific stage in one Telegram run.
+    last_mic_read_ms: float = 0.0
+    last_enqueue_lag_ms: float = 0.0
+
     # Rolling latency window for the TUI.
     _recent_inference: deque[float] = field(default_factory=lambda: deque(maxlen=32))
     _recent_total: deque[float] = field(default_factory=lambda: deque(maxlen=32))
     # v0.5.2 — inter-write intervals in ms (writer thread fills this).
     _writer_intervals_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    # v0.7.0-rc6 — wider window than _recent_inference (32) so p95/p99
+    # have enough samples to be stable. 128 chunks ≈ 19 s at
+    # chunk_seconds=0.15.
+    _recent_mic_read_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    _recent_enqueue_lag_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
 
 # v0.7.0: cuDNN convolution algorithm search strategy. EXHAUSTIVE was the
@@ -1580,7 +1606,17 @@ class RealtimeEngine:
                     # unpacked into `_` and lost; lens 01 of the audit
                     # flagged it as a silent mic-side drop site
                     # invisible to every existing counter.
+                    #
+                    # v0.7.0-rc6 — wrapped with timing so we can attribute
+                    # producer-side cadence variance to the mic read vs
+                    # processing vs handoff. Steady-state mic_read_ms
+                    # should hover near chunk_seconds * 1000; variance
+                    # reflects ALSA period scheduling + USB iso jitter.
+                    t_mic_pre = time.perf_counter()
                     data, overflowed = in_stream.read(chunk_mic)
+                    mic_read_ms = (time.perf_counter() - t_mic_pre) * 1000.0
+                    self.stats.last_mic_read_ms = mic_read_ms
+                    self.stats._recent_mic_read_ms.append(mic_read_ms)
                     if overflowed:
                         self.stats.input_overflows += 1
                     audio = data.reshape(-1).astype(np.float32, copy=False)
@@ -1664,7 +1700,18 @@ class RealtimeEngine:
                     # v0.5.2: hand off to writer thread (non-blocking enqueue).
                     # The watchdog respawns pacat if it dies — main loop
                     # never raises out of the loop on a transient pacat fault.
+                    #
+                    # v0.7.0-rc6 — wrapped with timing. enqueue_lag_ms
+                    # covers _to_sink_bytes (numpy convert) + put_nowait
+                    # (queue insert). Should be sub-ms in steady state;
+                    # spikes mean GC pause / GIL contention / queue
+                    # backpressure (which would also bump
+                    # `queue_full_events`).
+                    t_enq_pre = time.perf_counter()
                     self._enqueue_chunk(self._to_sink_bytes(out48))
+                    enq_lag_ms = (time.perf_counter() - t_enq_pre) * 1000.0
+                    self.stats.last_enqueue_lag_ms = enq_lag_ms
+                    self.stats._recent_enqueue_lag_ms.append(enq_lag_ms)
 
                     # v0.7.0-rc5 — pull SOLA's threshold-fallback count
                     # into engine stats. The rc4 `sola_drain_ms` (zero-

@@ -4,6 +4,80 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc6] — 2026-05-07 — Producer-side timing instrumentation only; no behavior change
+
+rc5 fixed SOLA structurally but cuts persisted in Telegram. The
+counter dump showed `writer_jitter_ms = 62` and `xruns = 18`
+unchanged from rc4 even though `overrun_ratio = 0.000` (engine
+inference fits in budget). The rc5 writer-jitter probe
+(`docs/16-audit/12-rc5-writer-jitter-probe.md`) ruled out the writer
+side definitively: write+flush is 0.04 ms ± 0.02 ms when fed at
+exact 150 ms cadence; pipe size is irrelevant; queue timeout is
+benign.
+
+The 62 ms is producer-side variance: the engine main loop's actual
+put cadence has 62 ms std on this hardware. `overrun_ratio = 0` only
+says "post-mic-read processing fits in budget" — it doesn't say
+"`mic_read + processing` has constant cadence."
+
+rc6 instruments the producer side so the next Telegram run
+attributes the variance to a specific stage. **Pure instrumentation.
+No behavior change. No fix.** rc7 will fix exactly the dominant
+stage based on rc6's data.
+
+### What changed
+
+`src/audio/engine.py`:
+- `EngineStats` gains `last_mic_read_ms`, `last_enqueue_lag_ms`, and
+  rolling deques `_recent_mic_read_ms` (maxlen 128) and
+  `_recent_enqueue_lag_ms` (maxlen 128).
+- `_run_loop` wraps `in_stream.read(chunk_mic)` with `perf_counter()`
+  bookends → `mic_read_ms`. Wraps `_enqueue_chunk(_to_sink_bytes(...))`
+  → `enqueue_lag_ms`.
+
+`src/woys/cli.py`:
+- `cmd_diag` adds a per-stage breakdown printing p50/p95/p99 of:
+  - `inference` (from existing `_recent_inference`; was avg-only)
+  - `mic_read` (new)
+  - `enqueue_lag` (new)
+
+### What did NOT change
+
+- No defaults bumped. No migration. `config_schema_version` stays at 10.
+- No tests changed. The instrumentation is additive; existing
+  behavior is preserved.
+- No version-tied config field added. The new deques are internal;
+  the `last_*` attrs are simple floats.
+
+Per-call cost: 4 extra `perf_counter()` calls (~50 ns each =
+~200 ns / chunk = 1.3 µs / s at 6.7 chunks/s). Below noise.
+
+### What rc6 still requires
+
+Real-mic Telegram test, then `woys diag --duration 30`. Expected
+reading after the fresh test:
+
+- `inference p50/p95/p99` — confirms whether tail spikes contribute
+  (avg=50 ms is hiding tail behavior; if p99 ≫ avg, tail is real).
+- `mic_read p50/p95/p99` — should hover near 150 ms; variance ≫
+  ALSA period (~21 ms) implies USB iso jitter / mic-side scheduling.
+- `enqueue_lag p50/p95/p99` — should be sub-ms; spikes mean GC
+  pause / GIL contention / queue backpressure.
+
+Whichever p99 dominates the 62 ms variance budget tells us the rc7
+target.
+
+### Verification
+
+98/98 fast tests pass; `mypy --strict` clean; ruff format clean.
+The 14 pre-existing ruff line-length warnings in `engine.py` (cuDNN
+comment block) and `cli.py` are unchanged by rc6.
+
+DO NOT auto-tag. rc6 is diagnostic only — no audible behavior
+change is expected. After alireza confirms no regression in
+Telegram and posts the per-stage percentiles, rc7 fixes the
+dominant stage.
+
 ## [0.7.0rc5] — 2026-05-07 — Fix SOLA's per-call output contract; revert the rc4 zero-pad
 
 rc4's bundled fixes were tested in Telegram and audibly *worse* than
