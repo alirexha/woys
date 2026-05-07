@@ -4,6 +4,137 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0rc5] — 2026-05-07 — Fix SOLA's per-call output contract; revert the rc4 zero-pad
+
+rc4's bundled fixes were tested in Telegram and audibly *worse* than
+rc3 — the new counters proved why immediately:
+
+```
+gated_chunks=0      input_overflows=0   nan_chunks=0   dropped_chunks=0
+sola_drain_ms=355.1 in 10s        ← the rc4 zero-pad emitting silence
+writer_jitter_ms=63.8             ← the LESSONS §19 threading tax
+```
+
+Three of rc4's four P0s did not fire at all. The one that mattered —
+SOLA's per-call output contract — wasn't the fix the audit proposed;
+the rc4 zero-pad emitted ~6 cut-events / second of explicit silence
+into the audio. That was the audible degradation alireza heard.
+
+rc5 fixes SOLA structurally instead of patching the symptom. Full
+diagnosis in `docs/16-audit/11-rc4-postmortem.md`.
+
+### What changed (one fix, scoped)
+
+**SOLA's per-call output contract (`src/audio/sola.py`).** Match
+upstream w-okada's contract at
+`upstream/server/voice_changer/VoiceChangerV2.py:248-285`:
+
+- Input is sized `chunk_n + cf + search` (was `chunk_n + cf` pre-rc5).
+- Search range is one-sided `[0, search]` (was `[-search, +search]`).
+- Output is **always `chunk_n` samples**, regardless of which
+  alignment offset wins. The search slack lives in the input, not
+  the output.
+- `prev_tail` sourced from the END of input (a fixed temporal
+  position) instead of from the variable-position emit's tail.
+
+**Engine feeds SOLA `search` more samples** (`src/audio/engine.py`).
+`_process_streaming_16k` reduces `ctx_drop_in` by `search_samples`
+when SOLA is enabled, so SOLA receives the input it needs to honour
+the new contract. SOLA-disabled path is unchanged.
+
+**rc4 zero-pad reverted.** `cumulative_drain_samples` and the
+length-padding hunk in `SOLAStream.process()` are gone. SOLA
+emits real signal across the entire `chunk_n` window or nothing
+shorter — never both.
+
+**rc4 misnamed counter `sola_drain_ms` removed.** Drain is
+structurally zero under rc5's contract; the counter has no meaning.
+`sola_fallback_count` is kept and re-meaningful — it counts events
+where the alignment search's peak correlation fell below
+`corr_threshold` and the algorithm used `offset = 0`. Under rc5,
+threshold-fallback no longer affects emit length; the counter is
+purely a "search is giving up" diagnostic.
+
+**`scripts/profile_engine.py` helper added.** Wraps `py-spy record`
+with sane flags (200 Hz sample rate, all threads, idle time
+included, sudo prefix if needed) so the next session can attack the
+LESSONS §19 / `writer_jitter_ms = 63.8` threading tax with a real
+profile instead of code reading.
+
+**`woys diag` adds `inference_overrun_ratio`.** = `late_chunks /
+chunks_processed`. Surfaces budget-overrun rate directly so the
+threading-tax investigation has a single-number signal to track.
+
+**LESSONS.md §20 added** with three meta-lessons from the rc1→rc5
+saga: sequential falsification beats bundled fixes for load-bearing
+bugs; agent convergence on the same code path is one signal not N;
+for vendored algorithms, diff first audit second.
+
+### What did NOT change
+
+Per the user's "don't bundle this time" constraint, every other rc4
+fix is held in place. None of these had live counter evidence
+contradicting them and none caused the rc4 audible regression:
+
+- input gate threshold (`-55 → -75 dBFS`) and hysteresis (`200 ms`):
+  benign, `gated_chunks = 0` in real use.
+- AppConfig forwarding fix for `input_gate_dbfs`,
+  `input_gate_hysteresis_ms`, `prefer_pw_cat`: necessary plumbing.
+- PortAudio overflow flag capture: free instrumentation.
+- `prefer_pw_cat = False`: confirmed working as `pacat` per
+  rc4's `player backend: pacat` line.
+- Counters `input_overflows`, `gated_chunks`, `nan_chunks`,
+  `sola_fallback_count`: kept (paid for themselves in rc4).
+
+Out of scope per the rc4 postmortem (deferred to v0.8.x):
+
+- The threading tax / writer jitter fix. Needs a live py-spy
+  profile first; `scripts/profile_engine.py` lands in this rc to
+  enable that work.
+- Bisecting the four remaining rc1 sleepers (`chunk_seconds 0.15`,
+  cuDNN HEURISTIC, `sola_search_ms 6.0`, test budget 20 %). One
+  at a time, after rc5 baseline-tests cleanly.
+
+### Migration
+
+`config_schema_version` stays at 10. No new defaults to migrate.
+
+### Tests
+
+- `tests/test_sola.py::test_sola_emit_length_constant_across_offsets`
+  — pins the rc5 invariant: emit length == chunk_n regardless of
+  threshold-fallback or alignment-success.
+- `tests/test_sola.py::test_sola_emit_is_signal_not_zeros` — would
+  have caught the rc4 zero-pad regression. Pins that the trailing
+  `search` samples of any emit on non-silent input have RMS > 1e-3,
+  i.e. real signal not pad.
+- `tests/test_sola.py::test_sola_first_chunk_emits_chunk_n` —
+  first-chunk path matches the contract too.
+- `tests/test_sola.py::test_best_offset_finds_aligned_shift` updated
+  for one-sided search (`true_shift ∈ [0, search]`).
+- rc4's `test_sola_pads_fallback_shortfall_to_input_length` and
+  `test_sola_no_drain_on_clean_alignment` removed — they pinned
+  the wrong contract.
+- 98/98 fast tests pass; mypy --strict clean.
+
+### What rc5 still requires
+
+Real-mic Telegram test. Then read `woys diag`:
+
+- `sola_drain_ms` is gone (structurally zero).
+- `sola_fallback_count` should be near zero on real speech (the
+  alignment search rarely gives up given real-speech correlation
+  structure).
+- `inference_overrun_ratio` is the new signal — > ~0.05 means the
+  threading tax is biting and the next debug cycle attacks
+  `scripts/profile_engine.py`.
+
+If audible cuts persist with all the above counters clean, the next
+move is the threading-tax investigation. If cuts are gone, tag
+v0.7.0.
+
+DO NOT auto-tag. Alireza's verdict in Telegram is the gate.
+
 ## [0.7.0rc4] — 2026-05-07 — Stop tuning the wrong layer; bundle four root-cause fixes from the audit
 
 User audibly rejected rc3 in Telegram — same character as rc2 and rc1.
