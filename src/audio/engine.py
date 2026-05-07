@@ -569,6 +569,24 @@ class EngineStats:
     trt_active_for: dict[str, bool] = field(default_factory=dict)
     trt_init_errors: dict[str, str] = field(default_factory=dict)
 
+    # B23 / quality-019: public read-accessors for the rolling stat
+    # windows. cli.py used to reach into the leading-underscore deques
+    # directly, which made any future EngineStats refactor
+    # silent-breaking.
+    def inference_samples(self) -> list[float]:
+        """Snapshot of the recent-inference rolling window in ms."""
+        return list(self._recent_inference)
+
+    def total_samples(self) -> list[float]:
+        """Snapshot of the recent-total rolling window in ms."""
+        return list(self._recent_total)
+
+    def mic_read_samples_ms(self) -> list[float]:
+        return list(self._recent_mic_read_ms)
+
+    def enqueue_lag_samples_ms(self) -> list[float]:
+        return list(self._recent_enqueue_lag_ms)
+
 
 # v0.7.0-rc10: HEURISTIC → EXHAUSTIVE. The rc8 tail-chunk capture +
 # rc9 broader pre-warm together pinned the inference p99 spike to
@@ -628,7 +646,10 @@ def _cuda_provider_entry() -> tuple[str, dict[str, object]]:
             "arena_extend_strategy": "kSameAsRequested",
             "cudnn_conv_algo_search": _CUDNN_ALGO_SEARCH,
             "do_copy_in_default_stream": True,
-            "cudnn_conv_use_max_workspace": "1",
+            # B54 / corr-023: bool, not the string "1". ORT's CUDA EP option
+            # parser accepts both, but every other entry in this dict uses
+            # native types — be consistent.
+            "cudnn_conv_use_max_workspace": True,
         },
     )
 
@@ -718,21 +739,31 @@ def _make_session(path: Path, *, use_tensorrt: bool = True) -> ort.InferenceSess
 _VOICED_GAP_MAX_FRAMES = 8  # ~80 ms at the RMVPE 100 fps frame rate
 
 
-def _interpolate_voiced_gaps_np(pitchf: NDArrayF32) -> NDArrayF32:
+def interpolate_voiced_gaps_np(pitchf: NDArrayF32) -> NDArrayF32:
+    """B16 / perf-002: vectorized version. The pre-v0.8.0 implementation
+    walked an inner `for k in range(i, j)` Python loop that ran ~50-200
+    iterations per chunk under typical RMVPE pitch tracks. numpy slicing
+    replaces the loop with a single broadcast multiply per gap.
+
+    Also keeps the dtype path in float32 throughout (pre-v0.8.0 cast to
+    float64 for the linspace arithmetic, then back to float32) — minor
+    alloc churn reduction for B16's perf-001 partial.
+    """
     if pitchf.size == 0:
         return pitchf
-    arr = pitchf.astype(np.float64, copy=True)
-    invalid = np.isnan(arr) | (arr <= 0.0)
+    invalid = np.isnan(pitchf) | (pitchf <= 0.0)
     if not invalid.any():
         return pitchf
     if (~invalid).sum() == 0:
         # Whole chunk is unvoiced — preserve so vocoder produces silence.
-        out_silence: NDArrayF32 = np.nan_to_num(arr, nan=0.0).astype(np.float32, copy=False)
-        return out_silence
-    out = np.nan_to_num(arr, nan=0.0)
+        return np.nan_to_num(pitchf, nan=0.0).astype(np.float32, copy=False)
+    out = np.nan_to_num(pitchf, nan=0.0).astype(np.float32, copy=True)
+    n = len(invalid)
+    # Walk the runs of invalid; bridge each ≤ _VOICED_GAP_MAX_FRAMES gap
+    # via vectorized linear interpolation between the bracketing voiced
+    # frames.
     last_valid = -1
     i = 0
-    n = len(invalid)
     while i < n:
         if not invalid[i]:
             last_valid = i
@@ -749,15 +780,34 @@ def _interpolate_voiced_gaps_np(pitchf: NDArrayF32) -> NDArrayF32:
             and out[last_valid] > 0.0
             and out[j] > 0.0
         ):
-            for k in range(i, j):
-                alpha = (k - last_valid) / (j - last_valid)
-                out[k] = out[last_valid] * (1.0 - alpha) + out[j] * alpha
+            # Vectorized: alpha vector over the gap, single broadcast
+            # multiply replaces the Python `for k in range(i, j)` loop.
+            alphas = (np.arange(i, j, dtype=np.float32) - last_valid) / (j - last_valid)
+            out[i:j] = out[last_valid] * (1.0 - alphas) + out[j] * alphas
         i = j
-    out_f32: NDArrayF32 = out.astype(np.float32, copy=False)
-    return out_f32
+    return out
 
 
-def _to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, NDArrayF32]:
+# Backwards-compat alias for the rare external caller. New code uses the
+# public name. (B23: encapsulation cleanup; old-style _ prefix retained.)
+_interpolate_voiced_gaps_np = interpolate_voiced_gaps_np
+
+
+def to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, NDArrayF32]:
+    """B24 / quality-020: now a public name (drop leading underscore) so the
+    smoke test can `from audio.engine import to_pitch_coarse` instead of
+    re-implementing the algorithm. Single source of truth.
+
+    B56 / perf-003: early-exit on all-zero pitchf — the engine's input gate
+    fully zeroes audio during sub-hysteresis transitions (engine.py:2184)
+    and the resulting RMVPE output is all-zero. Skipping the four numpy
+    passes (log, mask multiply, clip, rint) saves ~8 µs per such chunk.
+    """
+    if pitchf.size == 0 or float(pitchf.max()) == 0.0:
+        return (
+            np.zeros(target_len, dtype=np.int64),
+            np.zeros(target_len, dtype=np.float32),
+        )
     f0_min, f0_max = 50.0, 1100.0
     f0_mel_min = 1127.0 * np.log(1 + f0_min / 700.0)
     f0_mel_max = 1127.0 * np.log(1 + f0_max / 700.0)
@@ -769,6 +819,10 @@ def _to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, N
     f0_mel[mask] = (f0_mel[mask] - f0_mel_min) * 254 / (f0_mel_max - f0_mel_min) + 1
     f0_mel = np.clip(f0_mel, 1.0, 255.0)
     return np.rint(f0_mel).astype(np.int64), pitch
+
+
+# Backwards-compat alias.
+_to_pitch_coarse = to_pitch_coarse
 
 
 def _resample_linear(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArrayF32:
@@ -1070,6 +1124,27 @@ class RealtimeEngine:
         # Probed `model_sr` per voice path so we don't redo the probe each
         # swap. Keys are resolved Paths.
         self._rvc_sr_cache: dict[Path, int] = {}
+
+    # ---- B23 / quality-019: public read-accessors ---------------------------
+    # cli.py used to reach into `engine._player_backend`, `engine._inf_client`
+    # to render diag info; now goes through these stable surfaces.
+
+    @property
+    def player_backend(self) -> str:
+        """The active playback backend ('pacat' / 'pw-cat'), or '' before start."""
+        return self._player_backend
+
+    @property
+    def has_inference_subprocess(self) -> bool:
+        """True iff the inference subprocess is currently spawned + alive."""
+        return self._inf_client is not None and self._inf_client.is_alive
+
+    @property
+    def inference_subprocess_pid(self) -> int | None:
+        """Child process PID, or None if running in-process."""
+        if self._inf_client is None or self._inf_client._handles is None:
+            return None
+        return self._inf_client._handles.proc.pid
 
         # v0.6.7 — stateful per-(src,dst) resamplers. Created in `_run_loop`
         # before the first chunk, replaced when the model output rate
@@ -1482,8 +1557,13 @@ class RealtimeEngine:
         # v0.6.9: belt-and-braces NaN sanitize. pacat is fed float32le; NaN
         # would be undefined behavior in PipeWire's mixer chain and the
         # listener hears it as a click + brief gap.
+        # B57 / audio-010: posinf=0.0 / neginf=0.0 (not ±1.0). nan_to_num is
+        # element-wise — only the rare bad samples are zeroed, not the whole
+        # chunk. The pre-v0.8.0 ±1.0 produced full-scale impulses (audible
+        # click) on inf samples; zero is a single-sample dropout (~21 µs at
+        # 48 kHz), audibly less harsh.
         if np.isnan(result).any() or np.isinf(result).any():
-            result = np.nan_to_num(result, nan=0.0, posinf=1.0, neginf=-1.0)
+            result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
             # v0.7.0-rc4 — count NaN-sanitize hits so we can attribute
             # voice-correlated cuts to the vocoder rather than the gate
             # or SOLA. Pre-rc4 the path silently zeroed samples; lens 06
@@ -1608,6 +1688,16 @@ class RealtimeEngine:
             return
         self._stop_event.clear()
 
+        # B55 / corr-025: disable Python GC BEFORE the heavy session-load +
+        # warmup steps. Pre-v0.8.0 we ran `gc.disable` after warmup, so any
+        # gc cycles that ORT session loading triggered (and there are some
+        # under torch+ORT version combinations) paid full GC cost during the
+        # commitment-to-running phase. Move it up — disable the moment the
+        # caller commits.
+        self._gc_was_enabled_before_start = gc.isenabled()
+        if self._gc_was_enabled_before_start:
+            gc.disable()
+
         if self.cfg.inference_subprocess:
             # v0.8.0 — spawn the inference child. Child loads ORT
             # sessions + applies the rc7-rc12 wins (gc.disable, RT
@@ -1659,16 +1749,6 @@ class RealtimeEngine:
             n = self.warmup_voice_library()
             print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
         self.stats.running = True
-
-        # v0.7.0-rc7 — disable Python GC in the parent during the
-        # engine's lifetime. Even in subprocess mode, the parent
-        # still does mic I/O, SOLA, and writer-thread coordination
-        # — all GIL-holding work that benefits from GC pauses being
-        # eliminated. The CHILD also runs gc.disable() per its own
-        # config (see EngineConfig.inference_subprocess_disable_gc).
-        self._gc_was_enabled_before_start = gc.isenabled()
-        if self._gc_was_enabled_before_start:
-            gc.disable()
 
         self._thread = threading.Thread(target=self._run_loop, name="vcclient-engine", daemon=True)
         self._thread.start()
@@ -1932,7 +2012,10 @@ class RealtimeEngine:
         """
         # Best-effort thread-local affinity so the writer doesn't ping-pong
         # cores away from the main engine thread.
-        self._apply_thread_priority(label="writer")
+        # B19 / perf-009: writer at priority 59 (engine at 60). Both stay
+        # SCHED_FIFO so SCHED_OTHER background work can't starve either,
+        # but the engine wins same-class tie-breaks during contention.
+        self._apply_thread_priority(label="writer", priority=59)
         while not self._stop_event.is_set():
             try:
                 payload = self._writer_queue.get(timeout=0.1) if self._writer_queue else None
@@ -2044,18 +2127,23 @@ class RealtimeEngine:
             stderr_t.start()
             self._stderr_thread = stderr_t
 
-    def _apply_thread_priority(self, *, label: str) -> None:
+    def _apply_thread_priority(self, *, label: str, priority: int = 60) -> None:
         """Pin to `cpu_affinity_core` and optionally raise priority.
 
         Called from inside whichever thread should be pinned; affinity /
         scheduling class are per-thread on Linux.
 
-        v0.7.0-rc11 — `realtime_priority=True` now actually requests
-        SCHED_FIFO at priority 60 instead of just nice(-10). On hosts
-        with RLIMIT_RTPRIO ≥ 60 (or CAP_SYS_NICE), the thread becomes
-        non-preemptible by user-space SCHED_OTHER tasks (KDE compositing,
-        picom, browser, etc.). Falls back cleanly to nice(-10), then to
-        a logged warning, on locked-down systems.
+        v0.7.0-rc11 — `realtime_priority=True` requests SCHED_FIFO at the
+        given `priority` (default 60). On hosts with RLIMIT_RTPRIO ≥ 60
+        (or CAP_SYS_NICE), the thread becomes non-preemptible by
+        user-space SCHED_OTHER tasks (KDE compositing, picom, browser,
+        etc.). Falls back cleanly to nice(-10), then to a logged
+        warning, on locked-down systems.
+
+        B19 / perf-009: writer thread now passes `priority=59` so the
+        engine main thread (priority 60) wins SCHED_FIFO tie-breaks
+        without starving the writer. Same FIFO scheduler class — both
+        threads still preempt SCHED_OTHER background work.
         """
         if self.cfg.cpu_affinity_core is not None:
             try:
@@ -2066,7 +2154,7 @@ class RealtimeEngine:
             try:
                 # Linux-only API. AttributeError on platforms (Windows,
                 # macOS) where sched_setscheduler isn't exposed.
-                param = os.sched_param(60)
+                param = os.sched_param(priority)
                 os.sched_setscheduler(0, os.SCHED_FIFO, param)
             except (OSError, PermissionError, AttributeError) as rt_err:
                 # RLIMIT_RTPRIO too low (or no CAP_SYS_NICE) → fall back
@@ -2215,6 +2303,14 @@ class RealtimeEngine:
                     # stat reflects what the model actually sees.
                     if self.cfg.input_gain_db != 0.0:
                         audio = audio * np.float32(10.0 ** (self.cfg.input_gain_db / 20.0))
+                        # B21 / audio-007: positive `input_gain_db` can push
+                        # samples beyond ±1.0; the RVC encoders see garbage on
+                        # out-of-range input. Hard-clip post-gain so the
+                        # vocoder always sees in-range audio. Users who want
+                        # non-clipping headroom should attenuate at the mic
+                        # (pre-amp side), not via woys.
+                        if self.cfg.input_gain_db > 0.0:
+                            np.clip(audio, -1.0, 1.0, out=audio)
 
                     rms = float(np.sqrt(np.mean(audio**2)))
                     self.stats.last_input_rms = rms

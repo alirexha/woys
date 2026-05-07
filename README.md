@@ -13,10 +13,18 @@ A fork-and-trim of [w-okada/voice-changer](https://github.com/w-okada/voice-chan
 
 ## Goals (measured, not claimed)
 
-- End-to-end latency `< 80 ms` (mic → transformed output)
-- Idle VRAM `< 500 MB`
-- CPU `< 15 %` while active
-- Single `./install.sh`, runs in under 5 minutes on a fresh CachyOS
+- **Inference floor `< 80 ms`** per chunk — the gate in
+  `tests/test_smoke_rvc_onnx.py::LATENCY_FLOOR_MS` (measured on
+  RTX 2070, ORT-CUDA, RVC v2 + RMVPE).
+- **End-to-end mic → output**: currently `~500-540 ms` with the v0.8.0
+  defaults (chunk 150 + inference ~80 + pacat output buffer 280 +
+  PipeWire codec ~30). The output buffer dominates; lowering it
+  re-introduces audible cuts on this hardware. See `docs/05-perf.md`
+  for the rc-by-rc latency table.
+- Idle VRAM `< 500 MB` (currently misses at ~1.35 GiB — foundation
+  models dominate).
+- CPU `< 15 %` while active.
+- Single `./install.sh`, runs in under 5 minutes on a fresh CachyOS.
 
 See `docs/05-perf.md` for the actual measured numbers (some targets are
 currently missed; the path to closing the gap is documented).
