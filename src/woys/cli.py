@@ -294,6 +294,17 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
 
     s = engine.stats
     print("---- results ----")
+    # v0.8.0-rc4 — surface the inference path explicitly so silent
+    # fallbacks (rc2 corruption bug) can never hide again. If the
+    # user asked for subprocess but it isn't running, that's a
+    # bug; print it loudly. last_error captures the rationale.
+    if engine.cfg.inference_subprocess:
+        if s.child_pid is not None:
+            print(f"  inference path   : SUBPROCESS (child pid={s.child_pid})")
+        else:
+            print("  inference path   : IN-PROCESS (subprocess requested but NOT running!)")
+    else:
+        print("  inference path   : IN-PROCESS (legacy, by config)")
     print(f"  player backend   : {engine._player_backend or 'unknown'}")
     print(f"  chunks_processed : {s.chunks_processed}")
     print(f"  avg total e2e    : {s.avg_total_ms:.1f} ms")
@@ -448,6 +459,13 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
     _signal.signal(_signal.SIGINT, _on_sigint)
     _signal.signal(_signal.SIGTERM, _on_sigint)
 
+    # v0.8.0-rc4 — capture child_pid + last_error BEFORE eng.stop()
+    # since stop() clears them as part of subprocess teardown. We
+    # want to know what the engine actually ran with, not its
+    # post-shutdown state.
+    started_child_pid = eng.stats.child_pid
+    started_with_subprocess = eng.cfg.inference_subprocess
+
     deadline = _time.perf_counter() + seconds if seconds > 0 else float("inf")
     try:
         while not stop["now"] and _time.perf_counter() < deadline:
@@ -460,12 +478,28 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
                     f"writer_jitter={s.writer_jitter_ms:.1f}ms "
                     f"xruns={s.xruns} "
                     f"queue_full={s.queue_full_events} "
-                    f"dropped={s.dropped_chunks}"
+                    f"dropped={s.dropped_chunks} "
+                    f"child_alive={eng._inf_client.is_alive if eng._inf_client else 'n/a'}"
                 )
+        running_last_error = eng.stats.last_error
     finally:
         print("stopping engine...")
         eng.stop(timeout=2.0)
         s = eng.stats
+        # Use the pre-stop snapshot, not the post-stop state.
+        if started_with_subprocess:
+            if started_child_pid is not None:
+                path = f"SUBPROCESS (child pid={started_child_pid})"
+            else:
+                path = "IN-PROCESS (subprocess startup never set child_pid)"
+        else:
+            path = "IN-PROCESS (legacy, by config)"
+        print(f"inference path: {path}")
+        # Print last_error from BEFORE stop() — stop() may set its own.
+        if running_last_error:
+            print(f"last_error (during run): {running_last_error}")
+        elif s.last_error:
+            print(f"last_error (post-stop): {s.last_error}")
         print(
             f"final: chunks={s.chunks_processed} "
             f"avg_inf={s.avg_inference_ms:.1f}ms "

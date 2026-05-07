@@ -1208,16 +1208,12 @@ class RealtimeEngine:
                 )
             except InferenceError as e:
                 # Try one restart. If THAT fails, propagate.
-                self.stats.last_error = (
-                    f"inference child died ({e}); attempting restart"
-                )
+                self.stats.last_error = f"inference child died ({e}); attempting restart"
                 try:
                     self._inf_client.restart()
                     self.stats.child_restarts = self._inf_client.restart_count
                     self.stats.child_pid = (
-                        self._inf_client._handles.proc.pid
-                        if self._inf_client._handles
-                        else None
+                        self._inf_client._handles.proc.pid if self._inf_client._handles else None
                     )
                     ipc_result, timings = self._inf_client.infer(
                         audio16k,
@@ -1405,34 +1401,34 @@ class RealtimeEngine:
             # priority, EXHAUSTIVE cuDNN, broader pre-warm) inside its
             # own CUDA context. Parent's audio I/O thread no longer
             # competes with inference for the GIL.
-            from audio.inference_client import InferenceClient, InferenceError
+            #
+            # v0.8.0-rc4: hard-fail on subprocess startup error
+            # rather than silently fall back to in-process. The rc2
+            # silent fallback hid the Path-vs-str crash from the
+            # user (Textual hijacked stderr); only audible
+            # corruption surfaced it. If the user explicitly asked
+            # for subprocess inference, give them a real error
+            # instead of a silent regression. Set
+            # `inference_subprocess=False` to opt into the legacy
+            # path explicitly.
+            from audio.inference_client import InferenceClient
 
             cfg_dict = self._cfg_dict_for_subprocess()
             self._inf_client = InferenceClient(cfg_dict)
-            try:
-                self._inf_client.start()
-            except InferenceError as e:
-                self._inf_client = None
-                self.stats.last_error = f"inference subprocess failed to start: {e}"
-                # Fall back to in-process so the engine isn't dead.
-                self._ensure_sessions()
-                self._warmup_realtime_pipeline()
-            else:
-                # Child loaded the RVC session — pull rate + dtype info.
-                self._rvc_output_sr = self._inf_client.rvc_output_sr
-                self._is_half = self._inf_client.is_half
-                self.active_embedder = self._inf_client.active_embedder
-                self.stats.child_pid = (
-                    self._inf_client._handles.proc.pid
-                    if self._inf_client._handles
-                    else None
-                )
-                # Build the parent-side SOLA stream at the model's
-                # output rate. The legacy in-process path does this
-                # lazily inside `_cached_rvc_sr`; subprocess mode
-                # needs an explicit call because we never went
-                # through `_cached_rvc_sr`.
-                self._rebuild_sola_for_rate(self._rvc_output_sr)
+            self._inf_client.start()  # raises InferenceError on child failure
+            # Child loaded the RVC session — pull rate + dtype info.
+            self._rvc_output_sr = self._inf_client.rvc_output_sr
+            self._is_half = self._inf_client.is_half
+            self.active_embedder = self._inf_client.active_embedder
+            self.stats.child_pid = (
+                self._inf_client._handles.proc.pid if self._inf_client._handles else None
+            )
+            # Build the parent-side SOLA stream at the model's
+            # output rate. The legacy in-process path does this
+            # lazily inside `_cached_rvc_sr`; subprocess mode
+            # needs an explicit call because we never went
+            # through `_cached_rvc_sr`.
+            self._rebuild_sola_for_rate(self._rvc_output_sr)
         else:
             # Legacy in-process path. Builds ORT sessions in this
             # process and warms cuDNN here. Used by tests that need

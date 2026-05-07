@@ -4,6 +4,125 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.8.0rc4] — 2026-05-07 — Hard-fail subprocess startup; surface inference path in diag; A/B confirms multiprocessing is a null result on quiet GPU
+
+### Why this rc
+
+User reported v0.8.0-rc3 audio was "intelligible but full of lag and
+micro cuts. Same as before multiprocessing." Diag showed
+writer_jitter=65.2 / xruns=18 — same numerical signature as
+rc6-rc12 in-process. User asked the obvious question: is subprocess
+actually running, or is it silently falling back like rc2?
+
+### Verification
+
+Process inspection during a `woys engine` run:
+
+```
+PID 244458  woys engine            (parent CLI)
+PID 244460  resource_tracker       (mp daemon)
+PID 244478  spawn_main fork        (inference child)
+PID 244559  pacat                  (audio backend)
+```
+
+Per-second status during 15 s runtime confirmed `child_alive=True`
+throughout. Subprocess WAS running. The user's case (A) hypothesis
+applies.
+
+### Side-by-side A/B (same machine, same conditions, no CS2)
+
+```
+                    subprocess    in-process
+  chunks (15 s)     99            99
+  avg_inf           56.8 ms       54.5 ms
+  writer_jitter     78.2 ms       76.0 ms
+  xruns             26            25
+  queue_full        0             0
+```
+
+**Subprocess is tied with in-process within measurement noise.**
+The architecture isn't delivering the predicted win on quiet GPU.
+
+rc1's measured win (writer_jitter 92→27, xruns 42→1) was real but
+conditional: CS2 was contesting GPU at the time. In-process under
+CS2 contention had GIL-bound audio threads stalling on inference
+that was dragged by GPU contention. Subprocess isolated inference,
+freeing the parent's GIL. Without CS2 (or any concurrent GPU
+load), in-process inference completes fast enough that GIL
+contention never materializes. Both paths converge.
+
+### What rc4 changes
+
+#### 1. Hard-fail on subprocess startup error
+
+Pre-rc4 `engine.start()` caught `InferenceError` from
+`InferenceClient.start()` and silently fell back to in-process.
+This hid the rc2 Path-vs-str crash for an entire release cycle —
+production users heard corrupted audio while CC's bash test
+reported "child healthy" because `stats.child_pid` was set BEFORE
+the child crashed.
+
+rc4 removes the fallback. If `cfg.inference_subprocess=True` and
+the child doesn't reach RESP_READY, `engine.start()` raises
+`InferenceError`. The TUI's startup sees the error and shows it
+to the user. Use `cfg.inference_subprocess=False` to opt into
+the legacy in-process path explicitly.
+
+#### 2. Surface inference path in `woys diag` and `woys engine`
+
+The diag output now contains a `inference path: SUBPROCESS (child
+pid=N) | IN-PROCESS (legacy, by config) | IN-PROCESS (subprocess
+requested but NOT running!)` line so silent fallbacks are
+impossible to miss going forward.
+
+`woys engine` prints `child_alive=True/False` per-second status
+during the run, plus the final inference path + last_error.
+
+### Implication for v0.8.x roadmap
+
+Per the user's stop conditions:
+
+> If subprocess IS running and these are its real numbers: the IPC
+> overhead is canceling the threading-tax savings. The architecture
+> isn't winning what we predicted. Then v0.8.x either needs more
+> work or isn't the right fix.
+
+We're in case (a). Three options on the table for the user:
+
+1. **Ship rc4 + abandon v0.8.x.** Multiprocessing was a null
+   result. Revert subprocess default to False (legacy in-process)
+   and tag v0.7.0 (rc12 semantics + rc4 hard-fail / reporting
+   improvements), close the v0.8.x track.
+
+2. **Keep digging on v0.8.x.** Profile IPC overhead with
+   `scripts/profile_engine.py` against the new architecture,
+   understand whether the ~5-15 ms IPC roundtrip is reducible
+   (msgpack vs pickle? lock-free signaling? larger SHM ring?).
+   Maybe a tighter IPC wins where naive IPC tied.
+
+3. **Pivot to v0.8.1 (TensorRT EP).** Independent of
+   multiprocessing. Rebuilds the model graph as a TRT engine —
+   typically 1.5-3× faster steady-state, much tighter p99. ORT
+   1.22 has TensorrtExecutionProvider. Per-shape compile cost
+   ~5-30 s on first load, cached.
+
+### What stayed
+
+- The subprocess inference machinery itself (inference_worker,
+  inference_client) — works correctly, just doesn't beat
+  in-process on this hardware.
+- Path is no longer pre-converted to str (rc3 fix).
+- Child uses `eng._infer` directly (rc3 fix).
+- Resource_tracker prewarm in cli.main (rc2 fix).
+- All rc7-rc12 perf tweaks still apply via the in-process path.
+
+### Verification
+
+98/98 fast tests pass; mypy --strict clean; ruff format clean.
+Side-by-side A/B run in CC's bash, captured in this CHANGELOG.
+
+DO NOT auto-tag. **Awaiting user signoff on v0.8.x direction.**
+
 ## [0.8.0rc3] — 2026-05-07 — rc2 production fix: Path → str conversion broke child startup; route inference through `eng._infer` so child and parent run identical code
 
 ### The bug
