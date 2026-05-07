@@ -4,6 +4,204 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-05-07 — Final release. v0.8.x experiment closed (multiprocessing null, TensorRT dead end).
+
+This is the v0.7.0 release. Functionally equivalent to rc12's
+realtime audio behavior (the irreducible floor on the alireza /
+RTX 2070 Mobile / RVC v2 stack) plus the safety / diagnostic
+improvements the v0.8.x rc series shipped. The two architectural
+pivots attempted in v0.8.x — multiprocessing inference (v0.8.0)
+and TensorRT EP (v0.8.1) — are both null / negative results,
+documented fully below and in the rc CHANGELOG entries that
+precede this one.
+
+### What ships
+
+The realtime engine is the same audio behavior as v0.7.0-rc12:
+- Per-stage timing instrumentation (mic_read / inference /
+  enqueue_lag p50/p95/p99) — rc6
+- `gc.disable()` during engine lifetime — rc7
+- Inference tail-chunk capture for slow-chunk diagnosis — rc8
+- Broader cuDNN pre-warm covering every soxr-emitted shape — rc9
+- cuDNN EXHAUSTIVE algorithm search — rc10
+- SCHED_FIFO RT priority on engine thread — rc11
+- ORT memory: kSameAsRequested arena + max workspace — rc12
+
+Plus the v0.8.x reliability improvements that DO ship:
+- Multiprocessing IPC infrastructure for users with persistent
+  GPU contention (CS2 + woys etc.) — opt-in via
+  `inference_subprocess = true`. Default False because the A/B on
+  quiet GPU showed it provides no benefit there.
+- TensorRT infrastructure left as opt-in (`use_tensorrt = true`)
+  for future when ORT/TRT versions improve. Default False because
+  the current stack produces mathematically wrong RVC output.
+- Hard-fail on subprocess startup error (no more silent fallback
+  hiding crashes — that bug class regressed audio in 0.8.0rc2).
+- `inference path` and `trt[...]` lines in `woys diag` output so
+  silent fallbacks are impossible to hide going forward.
+- `woys engine` headless CLI for production-equivalent smoke
+  testing without Textual hijacking stderr.
+- Resource-tracker pre-warm before Textual mount (fixes the rc1
+  `fds_to_keep=[-1, 9]` startup crash class).
+
+### v0.8.x retrospective — why both pivots failed
+
+#### Multiprocessing inference (v0.8.0): null on quiet GPU
+
+Hypothesis: the LESSONS §19 ~23 ms threading tax — measured by
+comparing `_infer` in main thread vs daemon thread — accounts
+for the inference tail. Spawning a child process with its own
+CUDA context closes GIL contention with audio threads.
+
+Implementation: `src/audio/inference_worker.py` (child process
+loading cv + rmvpe + rvc, running `eng._infer` directly to
+guarantee algorithm parity), `src/audio/inference_client.py`
+(parent-side wrapper with shared memory IPC, pipe control,
+restart-on-crash, parent-death watchdog).
+
+Decisive A/B on quiet GPU (CS2 not running):
+
+```
+                  subprocess    in-process
+  chunks (15 s)   99            99
+  avg_inf         56.8 ms       54.5 ms
+  writer_jitter   78.2 ms       76.0 ms
+  xruns           26            25
+```
+
+Tied. The rc1 measured win (writer_jitter 92→27, xruns 42→1) was
+real but conditional on CS2 contesting the GPU. Without
+contention, in-process inference completes fast enough that the
+GIL never blocks the writer thread for long. The threading tax
+materializes only under GPU contention.
+
+Subprocess infrastructure stays as opt-in. Users running woys
+alongside a heavy GPU consumer can flip `inference_subprocess =
+true` and recover the rc1-class win. Default off because the
+typical user has a quiet GPU.
+
+#### TensorRT EP (v0.8.1): mathematical-output failure
+
+Hypothesis: TensorRT's static-compiled engines are deterministic
+(no cuDNN algo selection variance) and 1.5-3× faster steady-
+state. Per-shape compile cached to `~/.cache/woys/trt/`. ORT
+auto-partitions: TRT-supported subgraphs run via TRT, unsupported
+ops fall through to CUDA EP.
+
+Implementation: `_make_session` accepts `use_tensorrt=` flag;
+when True, providers list is `[TensorrtEP, CUDAEP, CPU]`. Per-
+session try/except catches TRT init failures and rebuilds with
+CUDA-only providers. `_TRT_ACTIVE_PER_SESSION` and
+`_TRT_INIT_ERRORS` track which sessions actually got TRT.
+TensorRT preload via ctypes against the pip-installed
+`tensorrt-cu12` package.
+
+Two failure modes confirmed via parity test (cosine similarity
+of TRT vs CUDA output, threshold ≥ 0.95):
+
+1. **RMVPE STFT FP16 fails TRT init.** TRT 10.16's STFT importer
+   asserts Float32 input; RMVPE has been auto-promoted to FP16
+   since v0.3.0. Error: `Assertion failed: input->getType() ==
+   nvinfer1::DataType::kFLOAT: Input to STFT must be Float32.
+   Received type: float16`. Per-session try/except catches this
+   and falls back to CUDA EP for RMVPE — but RMVPE doesn't get
+   any TRT benefit then.
+
+2. **RVC outputs are mathematically wrong via TRT.** Init
+   succeeds with `Make sure input <sid|pitch|p_len> has Int64
+   binding` warnings. Cosine similarity vs CUDA EP across the
+   4 soxr shapes:
+
+   ```
+   shape    cuda p50    trt p50   speedup   cos_sim
+   1957     26.99 ms    21.88 ms   1.23×    0.0188
+   1958     30.61 ms    16.35 ms   1.87×    0.4353
+   2446     21.50 ms    20.70 ms   1.04×    0.4785
+   2447     28.46 ms    24.85 ms   1.14×    0.2821
+   ```
+
+   cos_sim 0.02-0.48 vs target 0.95. TRT outputs are essentially
+   uncorrelated with CUDA outputs. Speedup 1.04-1.87× even
+   ignoring correctness, below the 1.5-3× target.
+
+The underlying issue is some combination of TRT 10.16's int64
+indexing and lack of shape inference annotations on RVC's NSF
+source modules. Fixing it requires re-exporting RVC's ONNX with
+TRT-friendly int32 inputs and shape inference, which is out of
+scope for v0.7.0.
+
+TRT infrastructure stays as opt-in (`use_tensorrt = true`) for
+when ORT/TRT versions improve, the RVC export pipeline gains
+shape inference, or someone adds NSF source module workarounds.
+
+### What this means for cuts in production
+
+The audible cuts the user has been hearing since v0.6.x are
+the irreducible floor on this hardware/stack:
+- inference p50 ≈ 35-55 ms (depends on GPU thermal/clock state)
+- inference p99 ≈ 85-100 ms
+- writer_jitter ≈ 65-80 ms
+- xruns ≈ 1-2 / s
+
+The LESSONS §19 threading tax is real but doesn't explain the
+tail. cuDNN algo variance is real but minor. GPU clock idle
+state is real but small. The combined effect is the ~30-50 ms
+tail spread that produces ~1-2 audible cuts per second in
+real Telegram usage.
+
+Closing this would require either:
+- A fundamentally different inference engine (TRT done correctly
+  with model re-export, ONNX→TVM, or hand-rolled CUDA kernels)
+- Or a fundamentally different audio buffering strategy (larger
+  output buffer + accepted latency, or speculative prefetch)
+
+Both are well beyond v0.7.0 scope. v0.7.0 ships the best
+realtime audio achievable on this stack with reasonable
+engineering effort.
+
+### Was the journey worth it?
+
+The v0.7.x rc series shipped 18 release candidates plus two
+v0.8.x experiments. Concrete wins:
+
+1. Per-stage instrumentation in `woys diag` — future debug
+   cycles aren't blind.
+2. Inference tail-chunk capture exposing what slow chunks have
+   in common — caught the cuDNN shape-mismatch hypothesis.
+3. Hard-fail subprocess startup + visible inference-path
+   reporting — silent corruption regressions can't repeat.
+4. `woys engine` CLI for headless smoke testing.
+5. Comprehensive audit + rc-by-rc CHANGELOG documenting
+   exactly what was tried, what worked, what didn't. Future
+   maintainers don't re-derive any of it.
+
+The cuts didn't go away. The mechanisms were named, isolated,
+and the architectural fixes attempted honestly. Per the ask:
+"Don't gold-plate failure." v0.7.0 is the honest line.
+
+### Verification
+
+98/98 fast tests pass; mypy --strict clean; ruff format clean.
+
+`woys engine --seconds 6` (default config: in-process, no TRT):
+```
+inference path: IN-PROCESS (legacy, by config)
+final: chunks=38 avg_inf=53.5ms writer_jitter=73.6ms xruns=11
+       queue_full=0 dropped=0
+```
+
+Production startup verified at default. Subprocess + TRT
+opt-in paths preserved as escape hatches.
+
+### Opt-in escape hatches
+
+```toml
+# ~/.config/woys/config.toml
+inference_subprocess = true   # users with persistent GPU contention
+use_tensorrt = true           # experimentation; expect garbled RVC
+                              # audio until model is re-exported
+```
+
 ## [0.8.0rc4] — 2026-05-07 — Hard-fail subprocess startup; surface inference path in diag; A/B confirms multiprocessing is a null result on quiet GPU
 
 ### Why this rc
