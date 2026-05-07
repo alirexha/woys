@@ -39,6 +39,7 @@ Threading
 from __future__ import annotations
 
 import contextlib
+import gc
 import os
 import queue
 import shutil
@@ -695,6 +696,11 @@ class RealtimeEngine:
         self.stats = EngineStats()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        # v0.7.0-rc7 — track whether GC was enabled before this engine
+        # disabled it, so stop() restores the prior state instead of
+        # blindly enabling. Lets us nest cleanly inside a parent that
+        # had already disabled GC (rare but possible in tests).
+        self._gc_was_enabled_before_start: bool = False
 
         # Lazy-load sessions; avoid CUDA work if the engine is constructed
         # but never started (e.g., TUI dry-run).
@@ -1207,6 +1213,28 @@ class RealtimeEngine:
             n = self.warmup_voice_library()
             print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
         self.stats.running = True
+
+        # v0.7.0-rc7 — disable Python GC during the engine's lifetime to
+        # eliminate generational-collection pauses from the inference
+        # tail. The rc6 diag dump (`docs/16-audit/12-rc5-writer-jitter-
+        # probe.md` follow-up) showed inference p50=66 ms / p99=98 ms /
+        # max=110 ms — a 32 ms tail that owns the writer-cadence
+        # variance. mic_read p99 was 160 ms (≈ chunk_seconds, no
+        # variance), enqueue_lag p99 was 0.06 ms (sub-ms, clean). Tail
+        # is in inference itself.
+        #
+        # Numpy arrays in the engine hot path are reference-counted —
+        # they free as soon as their reference count drops, no GC
+        # required. The only thing GC handles is cyclic references,
+        # which are rare in this code path. Disabling GC for the
+        # session prevents the periodic ~10–30 ms collection pauses
+        # that fire on the GIL during inference. stop() re-enables
+        # and runs one final collection to clean up any cyclic refs
+        # that accumulated.
+        self._gc_was_enabled_before_start = gc.isenabled()
+        if self._gc_was_enabled_before_start:
+            gc.disable()
+
         self._thread = threading.Thread(target=self._run_loop, name="vcclient-engine", daemon=True)
         self._thread.start()
 
@@ -1236,6 +1264,15 @@ class RealtimeEngine:
         if self._thread:
             self._thread.join(timeout=timeout)
         self.stats.running = False
+
+        # v0.7.0-rc7 — restore GC to its prior state and run one
+        # collection to free any cyclic references that accumulated
+        # during the session. If GC was already disabled before this
+        # engine started (nested case), leave it disabled.
+        if self._gc_was_enabled_before_start:
+            gc.enable()
+            gc.collect()
+            self._gc_was_enabled_before_start = False
 
     def _assert_sink_loaded(self) -> None:
         """v0.6.4 — refuse to start if `cfg.sink_name` isn't a loaded
