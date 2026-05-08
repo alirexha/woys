@@ -4,6 +4,154 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-05-08 — GPU clock lock + torch separate-stream keepalive — daily-use release, 36× underrun reduction
+
+The output of `V0_11_0_GPU_JITTER.md`. Two opt-in anti-jitter features
+attack the v0.10.0-located root cause (NVIDIA dynamic-boost auto-deboost
+during the engine's mic_read idle window). Default OFF; user opts in
+via `gpu_anti_jitter_mode = "both"` in `~/.config/woys/config.toml`.
+
+### Real-listener verdict (Telegram VoIP, ~5 min session, mode = "both")
+
+  * **Underrun rate: 7.3/sec → 0.2/sec — a 36× reduction** vs the
+    v0.9.0 baseline. Approaching irreducible on this hardware/stack.
+  * **Voice intelligibility: major leap.** Voice was previously
+    garbled mid-sentence; now recognizable as speech. This is a
+    quality-class change, not just a quantity reduction.
+  * **Echo: gone.** v0.9.2 rollback put round-trip latency back at
+    v0.9.0 levels; user no longer hears their own voice come back.
+  * **Cuts: still present but reduced.** Subjective rate "1 every 5
+    seconds" vs prior "1 every 1 second."
+  * `final: chunks=1696 avg_inf=45.1ms writer_jitter=58.2ms
+    player_underruns=59 player_restarts=1 backend=native-pw`
+
+This is the first woys release the user has called daily-use ready.
+
+### What ships
+
+#### `gpu_anti_jitter_mode` user-facing knob
+
+Set in `~/.config/woys/config.toml`:
+
+  * `"off"` — neither feature active (default; preserves v0.10.0 behavior)
+  * `"keepalive"` — torch.cuda.Stream() keepalive only (no sudo)
+  * `"clock_lock"` — `nvidia-smi -lgc` only (sudo, sudoers entry needed)
+  * `"both"` — clock lock + keepalive (sudo, recommended; 36× user-tested
+    underrun reduction)
+
+#### Hard constraints respected
+
+Stock or sub-stock GPU specs only — the engine refuses any
+configuration that:
+
+  * Locks the ceiling above `clocks.max.graphics` (NVIDIA's validated
+    boost ceiling)
+  * Locks the floor below 600 MHz
+  * Touches power limits, memory clocks, undervolts, or firmware
+
+The lock is reverted automatically on engine.stop(), SIGTERM, SIGINT.
+SIGKILL falls through (kernel doesn't deliver to userspace); user
+runs `sudo nvidia-smi -rgc` manually if needed.
+
+The torch keepalive issues a 1024-element float32 add (~50 µs of
+GPU work) every 25 ms on a CUDA stream separate from ORT's. ~0.2 %
+continuous GPU duty cycle. Process-local; nothing persistent.
+
+#### Engine + telemetry
+
+  * `EngineConfig.gpu_anti_jitter_mode` + 6 advanced knobs (floor /
+    ceiling / offset / interval) — sentinel `0` means auto-detect
+    from `nvidia-smi --query-gpu=clocks.max.graphics`
+  * `EngineStats.gpu_clock_lock_active / _floor_mhz / _ceiling_mhz /
+    _last_message` — surfaced in `woys diag` and `woys engine`
+    startup output (clock-lock state visible at start of every run)
+  * `EngineStats.torch_keepalive_calls / _last_ms / _avg_ms` — separate
+    counters from rc3 ORT keepalive; clarifies which backend is active
+  * `EngineStats.helper_exit_reasons` (capped at 10) — preserves the
+    helper's stderr error message AND the watchdog's exit-code
+    observation; previously the watchdog's "respawned" message
+    clobbered the cause from `_stderr_reader_loop`
+
+#### Synergy effect — the key technical finding
+
+Neither clock_lock alone nor keepalive alone moves the writer_jitter
+gate on this hardware. Only `mode = "both"` does. The mechanism:
+
+  * Clock lock at 1845 MHz tells the GPU "you may run at 1845 MHz".
+    On a laptop with bursty workload, the boost mechanism gates
+    that decision on sustained utilization — and the engine's
+    50 ms RVC + 100 ms idle pattern doesn't trigger sustained-mode.
+  * Torch keepalive provides constant 0.2 % GPU duty cycle that
+    registers as activity but doesn't trigger the boost-up alone.
+  * Combined: the lock tells the GPU 1845 is acceptable AND the
+    keepalive provides the continuous workload signal that says
+    "we deserve it." GPU sustains 1845 MHz floor.
+
+5-min synthetic harness `clocks.gr p50` with mode=both: 1845 MHz.
+Mode=off / keepalive / clock_lock: ~1680 MHz each.
+
+### Sudoers setup
+
+For `clock_lock` or `both` modes, install
+`/etc/sudoers.d/woys-gpu-clock`:
+
+```
+alireza ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc *
+alireza ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
+```
+
+The wildcard is bounded by application logic — the engine validates
+clock values in code before invoking. Documented in
+`docs/22-gpu-clock-lock.md`.
+
+### Tests
+
+  * 29 new tests in `tests/test_gpu_anti_jitter.py`:
+    - mode → flags resolution (all 4 modes + unknown fallback)
+    - `_query_max_graphics_clock_mhz` parsing
+    - `_resolve_clock_lock_range` auto-detect, explicit, sanity refusal
+    - `_run_nvidia_smi` success / failure / timeout / missing binary
+    - `_apply_gpu_clock_lock` + `_revert_gpu_clock_lock` lifecycle
+    - Torch keepalive falls back gracefully when torch / CUDA / Stream
+      unavailable
+  * Total fast tests: 156 (was 127 in v0.10.0); all pass
+
+### Known issues
+
+  * 1 helper respawn observed in user's 5-min Telegram session.
+    Watchdog recovered cleanly. Cause unknown — the helper's stderr
+    wasn't logged in this session. v0.11.0 ships
+    `EngineStats.helper_exit_reasons` to capture it for next time.
+    If it recurs, run with `WOYS_HELPER_STDERR_LOG=/tmp/woys-helper.log`
+    set; the helper's last words will be in that file.
+  * Strict synthetic-harness gate `writer_jitter p99 ≤ 30 ms` still
+    not met (best mode=both: 59.4 ms in synthetic, 58.2 ms in real
+    Telegram). User's audible verdict made the gate moot — the
+    36× underrun reduction is the load-bearing improvement.
+
+### What does NOT change in v0.11.0
+
+  * Default engine behavior — features are opt-in.
+  * Default chunk_seconds (still 0.15).
+  * RVC ONNX models, native helper binary, audio I/O.
+
+### Future work (v0.12.x candidates, NOT shipped here)
+
+These are all speculative wins that may or may not land:
+
+  1. `chunk_seconds` sweep (0.15 → 0.20 / 0.25). Cheap; trades
+     latency for jitter.
+  2. f0-transition correlation (brief candidate #4 from v0.10.0)
+     to test if remaining rvc.run p99 = 80 ms tail correlates with
+     RMVPE pitch transitions.
+  3. Re-export RVC ONNX with TF32 forced or fixed-shape graph
+     optimization.
+  4. Single-clock lock at 1665 MHz (observed sustained-load p50)
+     vs the current 1845-2100 range.
+
+v0.11.0 is the shipped product the user runs daily; v0.12.x is
+research, separate effort.
+
 ## [0.11.0-partial] — 2026-05-08 — GPU clock lock + torch separate-stream keepalive (anti-jitter knob lands; gates partially close)
 
 The output of `V0_11_0_GPU_JITTER.md`. Two opt-in features attack the

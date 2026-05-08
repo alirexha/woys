@@ -547,6 +547,13 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     if s.last_error:
         print(f"  last_error       : {s.last_error}")
 
+    # v0.11.0 — helper death causes (preserved across watchdog respawns).
+    # Empty list = no helper exits. Capped at 10; shows the most recent.
+    if s.helper_exit_reasons:
+        print(f"  helper exits ({len(s.helper_exit_reasons)}):")
+        for reason in s.helper_exit_reasons:
+            print(f"    {reason}")
+
     # Exit non-zero if we saw any underruns or restarts — useful for CI
     # / shell scripting on top of this command.
     return 1 if (s.xruns or s.queue_full_events or s.player_restarts) else 0

@@ -2231,3 +2231,120 @@ for users who run the engine for sustained sessions and want the
 sudoers can try mode=keepalive (no sudo, more modest improvement).
 The v0.11.0 retrospective is honest about the residual gap; the
 next-version path is enumerated.
+
+## 34. v0.11.0 — the synergy effect (clock_lock + torch_keepalive only works as "both")
+
+**This is the load-bearing technical finding from the v0.11.0 cycle.**
+The synthetic harness's "neither alone moves the gate; both together
+does" was a 5-min in-house result. The user's Telegram listener test
+made it real: same `mode = "both"`, real mic input, real speech
+content, real network jitter on the listener side. Numbers:
+
+| metric                     | v0.9.0 (no anti-jitter) | v0.11.0 mode=both | Δ      |
+|----------------------------|------------------------:|------------------:|-------:|
+| underrun rate (/sec)       |                     7.3 |               0.2 | **36×** |
+| voice intelligibility      |               garbled   | speech-recognizable | quality leap |
+| audible cuts               |             ~1 every 1s |     ~1 every 5s   |  ~5×   |
+| echo                       |                     no  |               no  |    -   |
+
+The 36× underrun reduction is the largest single-release jump in this
+project's measured history.
+
+### Why neither alone works on this hardware
+
+Three observations from the 5-min synthetic harness across modes:
+
+  * mode=off → GPU clock p50 = 1710 MHz (some natural boost)
+  * mode=keepalive → GPU clock p50 = 1680 MHz (essentially same as off
+    — the 50 µs torch op every 25 ms doesn't trigger boost-up alone)
+  * mode=clock_lock → GPU clock p50 = 1680 MHz (same! The lock at
+    1845 MHz is treated as PERMISSION, not COMMAND, on bursty workload)
+  * **mode=both → GPU clock p50 = 1845 MHz** (the lock is finally
+    enforced because the keepalive provides sustained-utilization
+    signal that the boost mechanism trusts)
+
+### The mental model
+
+NVIDIA's dynamic boost on laptop GPUs is a closed-loop controller
+with three inputs:
+
+  1. Power-state policy (max/min clocks; what the driver / nvidia-smi sees)
+  2. Workload demand (how much work is queued on the CUDA streams)
+  3. Thermal/power headroom (how much TGP is left)
+
+`nvidia-smi -lgc <floor>,<ceiling>` modifies INPUT 1 — it tells the
+driver "you may run anywhere in this range." It does NOT force the
+GPU to the floor under bursty workload, because the controller's
+heuristic still asks "is the demand sustained enough to justify the
+power state?" If the workload is engine-RVC-then-100ms-idle, the
+controller answers "no, run at default" — even with a 1845 MHz floor
+permitted.
+
+Adding a torch.cuda.Stream() keepalive at 25 ms cadence modifies
+INPUT 2 — provides constant low-amplitude demand that the
+controller registers as "always something running, sustain the
+power state." Combined with the lock raising INPUT 1's floor to
+1845, the controller now picks 1845 MHz and holds.
+
+### Why this is generalizable beyond woys
+
+Any audio / streaming inference application on a laptop NVIDIA GPU
+will hit this issue. The pattern "X ms of compute + Y ms of I/O wait
+where Y > 50 ms" is common in:
+
+  * Real-time speech synthesis / voice changers
+  * Live transcription with model-based VAD
+  * Streaming TTS with chunk-level RVC / NSF / vocoders
+  * Real-time face filters / video enhancement (CPU-bound camera
+    capture between GPU-bound effects)
+
+For all of these, `mode = "both"` (or its analogues — clock floor +
+small constant GPU keepalive) is likely the correct fix. The lesson
+isn't "use these specific knobs;" it's "the GPU's boost-state
+controller has TWO inputs and you need to satisfy both."
+
+### Architectural cost: ~40 lines of engine code, 1 sudoers entry
+
+The v0.11.0 fix is small. The hardware-safety surface (refuse
+over-stock-spec, revert on stop/SIGTERM/SIGINT, no power-limit /
+firmware / undervolt) is well-bounded. Default off — users opt in
+once via config.toml and the sudoers entry. Power cost ~5 W extra
+during engine runtime (the GPU's 1845 MHz idle vs natural ~1680
+MHz idle); reverts to natural state when engine stops.
+
+### Honest residual
+
+The strict synthetic-harness gate `writer_jitter p99 ≤ 30 ms` was not
+met (best mode=both: 59 ms in synthetic, 58 ms in real Telegram).
+But the user's audible verdict made the gate moot — the 36×
+underrun reduction is what mattered. The remaining ~50 ms tail
+above gate is at the model layer (RVC NSF intrinsic variance) or
+ORT/cuDNN tail. Whether closing it further is worth the engineering
+cost depends on whether the user's daily-use experience needs more.
+
+## 35. v0.11.0 — `helper_exit_reasons` preservation (small, but right)
+
+The user's Telegram session reported `player_restarts=1`. Watchdog
+worked (helper respawned, session continued), but the `last_error`
+shown was `"native-pw respawned (restarts=1)"` — the watchdog had
+clobbered the helper's own stderr error message that triggered the
+exit.
+
+This is a recurring pattern: high-priority mid-session log lines
+overwrite the low-priority pre-incident state that explains them.
+v0.11.0 fixes it for the helper-exit case specifically with
+`EngineStats.helper_exit_reasons: list[str]` — the watchdog appends
+its observation; the stderr reader appends the helper's death cause;
+both survive as a 10-deep history.
+
+The next time a helper exits mid-session, `woys diag` will show
+something like:
+
+    helper exits (1):
+      native-pw: error: stream entered ERROR state: <reason>
+      native-pw exited code=1 at chunk=420 (restart #1)
+
+Generalizable rule: when a high-priority message is set, append to
+a small history list before overwriting the prior message — the
+prior message is often the cause and the new message is often the
+effect. Two lines vs zero is a free win.
