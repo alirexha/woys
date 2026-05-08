@@ -520,6 +520,9 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
                     f"xruns={s.xruns} "
                     f"queue_full={s.queue_full_events} "
                     f"dropped={s.dropped_chunks} "
+                    f"player_underruns={s.player_underruns} "
+                    f"player_restarts={s.player_restarts} "
+                    f"backend={eng.player_backend or 'unknown'} "
                     f"child_alive={eng._inf_client.is_alive if eng._inf_client else 'n/a'}"
                 )
         running_last_error = eng.stats.last_error
@@ -547,8 +550,30 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
             f"writer_jitter={s.writer_jitter_ms:.1f}ms "
             f"xruns={s.xruns} "
             f"queue_full={s.queue_full_events} "
-            f"dropped={s.dropped_chunks}"
+            f"dropped={s.dropped_chunks} "
+            f"player_underruns={s.player_underruns} "
+            f"player_restarts={s.player_restarts} "
+            f"backend={eng.player_backend or 'unknown'}"
         )
+        # v0.9.0-rc5: surfacing player_underruns + player_restarts in
+        # final output. Pre-rc5 these counters were tracked in EngineStats
+        # but only displayed by `woys diag` — `woys engine` users were
+        # blind to per-quantum underruns and watchdog respawns.
+        if s.player_restarts > 0:
+            print(
+                f"  ⚠ playback backend respawned {s.player_restarts}x during "
+                f"the session (helper exited mid-run; check stderr capture "
+                f"with WOYS_HELPER_STDERR_LOG=/tmp/woys-helper.log to find why)"
+            )
+        if s.player_underruns > 0 and s.chunks_processed > 0:
+            # Approximate per-second underrun rate. Rough; assumes the
+            # session ran the full --seconds duration.
+            session_secs = max(1.0, s.chunks_processed * 0.15)
+            rate = s.player_underruns / session_secs
+            print(
+                f"  player_underruns rate: ~{rate:.1f}/sec "
+                f"({'engine writer jitter likely cause' if rate > 1.0 else 'within normal slack'})"
+            )
     return 0
 
 
