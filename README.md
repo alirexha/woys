@@ -7,22 +7,33 @@
 
 Linux-native real-time voice changer. RVC-only, ONNX Runtime CUDA, PipeWire-native, terminal-controlled. Originally targeted CachyOS; runs on any modern Linux with PipeWire + an NVIDIA GPU.
 
-## Status (v0.11.0)
+## Status (v0.12.4)
 
-Daily-use ready on RTX 2070 Mobile. Real-listener Telegram VoIP test
-on `gpu_anti_jitter_mode = "both"`:
+Daily-use ready on RTX 2070 Mobile. The user's perceptual A/B
+test (Desktop WAV listening) ratified the v0.12.3 sweep top-1
+config as the new default profile in v0.12.4. Measured:
 
-  * **Underrun rate: 0.2/sec** (was 7.3/sec in v0.9.0 — **36× reduction**)
-  * **Voice intelligibility: speech-recognizable** (was garbled)
-  * **Echo: gone** (latency back to v0.9.0 levels after the v0.9.1 → v0.9.2
-    rollback)
-  * **Cuts: ~1 every 5 s, subjective** (was ~1 every 1 s)
+  * **cuts/min (TTS sustained content): 58.2** (was 78.0 in v0.11.0 — −25%)
+  * **autocorr@chunk_period: 0.000** (was 0.136 — chunk-period
+    rhythm entirely eliminated; the "train wagon on rails" pattern
+    is gone at the spectral level)
+  * **Total e2e latency: ~640 ms** (was ~540 ms; +100 ms
+    is the chunk_seconds=0.15 → 0.25 cost the user accepted in
+    exchange for clean output)
+  * **Underrun rate (real Telegram, mode=both): 0.2/sec** — unchanged
+    from v0.11.0; v0.12.4's improvements are spectral-clean rather
+    than throughput
 
-The headline feature: opt-in `gpu_anti_jitter_mode = "both"` keeps the
-GPU's dynamic boost from auto-deboosting during the engine's mic_read
-idle window. Stock GPU specs only — no overclock, no power-limit
-changes, no firmware. Reverts on engine stop / SIGTERM / SIGINT.
-Documented in `docs/22-gpu-clock-lock.md`.
+Headline feature still opt-in: `gpu_anti_jitter_mode = "both"` keeps
+the GPU's dynamic boost from auto-deboosting during the engine's
+mic_read idle window. Stock GPU specs only — no overclock, no
+power-limit changes, no firmware. Reverts on engine stop / SIGTERM
+/ SIGINT. Documented in `docs/22-gpu-clock-lock.md`.
+
+Configurations that minimise latency at the cost of more cuts (e.g.
+`chunk_seconds = 0.15`, the v0.11.0/v0.12.3-low-latency-tier defaults)
+remain available via `~/.config/woys/config.toml` for users who want
+that tradeoff.
 
 ## What it is
 

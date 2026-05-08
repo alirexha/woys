@@ -39,20 +39,20 @@ def test_v06x_defaults_bumped_on_load(tmp_path: Path) -> None:
     cfg = load_config(out)
 
     # Bumped to current defaults (cascading through every leg).
-    assert cfg.chunk_seconds == 0.15
+    # v0.12.4 — chunk_seconds current default = 0.25 (matches v0.6.x
+    # sentinel 0.25 — migration is now a no-op for that field, just
+    # stamps the schema version). sola_search_ms current default = 16.0
+    # (was 4.0 in v0.12.3, reverted to wider window when chunk grew).
+    assert cfg.chunk_seconds == 0.25
     assert cfg.output_latency_ms == 280
-    # v0.12.3 — sola_search_ms current default reverted from 6.0 → 4.0
-    # after the comprehensive sweep. The v0.6.x sentinel (4.0) and the
-    # v0.12.3+ default coincide; the migration runs (stamps the schema
-    # version) but leaves the value at 4.0.
-    assert cfg.sola_search_ms == 4.0
+    assert cfg.sola_search_ms == 16.0
     # Schema version stamped at the latest.
     assert cfg._extras["config_schema_version"] == 10
     # File rewritten with bumped values + schema version.
     raw = tomllib.loads(out.read_text())
-    assert raw["chunk_seconds"] == 0.15
+    assert raw["chunk_seconds"] == 0.25
     assert raw["output_latency_ms"] == 280
-    assert raw["sola_search_ms"] == 4.0
+    assert raw["sola_search_ms"] == 16.0
     assert raw["config_schema_version"] == 10
 
 
@@ -199,11 +199,11 @@ def test_profile_sections_also_migrated(tmp_path: Path) -> None:
 
     profiles = cfg._extras["profiles"]
     # Default-matching values bumped to current defaults (cascading through every leg).
-    assert profiles["gaming"]["chunk_seconds"] == 0.15
+    # v0.12.4 — chunk_seconds default = 0.25 (matches v0.6.x sentinel,
+    # migration now a no-op for chunk_seconds). sola_search_ms default = 16.0.
+    assert profiles["gaming"]["chunk_seconds"] == 0.25
     assert profiles["gaming"]["output_latency_ms"] == 280
-    # v0.12.3 — sola_search_ms default reverted to 4.0; the v0.6.x sentinel
-    # (4.0) and the current default coincide.
-    assert profiles["gaming"]["sola_search_ms"] == 4.0
+    assert profiles["gaming"]["sola_search_ms"] == 16.0
     # Explicit override left alone.
     assert profiles["studio"]["chunk_seconds"] == 0.5
     assert profiles["studio"]["output_latency_ms"] == 500

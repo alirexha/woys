@@ -90,9 +90,11 @@ def test_load_config_handles_malformed_toml(
     assert isinstance(cfg, AppConfig)
     # And the values are EngineConfig-forwarded defaults, not garbage.
     # v0.7.0-rc3 — output_latency 220 → 280 (rc2's 220 was user-rejected
-    # in Telegram VoIP), chunk_seconds 0.25 → 0.15.
+    # in Telegram VoIP). v0.12.4 — chunk_seconds 0.15 → 0.25 (user
+    # picked the chunk_seconds=0.25 family in a perceptual A/B test;
+    # see CHANGELOG v0.12.4 + LESSONS §42).
     assert cfg.output_latency_ms == 280
-    assert cfg.chunk_seconds == 0.15
+    assert cfg.chunk_seconds == 0.25
 
     err = capsys.readouterr().err
     assert "malformed TOML" in err

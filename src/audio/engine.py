@@ -196,35 +196,48 @@ class EngineConfig:
     # (search_ms 4.0 → 6.0, corr_threshold 0.25 → 0.10). Historical v0.6.7
     # reason ("dropped chunks during cuDNN warmup") was repaired by the
     # v0.7.0 HEURISTIC switch + broader pre-warm shape coverage.
-    chunk_seconds: float = 0.15
+    # v0.12.4 — bumped 0.15 → 0.25 after a user perceptual A/B against the
+    # v0.12.3 sweep's top-1 opt-in config (CHANGELOG.md v0.12.4 entry,
+    # LESSONS.md §42). Top-1 has chunk_seconds=0.25 + sola_context_ms=200
+    # which together drive the chunk-period spectral autocorrelation to
+    # exactly 0.000 — the "train wagon on rails" rhythm the user heard
+    # on sustained content disappears. Trade: +100 ms total e2e latency
+    # (~540 ms → ~640 ms). Conversational threshold (~700 ms) is still
+    # comfortably above this; the perceptual delta dwarfs the latency
+    # penalty per the user's listening test.
+    chunk_seconds: float = 0.25
     channels: int = 1
 
     # SOLA crossfade (Phase B). Disable at your peril — without it, audible
     # clicks at every chunk boundary when chunk_seconds is short.
     sola_enabled: bool = True
-    # v0.12.3 — bumped 50.0 → 30.0 after the 50-condition sweep (LESSONS §41).
-    # Shorter crossfade reduces total chunk-boundary blend duration and (counter-
-    # intuitively) lowers the woys-diag cut count by ~7 % at zero latency cost
-    # on TTS-driven sustained content. The v0.6.9 / v0.7.0 50 ms default was set
-    # empirically pre-v0.10.x anti-jitter; with the v0.11.0 GPU-clock-lock +
-    # torch keepalive in place, the producer cadence is tight enough that a
-    # tighter 30 ms crossfade is correctly aligned more often than 50 ms.
-    sola_crossfade_ms: float = 30.0  # overlap window between consecutive chunks
+    # v0.12.3 — bumped 50.0 → 30.0 (low-latency tier winner of the 50-
+    # condition sweep). v0.12.4 — REVERTED to 50.0 because the
+    # high-latency-tier top-1 config (the user's listening-test winner)
+    # uses 50.0 with chunk_seconds=0.25; at that chunk size, the
+    # 30 ms crossfade was no longer optimal. See LESSONS §42.
+    sola_crossfade_ms: float = 50.0  # overlap window between consecutive chunks
     # v0.6.9: widened from 4.0 to 6.0 so the search window covers at least one
     # full pitch period for typical voice f0 (>= 167 Hz period at 40 kHz model
     # rate = 240 samples = 6 ms). With a sub-period search, sustained vowels
     # produce phase mismatches SOLA can't reach — manifests as audible
     # dropouts during sustained voicing.
-    # v0.12.3 — bumped 6.0 → 4.0 after the 50-condition sweep (LESSONS §41).
-    # Narrower search window: the v0.6.9 widening to 6 ms was justified pre-
-    # v0.11.0 when GPU jitter was causing alignment search to find phase-
-    # wrapped peaks at random offsets. With the v0.11.0 anti-jitter mode=both
-    # holding GPU clocks steady, the per-chunk RVC output is phase-stable
-    # enough that 4 ms is sufficient and doesn't catch spurious distant peaks.
-    sola_search_ms: float = 4.0  # how far to shift looking for in-phase alignment
+    # v0.12.3 picked 4.0 as the low-latency tier winner.
+    # v0.12.4 — bumped 4.0 → 16.0 because the high-latency tier (top-1, the
+    # user's listening-test winner) uses 16.0. At chunk_seconds=0.25 (250 ms
+    # chunk-period vs 150 ms), a wider search range captures correctly-
+    # aligned harmonic peaks that fall outside a 4 ms window — the
+    # autocorrelation@chunk_period drops to 0.000, eliminating the
+    # "train wagon" rhythm entirely. See LESSONS §42.
+    sola_search_ms: float = 16.0  # how far to shift looking for in-phase alignment
     # History fed to the model alongside each new chunk so the embedder /
     # vocoder convolutions don't see edge artifacts. Brief calls this "context".
-    sola_context_ms: float = 100.0
+    # v0.12.4 — bumped 100.0 → 200.0 with chunk_seconds=0.25. The wider
+    # context window gives SOLA's correlation search more overlap to
+    # work with at the larger chunk size, which is what enables the
+    # autocorrelation@chunk_period = 0.000 outcome the user picked from
+    # the v0.12.3 sweep top-1 config. See LESSONS §42.
+    sola_context_ms: float = 200.0
     # v0.6.9: lowered from sola.py's 0.25 default. With the original threshold,
     # SOLA falls back to centered (offset=0) on borderline cases and produces
     # phase-discontinuous crossfade for sustained content. 0.10 still rejects
