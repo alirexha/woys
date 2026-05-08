@@ -389,12 +389,33 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     inf_samples = s.inference_samples()
     mic_samples = s.mic_read_samples_ms()
     enq_samples = s.enqueue_lag_samples_ms()
+    cv_samples = s.cv_samples_ms()
+    rmvpe_samples = s.rmvpe_samples_ms()
+    rvc_samples = s.rvc_samples_ms()
+    writer_samples = s.writer_interval_samples_ms()
     print("  ---- per-stage timing (rolling window, ms) ----")
     print(
         f"  inference        p50={_pct(inf_samples, 50):6.2f}  "
         f"p95={_pct(inf_samples, 95):6.2f}  "
         f"p99={_pct(inf_samples, 99):6.2f}  "
         f"max={s.max_inference_ms:6.2f}  (n={len(inf_samples)})"
+    )
+    # v0.10.0 — per-stage breakdown for tail-attribution. Whichever
+    # stage has the largest p99 - p50 spread owns the tail.
+    print(
+        f"  inference.cv     p50={_pct(cv_samples, 50):6.2f}  "
+        f"p95={_pct(cv_samples, 95):6.2f}  "
+        f"p99={_pct(cv_samples, 99):6.2f}  (n={len(cv_samples)})"
+    )
+    print(
+        f"  inference.rmvpe  p50={_pct(rmvpe_samples, 50):6.2f}  "
+        f"p95={_pct(rmvpe_samples, 95):6.2f}  "
+        f"p99={_pct(rmvpe_samples, 99):6.2f}  (n={len(rmvpe_samples)})"
+    )
+    print(
+        f"  inference.rvc    p50={_pct(rvc_samples, 50):6.2f}  "
+        f"p95={_pct(rvc_samples, 95):6.2f}  "
+        f"p99={_pct(rvc_samples, 99):6.2f}  (n={len(rvc_samples)})"
     )
     print(
         f"  mic_read         p50={_pct(mic_samples, 50):6.2f}  "
@@ -409,6 +430,48 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         f"p99={_pct(enq_samples, 99):6.2f}  "
         f"(n={len(enq_samples)}; should be sub-ms in steady state)"
     )
+    # v0.10.0 — writer-interval percentiles + jitter delta. The brief's
+    # acceptance gate is `writer_jitter p99 ≤ 30 ms`, computed as the
+    # p99 of inter-write intervals minus the chunk cadence; drives the
+    # "is the producer keeping cadence" question.
+    chunk_ms_target = engine.cfg.chunk_seconds * 1000.0
+    if writer_samples:
+        wp50 = _pct(writer_samples, 50)
+        wp95 = _pct(writer_samples, 95)
+        wp99 = _pct(writer_samples, 99)
+        wjit_p99 = max(0.0, wp99 - chunk_ms_target)
+        print(
+            f"  writer_interval  p50={wp50:6.2f}  p95={wp95:6.2f}  "
+            f"p99={wp99:6.2f}  (n={len(writer_samples)}; "
+            f"target={chunk_ms_target:.0f}ms; jitter_p99={wjit_p99:.1f}ms)"
+        )
+    else:
+        print("  writer_interval  (no samples — engine ran <16 chunks?)")
+
+    # v0.10.0 — runtime input-shape coverage vs the warmup pre-warm set.
+    # The rc9 broader pre-warm targets soxr's polyphase alternation
+    # pattern (4 shapes typical). If runtime introduces shapes outside
+    # the pre-warm set, cuDNN re-tunes on the cold shape (~80 ms one-
+    # off cost vs ~25 ms cached). Empty `warmup_audio16_lens` means
+    # pre-warm was skipped (cv/rmvpe/rvc not loaded yet); in that case
+    # `unique_audio16_lens` alone shows the runtime distribution.
+    runtime_shapes = sorted(s.unique_audio16_lens)
+    warmup_shapes = sorted(s.warmup_audio16_lens)
+    if warmup_shapes:
+        runtime_set = set(runtime_shapes)
+        unwarmed = sorted(runtime_set - s.warmup_audio16_lens)
+        print(
+            f"  audio16_len      warmup={warmup_shapes} "
+            f"runtime={runtime_shapes}"
+        )
+        if unwarmed:
+            print(
+                f"  [!] {len(unwarmed)} runtime shape(s) NOT in warmup set "
+                f"({unwarmed}). cuDNN re-tunes on cold shapes — expect "
+                f"~80 ms one-off inference cost on first hit."
+            )
+    elif runtime_shapes:
+        print(f"  audio16_len      runtime={runtime_shapes} (no warmup snapshot)")
 
     # v0.7.0-rc8 — inference tail samples. Captures chunks where
     # inf_ms > 2× running p50, with the input shape + per-session-
