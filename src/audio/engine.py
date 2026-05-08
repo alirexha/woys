@@ -149,6 +149,7 @@ USER_VISIBLE_ENGINE_FIELDS: tuple[str, ...] = (
     "input_gate_hysteresis_ms",
     "prefer_pw_cat",
     "prefer_native_pw",
+    "prefer_native_pw_buffer_ms",
 )
 
 
@@ -269,18 +270,41 @@ class EngineConfig:
     # PipeWire client) instead of pw-cat / pacat. The native helper
     # decouples the engine's bursty 150 ms chunk writes from PipeWire's
     # per-quantum (1024/48000 = 21.33 ms) RT callback via a lock-free
-    # SPSC ring buffer. This closes the cut signature lens 08 of the
-    # v0.7.x audit fingered (sample-exact zeros at quantum cadence; see
-    # `docs/16-audit/synthesis.md` P0-4 + lens 08 FFT peaks at 21.33 /
-    # 42.67 ms). NEVER falls back silently if the helper is missing —
-    # `_open_pacat` raises so the user sees the install gap instead of
-    # mysterious cuts.
+    # SPSC ring buffer. NEVER falls back silently if the helper is
+    # missing — `_open_pacat` raises so the user sees the install gap
+    # instead of mysterious cuts.
     #
-    # Default False for v0.9.0 so the path is opt-in for one release of
-    # soak (per `docs/19-pw-investigation.md` §7 follow-up 7); v0.9.1
-    # flips the default to True; v0.10 deletes the legacy pw-cat / pacat
-    # paths entirely.
-    prefer_native_pw: bool = False
+    # v0.9.1 — default flipped to True. The v0.9.0-rc4 A/B established
+    # that BOTH backends produce equivalent audible results on this
+    # stack (engine-side writer jitter at ~80 ms is the dominant cut
+    # source, downstream of any output backend). Native-pw still wins
+    # on observability (honest per-quantum underrun counter, no
+    # mid-session pacat-style respawns) and on architectural cleanliness
+    # — flipping the default per the audit's "honest metric" rule.
+    prefer_native_pw: bool = True
+
+    # v0.9.1 — minimum ring-buffer slack (in milliseconds) the native
+    # helper holds beyond the immediate chunk size. Trades latency for
+    # cut-tolerance:
+    #
+    #   buffer_ms   approx ring     underrun rate (j_writer=80 ms)
+    #   ---------   -------------   ---------------------------------
+    #   0 / unset   chunk only      severe — every late write underruns
+    #   80 (def)    ~341 ms total   rare (effective slack ~191 ms after
+    #                               pow2 rounding; covers ~2.4σ jitter)
+    #   200         ~683 ms total   near-zero, +700 ms total e2e
+    #
+    # The helper's SPSC ring uses a power-of-2 mask so the actual size
+    # is `next_pow2(chunk_frames + buffer_ms × sink_rate / 1000)`, which
+    # in practice gives MORE slack than the requested buffer_ms (good).
+    #
+    # Engine writer_jitter_ms (std-dev of inter-write intervals) sits
+    # at ~80 ms across every test since v0.6.10. Any write delayed by
+    # more than the slack window underruns the ring. No single fix has
+    # moved the 80 ms — that's a v0.10.x target (engine production
+    # cadence). This knob is the comfort feature: pay latency in
+    # exchange for absorbing the jitter the engine produces.
+    prefer_native_pw_buffer_ms: int = 80
 
     # v0.5.1: software input pre-attenuation, in dB. Default 0.0 (passthrough).
     # Hot mics (HyperX QuadCast at high volume etc.) clip the signal which
@@ -2044,13 +2068,38 @@ class RealtimeEngine:
                     "to the legacy pw-cat / pacat path."
                 )
             self._player_backend = "native-pw"
+            # v0.9.1: compute ring frames from prefer_native_pw_buffer_ms.
+            # Helper requires power-of-2 ring size (SPSC mask trick), so
+            # round up. Need:
+            #   chunk_frames + slack_frames
+            # where chunk_frames is one engine write (chunk_seconds *
+            # sink_rate) and slack_frames absorbs writer-jitter overshoot.
+            chunk_frames = int(self.cfg.chunk_seconds * self.cfg.sink_rate)
+            slack_frames = int(
+                self.cfg.prefer_native_pw_buffer_ms * self.cfg.sink_rate / 1000
+            )
+            needed = chunk_frames + slack_frames
+            ring_frames = 1
+            while ring_frames < needed:
+                ring_frames <<= 1
+            # Helper caps ring at 32768 internally as a sanity limit; cap
+            # here too with a clear error rather than letting the helper
+            # reject the arg later.
+            if ring_frames > 32768:
+                raise RuntimeError(
+                    f"prefer_native_pw_buffer_ms={self.cfg.prefer_native_pw_buffer_ms} "
+                    f"computes ring_frames={ring_frames}, above the helper's 32768 cap. "
+                    f"Lower the buffer or accept that no realistic engine jitter "
+                    f"requires more than 32768/{self.cfg.sink_rate} ≈ "
+                    f"{32768 / self.cfg.sink_rate * 1000:.0f} ms."
+                )
             cmd = [
                 str(helper),
                 f"--target={self.cfg.sink_name}",
                 f"--rate={self.cfg.sink_rate}",
                 f"--channels={self.cfg.output_channels}",
                 "--quantum=1024",
-                "--ring-frames=8192",
+                f"--ring-frames={ring_frames}",
             ]
             return subprocess.Popen(
                 cmd,

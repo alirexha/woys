@@ -16,11 +16,17 @@ A fork-and-trim of [w-okada/voice-changer](https://github.com/w-okada/voice-chan
 - **Inference floor `< 80 ms`** per chunk — the gate in
   `tests/test_smoke_rvc_onnx.py::LATENCY_FLOOR_MS` (measured on
   RTX 2070, ORT-CUDA, RVC v2 + RMVPE).
-- **End-to-end mic → output**: currently `~500-540 ms` with the v0.8.0
-  defaults (chunk 150 + inference ~80 + pacat output buffer 280 +
-  PipeWire codec ~30). The output buffer dominates; lowering it
-  re-introduces audible cuts on this hardware. See `docs/05-perf.md`
-  for the rc-by-rc latency table.
+- **End-to-end mic → output**: ~500-540 ms with v0.8.0 defaults (chunk
+  150 + inference ~80 + pacat 280 + PipeWire codec ~30). v0.9.0
+  switched the playback backend to a native PipeWire client (closes
+  the per-quantum gap class from pw-cat); v0.9.1 made it default and
+  added a tunable buffer slack window
+  (`prefer_native_pw_buffer_ms`, default 80 → ~341 ms total). See
+  `docs/05-perf.md` for the rc-by-rc latency table and the v0.9.0-rc4
+  A/B that established that **both backends produce equivalent audible
+  cut rates on this hardware** — the cuts are upstream of the playback
+  layer, in the engine's writer-jitter (~80 ms std-dev). v0.10.x
+  attacks that.
 - Idle VRAM `< 500 MB` (currently misses at ~1.35 GiB — foundation
   models dominate).
 - CPU `< 15 %` while active.
