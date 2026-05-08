@@ -739,6 +739,10 @@ class EngineStats:
     last_keepalive_ms: float = 0.0
     keepalive_avg_ms: float = 0.0
     _recent_keepalive_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    # v0.10.0-rc4 — ticks where keepalive backed off because engine
+    # inference was active on the same CUDA stream. High ratio of
+    # skipped:total ticks means the coordination is doing its job.
+    keepalive_skipped: int = 0
 
     # v0.9.0-rc4 — back-compat alias for the field renamed from
     # `pacat_restarts` to `player_restarts`. External callers (tests,
@@ -1320,6 +1324,14 @@ class RealtimeEngine:
         # has a cached algorithm for this shape. Allocated once, reused on
         # every keepalive iteration.
         self._keepalive_input: NDArrayF32 | None = None
+        # v0.10.0-rc4 — set by the engine main loop while it's running
+        # cv/rmvpe/rvc on the GPU; the keepalive thread skips its tick
+        # when this is set so the keepalive op doesn't queue on the same
+        # CUDA stream as engine inference (rc3's bimodal observation:
+        # +12% GPU clock floor, but +18% rvc.run p99 from stream
+        # contention). Cleared during mic_read + post-inference write
+        # phase, which IS the deboost window we want to fill.
+        self._gpu_inference_active = threading.Event()
         # Watchdog signal: writer flips this on BrokenPipe so the watchdog
         # respawns immediately instead of waiting for its next poll tick.
         self._pacat_dead_event = threading.Event()
@@ -2545,11 +2557,27 @@ class RealtimeEngine:
         running_avg = 0.0
         next_tick = time.perf_counter() + interval_s
 
+        # v0.10.0-rc4 — counter for ticks skipped because engine was
+        # actively running inference. Surfaces alongside keepalive_calls
+        # in `woys diag`; ratio tells us how often the coordination is
+        # actually in effect.
+        self.stats.keepalive_skipped = 0
         while not self._stop_event.is_set():
             now = time.perf_counter()
             if now < next_tick:
                 # Use a short timeout-based wait so we react quickly to stop_event.
                 self._stop_event.wait(timeout=min(0.020, next_tick - now))
+                continue
+            # v0.10.0-rc4 — skip this tick if the engine main thread is
+            # currently inside `_safe_process_streaming_16k`. Avoids the
+            # rc3 stream-contention class where a keepalive call queued
+            # on the same CUDA stream as engine RVC and pushed RVC's
+            # tail by ~10 ms.
+            if self._gpu_inference_active.is_set():
+                self.stats.keepalive_skipped += 1
+                # Re-check soon after engine likely completes (typical
+                # inference 35 ms p50; sample at 5 ms granularity).
+                next_tick = time.perf_counter() + 0.005
                 continue
             t0 = time.perf_counter()
             try:
@@ -2859,7 +2887,14 @@ class RealtimeEngine:
                     # `sola_enabled=False`, _process_streaming_16k still routes
                     # the model call through the history buffer but skips the
                     # crossfade — useful for A/B perf comparisons.
-                    out_native = self._safe_process_streaming_16k(audio16)
+                    # v0.10.0-rc4 — flag GPU as busy so the keepalive thread
+                    # skips its tick during inference; keeps the keepalive
+                    # op confined to the mic_read deboost window.
+                    self._gpu_inference_active.set()
+                    try:
+                        out_native = self._safe_process_streaming_16k(audio16)
+                    finally:
+                        self._gpu_inference_active.clear()
                     inf_ms = (time.perf_counter() - t_inf) * 1000
 
                     if out_native is None or out_native.shape[0] == 0:

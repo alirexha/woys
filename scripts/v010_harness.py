@@ -296,6 +296,7 @@ def _stats_dict(engine: Any, *, chunk_ms_target: float) -> dict[str, Any]:
         "n_writer_samples": len(wri),
         # v0.10.0-rc3 — GPU keepalive observability.
         "keepalive_calls": int(s.keepalive_calls),
+        "keepalive_skipped": int(getattr(s, "keepalive_skipped", 0)),
         "keepalive_avg_ms": float(s.keepalive_avg_ms),
         "keepalive_p50_ms": _pct(list(s._recent_keepalive_ms), 50)
         if s._recent_keepalive_ms
