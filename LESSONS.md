@@ -1707,3 +1707,116 @@ For a personal tool, "did it fix the thing the user noticed?" is the
 final test. For an engineering portfolio, "is the architecture
 correct?" matters too. Both are true here — and they're independent
 findings that should both ship without one masquerading as the other.
+
+## 28. v0.9.1 → v0.9.2 — ring capacity ≠ jitter fix; rolled back as housekeeping
+
+v0.9.1 changed the native-pw ring-buffer default from 8192 frames
+(chunk-only, ~21 ms slack) to 16384 frames (~191 ms slack) via the
+new `prefer_native_pw_buffer_ms = 80` default. The reasoning at
+ship time:
+
+  > Engine writer_jitter_ms (std-dev of inter-write intervals)
+  > sits at ~80 ms across every test since v0.6.10. Any write
+  > delayed by more than the slack window underruns the ring.
+
+The implementation was correct math against a wrong model. The user's
+real-listener test reported back same evening:
+
+  - `player_underruns` counter dropped (good, predicted)
+  - audible cut rate UNCHANGED (bad, not predicted)
+  - new ~170 ms echo regression on Telegram VOIP (bad, not predicted)
+
+Net result: regression. v0.9.2 reverts the default.
+
+### Lesson — ring capacity absorbs *overshoot*, not *underrun*
+
+In an SPSC ring between a bursty producer and a steady consumer:
+
+  - **Overshoot**: producer briefly outpaces consumer, ring fills,
+    further writes block until consumer drains. Bigger ring = more
+    overshoot tolerance.
+  - **Underrun**: producer briefly stalls, consumer drains the ring,
+    next consumer read finds empty ring → audible gap. Bigger ring
+    helps ONLY if the producer was steady-state ahead of the
+    consumer when the stall began (i.e., there was pre-buffered
+    audio to drain through). If the producer is hand-to-mouth (each
+    chunk produced just-in-time for consumption), expanding the
+    ring doesn't help — there's never anything to drain through
+    during the gap, so the underrun arrives at the same wall-clock.
+
+woys's engine is hand-to-mouth: each chunk takes ~80 ms wall to
+infer, the cadence is 150 ms wall, the writer pushes one chunk
+roughly every 150 ms. There's no steady-state "buffer ahead" — the
+ring sits at chunk-size most of the time. Expanding ring capacity
+in this regime only shifts WHERE the gap is audible (deferred by
+the slack window) without reducing the gap's existence. To the
+listener, a 21 ms gap and a 191 ms gap both register as a click +
+brief silence; the difference is mostly that the latter pushes
+total round-trip past Telegram's echo-cancellation horizon.
+
+### Lesson — writer-jitter measurements describe a SYMPTOM, not a CAUSE
+
+`writer_jitter_ms` is the std-dev of intervals between writer pushes
+into the output queue/ring. It's a diagnostic for *how chunky the
+producer cadence is*. The 80 ms σ figure means the writer occasionally
+takes much longer than 150 ms wall to push a chunk — but it doesn't
+say WHY (slow inference, GC pause, GIL contention, GPU clock dip,
+cuDNN re-tune, etc).
+
+Treating the std-dev as "the slack you need to absorb" is the wrong
+model:
+  1. σ describes the typical case; the audible cut driver is the
+     p99/max tail. Sizing for σ undersizes for the tail.
+  2. Even sizing for the tail just defers the audibility — it doesn't
+     reduce the rate of "writes that took >150 ms." The producer
+     still misses cadence; the consumer still has nothing to drain
+     during the miss after the slack runs out.
+
+The correct response to "writer_jitter is 80 ms" is "find out which
+stage in the writer's pipeline causes the tail and shorten it" — not
+"add 80 ms of slack downstream."
+
+### Lesson — counter improvements without listener improvements are negative-result data
+
+`player_underruns` measures ring-empty events at PipeWire's per-quantum
+boundary. v0.9.1 reduced that counter (slack absorbed many former
+empty events). The user's audible verdict was unchanged: same number
+of perceptible cuts, same audible noise floor.
+
+This means: per-quantum ring-empty events were not the dominant
+audible-cut driver on this stack. The dominant driver is upstream of
+the ring (in the producer cadence), and the counter the v0.9.0 design
+honestly added doesn't measure it directly.
+
+Generalizable rule: **a counter that decreased while listener
+experience didn't is evidence the counter measures the wrong layer**.
+The fix is to find a counter that DOES correlate with listener cuts,
+not to keep reducing the wrong one.
+
+For v0.10.x: per-stage producer timing percentiles (cv/rmvpe/rvc
+p50/p95/p99 + writer-thread enqueue lag p99) are the candidates.
+If the new percentile's p99 correlates with the user's listener
+verdict in a future test, that's the right counter; if it doesn't,
+keep looking.
+
+### Lesson — ship-then-listen has been our discovery loop; honor it
+
+This is the third consecutive release where the audible result
+informed the next release (v0.7.x → v0.8.0, v0.8.0 → v0.9.x, v0.9.1
+→ v0.9.2). The pattern:
+
+  1. Form a hypothesis from the available metrics.
+  2. Implement the minimal fix the hypothesis suggests.
+  3. SHIP IT and let the user run it for one real-content session.
+  4. If audible improves, hypothesis was right; lock and move on.
+  5. If audible doesn't move (or regresses), hypothesis was wrong;
+     write up the negative result, revert if there's collateral
+     damage, attack the next layer.
+
+What we DID right in v0.9.1: shipped quickly, captured the negative
+result honestly, rolled back without ego.
+What we DID wrong in v0.9.1: didn't pre-test the latency cost on a
+synthetic harness before shipping. The 170 ms echo regression was
+predictable from the math; we just didn't run the math.
+For v0.10.x: every default change must clear an in-house synthetic
+test against the v0.9.0 latency baseline before the rc tag.
