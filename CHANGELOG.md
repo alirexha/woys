@@ -4,6 +4,120 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.10.0-partial] — 2026-05-08 — synthetic harness + per-stage attribution + keepalive knob (NOT a fix release)
+
+The output of `V0_10_X_AUTONOMOUS_LOOP.md` after 4 rc iterations of
+the engine writer-jitter investigation. **The release ships partial
+on objective gates** — see "Acceptance gates: where we landed" below
+and `LESSONS.md` §29-§30 for the full retrospective.
+
+### Why "partial"
+
+The brief's acceptance criteria for v0.10.0 final required:
+
+  1. player_underruns rate ≤ 0.5/sec sustained over 5+ minute synthetic
+     test (best observed: 6.98/sec on rc4)
+  2. writer_jitter p99 ≤ 30 ms (best observed: 39.7 ms on rc2 baseline,
+     51.2 ms on rc3 keepalive, 94.4 ms on rc4 coordinated)
+  3. avg_inf no worse than v0.9.0 baseline 52 ms (rc3 LANDED at 48.5 ms;
+     rc4 regressed to 54.9 ms; rc1/rc2 at 57.2 / 57.1 ms)
+
+Neither (1) nor (2) was achieved by any rc; (3) was achieved by
+rc3 with keepalive on, but at a writer-jitter regression. The
+brief explicitly authorized this partial-release outcome; this
+ships everything that DOES land plus an honest writeup.
+
+### What ships
+
+**Phase 1 evidence-gathering — all instrumentation lands clean**
+
+  * `EngineStats._recent_cv_ms` / `_recent_rmvpe_ms` / `_recent_rvc_ms`
+    — per-stage rolling deques, `cv_samples_ms()` / `rmvpe_samples_ms()`
+    / `rvc_samples_ms()` accessors. Both legacy in-process and IPC paths
+    populate.
+  * `_recent_rvc_pre_ms` / `_recent_rvc_run_ms` / `_recent_rvc_post_ms`
+    — RVC further split into Python pre, GPU run, Python post (legacy
+    in-process only; IPC ships aggregate `rvc_ms`).
+  * `unique_audio16_lens` and `warmup_audio16_lens` — runtime shape set
+    + warmup snapshot for the rc9 broader-pre-warm coverage check.
+  * `writer_interval_samples_ms()` accessor — exposes the existing
+    `_writer_intervals_ms` deque so `woys diag` can compute
+    `writer_jitter_p99 = max(0, p99 - chunk_ms_target)`.
+  * `woys diag` shows all of the above.
+
+**Synthetic harness (`scripts/v010_harness.py`)**
+
+  Deterministic `sd.InputStream` mock loops a 1.5 s pattern (voiced
+  220 Hz / white / silence / voiced 330 Hz). Drives the engine
+  end-to-end through the native-pw helper so `player_underruns` is
+  the same counter the user's Telegram session reports. JSON output
+  is stable for diff-based regression testing. `scripts/v010_analyze.py`
+  produces a side-by-side rc-comparison table; supports correlating
+  with an `nvidia-smi` clocks CSV.
+
+**GPU keep-alive knob (default OFF, tunable for power users)**
+
+  * `EngineConfig.gpu_keepalive_enabled` (default `False`)
+  * `EngineConfig.gpu_keepalive_interval_ms` (default 25)
+  * `EngineConfig.gpu_keepalive_input_len` (default 1600)
+  * `RealtimeEngine._keepalive_loop` — daemon thread runs a tiny
+    contentvec ONNX op at the configured cadence to keep the GPU's
+    dynamic boost above the deboost threshold.
+  * Default off because the rc3 → rc4 A/B (LESSONS §30) showed the
+    knob is bimodal: median rvc.run drops 31 % (33 → 23 ms) with it
+    on, but tail rvc.run rises 18 % (68 → 80 ms) from same-stream
+    queueing against engine inference. Power users who hit a workload
+    where median dominates the audible experience can opt in.
+
+### Acceptance gates: where we landed
+
+| gate | target | best | by   | status   |
+|------|--------|------|------|----------|
+| player_underrun_rate     | ≤ 0.5 /sec | 6.98 /sec | rc4 | FAIL  |
+| writer_jitter_p99        | ≤ 30 ms    | 39.7 ms   | rc2 | FAIL  |
+| avg_inference_ms         | ≤ 52 ms    | 48.5 ms   | rc3 | PASS  |
+| 127/127 unit tests pass  | 0 regress  | 0 regress | all | PASS  |
+| spectrogram regression   | none       | not run   | -   | DEFER |
+| mypy/ruff format check   | clean      | unchanged | all | DEFER |
+
+The hardware ceiling: RTX 2070 Mobile dynamic boost auto-deboosts
+during the engine's ~98 ms mic_read window, producing variable
+reboost-recovery cost on the next chunk's RVC. Software-only mitigation
+(keepalive) lifts the median GPU clock by 12 % (1665 → 1875 MHz) but
+introduces ORT same-stream queueing that pushes the tail. Closing the
+remaining 10-15 ms of writer_jitter p99 plausibly requires either a
+locked GPU clock state (`nvidia-smi -lgc <min>,<max>`, root + user
+permission required) or a separate-CUDA-stream keepalive (out of
+scope for the rc-loop budget).
+
+### What does NOT ship in v0.10.0-partial
+
+  * No default behavior change on the audio path (engine runs the same
+    inference pipeline; only instrumentation changed).
+  * No prefer_native_pw or buffer changes.
+  * No nvidia-smi clock or power changes (per the brief's "no GPU
+    clock changes without my approval" guardrail).
+  * No re-exported RVC models or alternative inference frameworks
+    (TensorRT remains dead per LESSONS §22; OpenVINO/TVM untested).
+
+### What's next (v0.11.x candidates, in priority order)
+
+  1. **chunk_seconds=0.20 / 0.25 sweep** — reduces idle gap between
+     RVC ops, reduces deboost depth. Tradeoff: +50-100 ms latency.
+     Cheapest experiment.
+  2. **Separate CUDA stream for keepalive** — use PyTorch's CUDA
+     stream API (already in deps) to issue keepalive ops on a stream
+     not shared with ORT. Closes the rc3 contention class without
+     paying the rc4 coordination cost.
+  3. **`nvidia-smi -lgc <min>,<max>` with user consent** — driver-level
+     clock floor. Definitive but requires root + acceptance of the
+     ~5 W/h idle power increase.
+  4. **f0-transition correlation** (brief candidate #4) — log per-chunk
+     pitchf range vs inf_ms. If RVC NSF has an f0-cliff, a model
+     re-export with smoothed f0 input becomes the next attack.
+  5. **Re-export RVC ONNX with TF32 forced or fixed-shape graph
+     optimization** — reduce per-call variance at the model layer.
+
 ## [0.9.2] — 2026-05-08 — housekeeping: revert v0.9.1's buffer-expansion default
 
 v0.9.1 expanded the native-pw ring-buffer default to 80 ms slack
