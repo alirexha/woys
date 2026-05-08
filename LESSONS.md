@@ -3128,3 +3128,138 @@ cuts are in the noise floor of detection-cum-perception-cum-
 network on this stack; further reduction needs out-of-scope work
 (model-side surgery, click-specific DSP, or a different vocoder
 architecture).
+
+> **Update — see §44.** The v0.13.0 chain shipped with a routing
+> bug that leaked filter-chain output to the default ALSA sink, so
+> the 13 % number above was contaminated by acoustic feedback. The
+> v0.13.2 fix (Architecture B with `media.class=Audio/Sink` and the
+> `.monitor` consumption pattern) lands the real number at −27 %.
+
+## 44. v0.13.2 — wireplumber auto-routes "orphan" filter-chain nodes to default ALSA; the v0.13.0 chain leaked because of a `media.class` mismatch
+
+v0.13.0 was the first cut of the RNNoise chain. It looked clean in
+`pactl list short modules` (three modules loaded as planned), it
+produced a `woys-mic-clean` source the user could select in
+Telegram, AND it measured a 13 % cut reduction in the harness. §43's
+"final exploration" closing note was written on that basis.
+
+The user used it on a real Telegram call with the laptop's internal
+speakers unmuted. **Audio came out the speakers.** Loud enough to
+double when `monitor` was also on. The chain wasn't doing what we
+thought.
+
+### Diagnostic
+
+`pw-link -l` (the smoking gun):
+
+```
+output.filter-chain-1803-15:output_FL → alsa_output.pci-0000_00_1f.3.analog-stereo:playback_FL
+output.filter-chain-1803-15:output_FR → alsa_output.pci-0000_00_1f.3.analog-stereo:playback_FR
+```
+
+The LADSPA filter-chain output stream had links to BOTH:
+  * the intended destination (`woys-mic-clean`), via `sink_master`, AND
+  * the default ALSA sink (the laptop's analog-stereo card).
+
+Two cooperating bugs in the v0.13.0 script:
+
+  **1. `media.class=Audio/Source/Virtual`** on the destination
+  null-sink. That class tells wireplumber "this is a source-only
+  node — don't route playback streams here." So when the LADSPA-
+  sink told wireplumber "I'm sending output to `sink_master=woys-
+  mic-clean`," wireplumber refused to honor the binding. The
+  filter-chain's output stream became an orphan
+  Stream/Output/Audio node — and wireplumber's session policy for
+  unrouted Stream/Output/Audio nodes is *route them to the user's
+  default sink*. That default was the laptop's analog audio card.
+  So every filter-chain frame went to the speakers.
+
+  **2. mono/stereo mismatch.** The v0.13.0 loopback was mono
+  (matching woys-mic), but the LADSPA-sink defaulted to stereo.
+  `noise_suppressor_mono` is 1-in/1-out; PipeWire ran it twice in
+  parallel and the resulting stereo output stream couldn't have
+  bound to a mono master even if Architecture A had been valid.
+  Both legs are now forced `channels=1`.
+
+### The trick — `Audio/Sink` plus the `.monitor` suffix
+
+The fix (now `src/woys/chain.py` and `scripts/v013_2_rnnoise_chain.sh`):
+
+```
+pactl load-module module-null-sink \
+    media.class=Audio/Sink \              # ← Audio/Sink, not Audio/Source/Virtual
+    sink_name=woys-mic-clean \
+    rate=48000 channels=1
+pactl load-module module-ladspa-sink \
+    sink_name=woys-mic-rnnoise-bridge \
+    sink_master=woys-mic-clean \
+    plugin=/usr/lib/ladspa/librnnoise_ladspa.so \
+    label=noise_suppressor_mono \
+    rate=48000 channels=1                 # ← mono, matches the plugin
+pactl load-module module-loopback \
+    source=woys-mic sink=woys-mic-rnnoise-bridge \
+    rate=48000 channels=1 latency_msec=30
+```
+
+With `media.class=Audio/Sink`, wireplumber accepts woys-mic-clean as
+a valid playback target, the LADSPA-sink's `sink_master=` binds
+cleanly, and the filter-chain output never escapes the chain. ZERO
+links from any chain component to alsa_output, verified live.
+
+The cost: apps now record from `woys-mic-clean.monitor` instead of
+`woys-mic-clean`. The `.monitor` port is the auto-created source
+that mirrors what the sink received. This is one extra word in the
+device picker, and it's the right answer.
+
+### Re-measured
+
+Same TTS-driven harness as the v0.13.0 measurement:
+
+  * **woys-mic** (raw v0.12.4): 75.4 cuts/min
+  * **woys-mic-clean.monitor** (v0.13.2): 54.7 cuts/min (**−27 %**)
+
+The v0.13.0 number (13 %) was real-RNNoise-plus-acoustic-feedback.
+The v0.13.2 number (27 %) is the actual RNNoise contribution. RNNoise
+is doing roughly twice what we thought.
+
+### Lessons
+
+  * **`media.class` is the routing decision.** PipeWire/wireplumber
+    won't connect a Stream/Output/Audio node to a node whose class
+    contradicts the role you're asking it to play. v0.13.0's
+    Source/Virtual class said "I'm a source," and routing logic
+    refused to feed a sink_master into it. We learned this from
+    v0.12.2's "module-loopback's `sink=` is a hint, not a binding"
+    lesson, but didn't generalize to "any module that targets a
+    sink needs that sink to actually be class=Sink".
+  * **Orphan Stream/Output/Audio nodes go to the default sink.**
+    Always. Silently. Without warning. If you load a chain and you
+    can't trace where its output is going, run `pw-link -l` and
+    look for `alsa_output.*` connections from anything in your
+    graph — those are leaks.
+  * **`pactl list short modules` is not enough.** It tells you a
+    module loaded successfully, not that its semantic intent
+    happened. The only way to verify routing is `pw-link -l`. Build
+    self-checks that run pw-link and grep for known-bad patterns.
+    The v0.13.2 `chain status` does this — if a future change
+    re-introduces this bug, it surfaces at the user's terminal
+    immediately.
+  * **Measurement is contaminated when feedback paths exist.** The
+    v0.13.0 cuts/min comparison happened with the laptop's
+    speakers unmuted and the recording mic ~30 cm away. The chain
+    output went to the speakers, the recording mic captured the
+    speakers + the mic + the room, and we recorded that and called
+    it "RNNoise output." A clean differential needs zero acoustic
+    cross-talk between the two recording paths. We avoided this
+    elsewhere by using serial-ID-based pw-record from the virtual
+    source directly — but the v0.13.0 chain meant "the virtual
+    source" wasn't really the virtual source.
+  * **Match channel layouts end to end.** When chaining mono
+    plugins, force `channels=1` on every module — null-sink, LADSPA-
+    sink, loopback. Defaults will bite.
+  * **Don't claim "final exploration" before you've used it under
+    real conditions.** The user used woys daily; a 24h soak with
+    Telegram + speakers would have caught this immediately. The
+    measurement harness ran in conditions that masked the bug. A
+    "final" claim should require at least one real-world use the
+    measurement harness can't simulate.

@@ -141,6 +141,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="launch the optional system-tray icon (requires the [tray] extra)",
     )
 
+    chain_p = sub.add_parser(
+        "chain",
+        help="manage the v0.13.2 RNNoise post-engine chain (woys-mic-clean.monitor)",
+    )
+    chain_sub = chain_p.add_subparsers(dest="chain_cmd", required=True, metavar="ACTION")
+    chain_sub.add_parser("setup", help="load the RNNoise chain (one-shot)")
+    chain_sub.add_parser("teardown", help="unload the RNNoise chain")
+    chain_sub.add_parser("status", help="show chain modules + ALSA-leak self-check")
+    chain_sub.add_parser(
+        "enable",
+        help="install systemd user unit so the chain auto-loads on every login",
+    )
+    chain_sub.add_parser(
+        "disable",
+        help="stop chain, disable the systemd user unit, remove it",
+    )
+
     diag_p = sub.add_parser(
         "diag",
         help="run a short engine self-test and report audio-pipeline health "
@@ -493,10 +510,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     if warmup_shapes:
         runtime_set = set(runtime_shapes)
         unwarmed = sorted(runtime_set - s.warmup_audio16_lens)
-        print(
-            f"  audio16_len      warmup={warmup_shapes} "
-            f"runtime={runtime_shapes}"
-        )
+        print(f"  audio16_len      warmup={warmup_shapes} runtime={runtime_shapes}")
         if unwarmed:
             print(
                 f"  [!] {len(unwarmed)} runtime shape(s) NOT in warmup set "
@@ -878,6 +892,23 @@ def main(argv: list[str] | None = None) -> int:
         from woys.tray import cli_tray
 
         return cli_tray()
+    if args.cmd == "chain":
+        from woys.chain import disable as chain_disable
+        from woys.chain import enable as chain_enable
+        from woys.chain import setup as chain_setup
+        from woys.chain import status as chain_status
+        from woys.chain import teardown as chain_teardown
+
+        if args.chain_cmd == "setup":
+            return chain_setup()
+        if args.chain_cmd == "teardown":
+            return chain_teardown()
+        if args.chain_cmd == "status":
+            return chain_status()
+        if args.chain_cmd == "enable":
+            return chain_enable()
+        if args.chain_cmd == "disable":
+            return chain_disable()
     if args.cmd == "diag":
         return cmd_diag(args.seconds, args.no_engine)
     if args.cmd == "engine":

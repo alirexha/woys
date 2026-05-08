@@ -7,7 +7,7 @@
 
 Linux-native real-time voice changer. RVC-only, ONNX Runtime CUDA, PipeWire-native, terminal-controlled. Originally targeted CachyOS; runs on any modern Linux with PipeWire + an NVIDIA GPU.
 
-## Status (v0.13.0)
+## Status (v0.13.2)
 
 Daily-use ready on RTX 2070 Mobile. The user's perceptual A/B
 test (Desktop WAV listening) ratified the v0.12.3 sweep top-1
@@ -35,22 +35,32 @@ Configurations that minimise latency at the cost of more cuts (e.g.
 remain available via `~/.config/woys/config.toml` for users who want
 that tradeoff.
 
-### v0.13.0 opt-in: RNNoise chain (`woys-mic-clean`)
+### v0.13.2 opt-in: RNNoise chain (`woys-mic-clean.monitor`)
 
-If you want a further ~13 % cut reduction at +40 ms additional
-latency cost, install the standalone RNNoise LADSPA plugin and load
-the v0.13.0 chain:
+If you want a further ~27 % cut reduction at +40 ms additional
+latency cost, install the LADSPA plugin and let `woys` manage the
+chain:
 
 ```bash
 sudo pacman -S noise-suppression-for-voice
-./scripts/v013_0_rnnoise_chain.sh setup
-# in your app, select `woys-mic-clean` instead of `woys-mic`
-./scripts/v013_0_rnnoise_chain.sh teardown   # when not needed
+woys chain enable    # systemd user unit; loads now + on every login
+# in your app, select `woys-mic-clean.monitor` (NOT bare `woys-mic-clean`)
+woys chain disable   # remove unit + tear down chain
 ```
 
-See `docs/23-rnnoise-chain.md` for measured impact and architecture.
-The default `woys-mic` source is unchanged; v0.13.0 just adds a
-parallel `woys-mic-clean` source that apps can opt into.
+For one-shot use without systemd:
+
+```bash
+woys chain setup
+woys chain status    # shows modules, sources, ALSA-leak self-check
+woys chain teardown
+```
+
+See `docs/23-rnnoise-chain.md` for the measured impact and the
+v0.13.0 → v0.13.2 fix history (v0.13.0 had a routing bug that
+leaked filter-chain output to ALSA hardware sinks; v0.13.2 fixes it
+and the real RNNoise contribution is twice what we originally
+measured).
 
 ## What it is
 
