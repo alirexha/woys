@@ -2188,10 +2188,27 @@ class RealtimeEngine:
             return
         is_pacat = self._player_backend == "pacat"
         is_native = self._player_backend == "native-pw"
+        # Diagnostic tee: when WOYS_HELPER_STDERR_LOG is set, every line
+        # the player backend writes to stderr is also appended to that
+        # path with a wall-clock timestamp. Zero overhead when the env
+        # var is unset. Useful for forensic post-mortems of "the helper
+        # died at some point during a session" cases — we lose nothing
+        # to the existing parse-and-overwrite pattern.
+        debug_log_path = os.environ.get("WOYS_HELPER_STDERR_LOG")
+        debug_fp = None
+        if debug_log_path:
+            try:
+                debug_fp = open(debug_log_path, "ab", buffering=0)  # noqa: SIM115
+            except OSError:
+                debug_fp = None
         try:
             for raw in proc.stderr:
                 if not raw:
                     break
+                if debug_fp is not None:
+                    ts = time.strftime("%H:%M:%S", time.localtime())
+                    with contextlib.suppress(OSError):
+                        debug_fp.write(f"[{ts} {self._player_backend}] ".encode() + raw)
                 line = raw.decode("utf-8", errors="replace")
                 if is_pacat:
                     # pacat -v prints lines like "Stream underrun.\n" exactly.
@@ -2219,6 +2236,10 @@ class RealtimeEngine:
         except (ValueError, OSError):
             # Pipe closed mid-read during shutdown — expected.
             return
+        finally:
+            if debug_fp is not None:
+                with contextlib.suppress(OSError):
+                    debug_fp.close()
 
     def _watchdog_loop(self) -> None:
         """Daemon thread: respawns pacat if it dies mid-session (Brief §3 Fix 3).
