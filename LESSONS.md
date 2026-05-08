@@ -3022,3 +3022,109 @@ periodic mechanism is bounded at autocorrelation = 0.000 by
 measurement and "the rhythm is GONE" by ear. Full stop.
 
 This is the last release. Project closes.
+
+## 43. v0.13.0 — RNNoise chain after woys-mic gives 13 % measurable cut reduction
+
+User-requested investigation: chain NoiseTorch / RNNoise after woys
+to see if it removes residual chunk-boundary clicks. Hypothesis going
+in: probably no, RNNoise wasn't trained for this.
+
+### Method
+
+Built the chain manually under PipeWire/pulse compat (NoiseTorch's
+own `-i` mode failed with "No such entity" — its sink/master ordering
+is incompatible with this stack's PipeWire 1.6.4 + pipewire-pulse
+15.0):
+
+  1. `module-null-sink media.class=Audio/Source/Virtual sink_name=woys-mic-clean`
+     — terminal sink that holds the denoised audio
+  2. `module-ladspa-sink sink_name=woys-mic-rnnoise-bridge
+     sink_master=woys-mic-clean
+     plugin=/usr/lib/ladspa/librnnoise_ladspa.so
+     label=noise_suppressor_mono` — RNNoise applied here
+  3. `module-loopback source=woys-mic sink=woys-mic-rnnoise-bridge
+     latency_msec=30 channels=1` — feeds v0.12.4 woys-mic into the
+     filter chain
+
+The plugin came from the system package
+`noise-suppression-for-voice` (CachyOS / Arch extra repo); it's the
+same RNNoise model NoiseTorch uses, packaged for direct PA module
+loading.
+
+### Method — measurement
+
+Recorded `woys-mic` AND the RNNoise-processed `woys-mic-clean`
+concurrently for 60 s during a TTS-driven v0.12.4 engine run, both
+captured by **serial ID** (the v0.12.2 fix — name-based pw-record
+falls back to default source). Both detectors run on each recording.
+
+### Result
+
+| metric                              | woys-mic | woys-mic-clean | Δ      |
+|-------------------------------------|---------:|---------------:|-------:|
+| woys-diag cuts/min                  |     86.5 |      **75.2**  | **-13 %** |
+| woys-diag total events (60 s)       |       99 |          86    |   -13  |
+| spectral flux peak at 150 ms        |    0.111 |     **0.079**  | **-29 %** |
+| spectral flux peak at 1500 ms       |    0.103 |        0.119   |   +16 % |
+| latency cost                        |     0 ms |         40 ms  | +40 ms |
+
+Hypothesis was wrong: there IS measurable improvement (13 % cuts/min
+reduction). Both detectors agree. The 150 ms autocorrelation peak
+weakens 29 %; the 1500 ms peak (= 6 × chunk_seconds = TTS sentence
+boundaries) actually grows.
+
+### Why RNNoise reduces clicks even though it wasn't designed for them
+
+RNNoise outputs a per-frame gain coefficient based on a
+voice-vs-noise classifier. Frame size = 10 ms. For high-confidence
+voice → gain ≈ 1.0; for non-voice → gain → 0.0.
+
+Chunk-boundary clicks in RVC output are short-duration high-spectral-
+tilt transients. Some fraction of them register as "non-voice" in the
+classifier and get attenuated. Not the design intent — it's a side
+effect of the architecture. The clicks that get suppressed are the
+ones that look enough like noise to the network; the rest survive.
+
+That explains both the modest magnitude (13 % not 90 %) and the
+selectivity (some clicks pass through, some don't).
+
+### Generalizable lesson — test the "probably no" hypothesis cheaply
+
+The user expected NoiseTorch wouldn't help. So did I. We were both
+wrong by 13 %. The investigation cost ~30 minutes of automated work.
+13 % is real and worth shipping as opt-in tooling.
+
+When a user asks "does X help?", the cheap answer (run the experiment,
+measure with both calibrated and mechanism-grounded detectors) is
+almost always better than the considered-opinion answer (reason from
+priors). Especially when "probably no" is the consensus prior.
+
+The asymmetric cost-of-being-wrong matters: if "yes" was the
+considered guess and the real answer is "no", you waste effort on a
+non-improvement. If "no" was the considered guess and the real answer
+is "yes, 13 %", you miss real value. The cheapest hedge is to test.
+
+### Why v0.13.0 ships opt-in not default
+
+  * +40 ms latency on top of v0.12.4's already-+100-ms total puts e2e
+    at ~680 ms, near conversational comfort threshold
+  * 13 % is real but modest, on residual transients the user
+    explicitly accepted as acceptable in v0.12.4 (their listening
+    test heard "the rhythm is GONE")
+  * Depends on a non-woys system package (noise-suppression-for-voice)
+  * Apps need to re-select `woys-mic-clean` (UX cost vs the v0.12.4
+    `woys-mic` they already use)
+
+The opt-in path (`scripts/v013_0_rnnoise_chain.sh setup` after
+`pacman -S noise-suppression-for-voice`) lets users who want the
+extra 13 % opt in, while the v0.12.4 default-quality path stays
+zero-friction.
+
+### Closing
+
+This was the user's planned final exploration after v0.12.4. Hard
+data shipped. Project closes at v0.13.0. The remaining residual
+cuts are in the noise floor of detection-cum-perception-cum-
+network on this stack; further reduction needs out-of-scope work
+(model-side surgery, click-specific DSP, or a different vocoder
+architecture).
