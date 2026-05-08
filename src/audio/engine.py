@@ -2167,6 +2167,14 @@ class RealtimeEngine:
                 proc.stdin.write(payload)
                 proc.stdin.flush()
             except (BrokenPipeError, OSError) as e:
+                # v0.9.0-rc5: distinguish shutdown-race BrokenPipe from
+                # a real mid-session helper death. During engine.stop(),
+                # the playback subprocess is terminated as part of the
+                # finally-block; the writer thread may still have queued
+                # bytes and races the helper's exit. That race is normal
+                # teardown noise, not a runtime error worth surfacing.
+                if self._stop_event.is_set():
+                    return
                 self.stats.last_error = (
                     f"{self._player_backend or 'player'} write failed "
                     f"({type(e).__name__}); respawning"
