@@ -1820,3 +1820,133 @@ synthetic harness before shipping. The 170 ms echo regression was
 predictable from the math; we just didn't run the math.
 For v0.10.x: every default change must clear an in-house synthetic
 test against the v0.9.0 latency baseline before the rc tag.
+
+## 29. v0.10.0-rc1 / rc2 — synthetic harness + per-stage attribution
+
+The brief listed six candidate causes for the engine writer-jitter
+that produces audible cuts:
+
+  1. Inference variance per stage (cv/rmvpe/rvc tails)
+  2. cuDNN re-tune on cold input shapes outside the 4-shape pre-warm
+  3. Python GIL contention with metrics / watchdog / SOLA threads
+  4. RVC NSF f0-transition cliff
+  5. Memory allocation churn on the hot path
+  6. GPU thermal/power dynamic-boost variance
+
+rc1 added three pieces of instrumentation specifically to rank these:
+
+  * Per-stage rolling deques for cv / rmvpe / rvc (p50/p95/p99 each)
+  * Writer inter-flush interval percentiles (the existing σ counter
+    measured std-dev only; p99 is what the brief's gate uses)
+  * `unique_audio16_lens` runtime shape set vs `warmup_audio16_lens`
+    snapshot to detect any cuDNN cold-shape misses
+
+A synthetic engine harness (`scripts/v010_harness.py`) replaces the
+real `sd.InputStream` with a deterministic generator (1.5 s loop:
+voiced 220 Hz / white / silence / voiced 330 Hz). Drives the engine
+end-to-end through the full native-pw helper path so
+`player_underruns` is the same counter the user's Telegram run reports.
+JSON output schema is stable for diff-based regression testing.
+
+### rc1 5-min baseline (n=1982 chunks; chunk_seconds=0.15)
+
+| metric                 | observed    | gate    | status  |
+|------------------------|-------------|---------|---------|
+| underrun_rate (/s)     | 7.12        | ≤ 0.5   | FAIL    |
+| writer_jitter p99 (ms) | 42.5        | ≤ 30    | FAIL    |
+| inference_avg (ms)     | 57.2        | ≤ 52    | FAIL    |
+| inference p50/p99 (ms) | 51 / 90     | -       | -       |
+| .cv     p50/p99 (ms)   | 6 / 9       | -       | -       |
+| .rmvpe  p50/p99 (ms)   | 10 / 12     | -       | -       |
+| .rvc    p50/p99 (ms)   | 33 / 69     | -       | -       |
+| late_chunks            | 114 / 1982  | -       | 5.7%    |
+| inference max (ms)     | 981         | -       | outlier |
+
+Of the 39 ms inference tail (p99 - p50), **rvc owns 36 ms = 92 %**.
+cv contributes 3 ms; rmvpe 2 ms. Per-stage attribution is unambiguous.
+
+### Concurrent nvidia-smi clocks log (n=3108 @ 100 ms cadence)
+
+| metric           | value          | observation                  |
+|------------------|----------------|------------------------------|
+| clocks.gr min    | 300 MHz        | full-deboost idle state      |
+| clocks.gr p50    | 1665 MHz       | normal busy state            |
+| clocks.gr max    | 1845 MHz       | full boost                   |
+| **dip count**    | **1062 / 3108** | **34% of samples below p50-100MHz** |
+| utilization p50  | 58 %           | bursty, not steady-state     |
+| utilization p99  | 98 %           | full-saturation peaks        |
+| temperature p99  | 87 °C          | elevated (concurrent laptop GPU work) |
+| power p99        | 115 W          | within 115 W laptop budget   |
+
+### What the data eliminates
+
+  * **Candidate 2 (shape coverage) is INVALIDATED.** Runtime shape set
+    `{4357, 4358, 4846, 4847}` is a strict subset of the warmup set;
+    cuDNN never re-tunes on a cold shape during runtime.
+  * **Candidate 1 narrowed:** the only meaningful per-stage tail is on
+    rvc; cv and rmvpe are within 3 ms of their median across the run.
+
+### What the data points at
+
+  * **Candidate 6 (GPU dynamic-boost variance) is the strongest signal.**
+    34 % of GPU clock samples are >100 MHz below the median. The mic_read
+    blocks the engine for ~98 ms / chunk; the GPU is idle during that
+    window and the dynamic-boost backs off. When the next chunk's RVC
+    op fires, the GPU has to reboost from a lower clock state — the
+    reboost recovery cost is variable (100s of µs to tens of ms)
+    depending on how deep the deboost went and current power-state
+    transition policy.
+  * Because RVC is by far the largest GPU op, its tail mirrors the
+    GPU clock variance most visibly.
+  * The 981 ms inference max is a single warmup-adjacent outlier
+    (likely first-realtime chunk after `_warmup_realtime_pipeline`
+    cleared state; cuDNN re-evaluates an algo path even though the
+    shape is the same).
+
+### What rc2 will confirm
+
+rc2 splits rvc into pre / run / post:
+
+  * `rvc_pre_ms`: Python (np.repeat, _to_pitch_coarse, slice/reshape/astype)
+  * `rvc_run_ms`: GPU work inside `self._rvc.run(...)` itself
+  * `rvc_post_ms`: Python (np.array.astype.squeeze, isnan/isinf scan)
+
+Prediction (Phase 3 hypothesis): rvc_run owns ≥ 80 % of the rvc tail,
+which would confirm the GPU clock variance pathway. If rvc_pre or
+rvc_post own meaningful share, candidates 5 (numpy alloc churn) or
+3 (GIL contention with watchdog/writer/metrics threads) would move
+up the ranking.
+
+### v0.10.x fix-strategy candidates
+
+If rc2 confirms rvc_run owns the tail (GPU pathway):
+
+  * **A. GPU keep-alive thread** — daemon issues a tiny ORT op every
+    20-30 ms during engine activity to keep the GPU at boosted clock
+    state. Software-only, no driver changes, no permission needed.
+    Cost: ~3-5 % continuous GPU duty cycle. Risk: queueing on the
+    same CUDA stream as engine inference could add latency rather
+    than reduce it; needs measurement.
+  * **B. Larger chunks** — chunk_seconds=0.25 or 0.30 increases
+    GPU work per cycle, reduces idle gap, makes deboost less likely.
+    Cost: end-to-end latency rises by the chunk delta. Already
+    tried in v0.6.7 sweep (0.25 ended up the local minimum for
+    cuts on the prior baseline; 0.30 untested).
+  * **C. Force GPU performance state** — `nvidia-smi -lgc <min>,<max>`
+    locks clocks. Definitive but USER-PERMISSION-REQUIRED per the
+    brief. Defer until A/B exhausted.
+
+If rc2 surfaces unexpected pre/post weight, the strategy shifts to
+Python-side optimization (preallocate feats_2x / pitchf_aligned
+buffers, avoid astype copies, etc.).
+
+### Methodology lesson — synthetic harness with a real PipeWire output
+
+The harness uses a mock `sd.InputStream` BUT the engine still runs
+the full native-pw helper, which actually opens a PipeWire stream
+to `WoysSink`. `player_underruns` is therefore the SAME counter the
+user's Telegram session reports — the synthetic test is faithful
+to the real session's audio-output mechanics, only the input is
+deterministic. This is the methodological gap that bit v0.9.1: that
+default change shipped without an in-house harness run. The harness
+exists now and any future default change should clear it before tag.

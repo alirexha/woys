@@ -294,6 +294,15 @@ def _stats_dict(engine: Any, *, chunk_ms_target: float) -> dict[str, Any]:
         "unwarmed_shapes": sorted(s.unique_audio16_lens - s.warmup_audio16_lens),
         "n_inference_samples": len(inf),
         "n_writer_samples": len(wri),
+        # v0.10.0-rc3 — GPU keepalive observability.
+        "keepalive_calls": int(s.keepalive_calls),
+        "keepalive_avg_ms": float(s.keepalive_avg_ms),
+        "keepalive_p50_ms": _pct(list(s._recent_keepalive_ms), 50)
+        if s._recent_keepalive_ms
+        else 0.0,
+        "keepalive_p99_ms": _pct(list(s._recent_keepalive_ms), 99)
+        if s._recent_keepalive_ms
+        else 0.0,
     }
 
 
@@ -304,6 +313,8 @@ def _run_engine_synthetic(
     enable_sola: bool,
     chunk_seconds: float | None,
     inference_subprocess: bool,
+    gpu_keepalive_enabled: bool = False,
+    gpu_keepalive_interval_ms: int | None = None,
 ) -> dict[str, Any]:
     """Run the engine for `duration_s` against the synthetic signal,
     return the stats dict (also written to `out_path` if provided)."""
@@ -332,6 +343,13 @@ def _run_engine_synthetic(
         prefer_pw_cat=cfg.prefer_pw_cat,
         prefer_native_pw=cfg.prefer_native_pw,
         prefer_native_pw_buffer_ms=cfg.prefer_native_pw_buffer_ms,
+        gpu_keepalive_enabled=gpu_keepalive_enabled,
+        gpu_keepalive_interval_ms=(
+            gpu_keepalive_interval_ms
+            if gpu_keepalive_interval_ms is not None
+            else cfg.gpu_keepalive_interval_ms
+        ),
+        gpu_keepalive_input_len=cfg.gpu_keepalive_input_len,
     )
     engine_cfg.inference_subprocess = inference_subprocess
     rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
@@ -465,6 +483,12 @@ def _print_summary(out: dict[str, Any]) -> None:
         )
     print(f"  late_chunks             {s['late_chunks']}  (>{chunk_ms:.0f} ms wall budget)")
     print(f"  dropped_chunks          {s['dropped_chunks']}  (inference exceptions)")
+    if s.get("keepalive_calls", 0) > 0:
+        print(
+            f"  gpu_keepalive           calls={s['keepalive_calls']}  "
+            f"p50={s.get('keepalive_p50_ms', 0):.2f} ms  "
+            f"p99={s.get('keepalive_p99_ms', 0):.2f} ms"
+        )
     print(f"  warmup_audio16_lens     {s['warmup_audio16_lens']}")
     print(f"  runtime_audio16_lens    {s['runtime_audio16_lens']}")
     if s["unwarmed_shapes"]:
@@ -479,6 +503,17 @@ def main() -> int:
     parser.add_argument("--no-sola", action="store_true", help="disable SOLA crossfade")
     parser.add_argument("--chunk-seconds", type=float, default=None, help="override chunk_seconds")
     parser.add_argument("--subprocess", action="store_true", help="enable inference_subprocess")
+    parser.add_argument(
+        "--gpu-keepalive",
+        action="store_true",
+        help="enable rc3 GPU keep-alive thread",
+    )
+    parser.add_argument(
+        "--gpu-keepalive-interval-ms",
+        type=int,
+        default=None,
+        help="keepalive cadence (default uses EngineConfig default)",
+    )
     parser.add_argument(
         "--pyspy",
         type=Path,
@@ -520,6 +555,8 @@ def main() -> int:
         enable_sola=not args.no_sola,
         chunk_seconds=args.chunk_seconds,
         inference_subprocess=args.subprocess,
+        gpu_keepalive_enabled=args.gpu_keepalive,
+        gpu_keepalive_interval_ms=args.gpu_keepalive_interval_ms,
     )
     _print_summary(out)
     return 0

@@ -295,6 +295,9 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         prefer_pw_cat=cfg.prefer_pw_cat,
         prefer_native_pw=cfg.prefer_native_pw,
         prefer_native_pw_buffer_ms=cfg.prefer_native_pw_buffer_ms,
+        gpu_keepalive_enabled=cfg.gpu_keepalive_enabled,
+        gpu_keepalive_interval_ms=cfg.gpu_keepalive_interval_ms,
+        gpu_keepalive_input_len=cfg.gpu_keepalive_input_len,
     )
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path
@@ -496,6 +499,24 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     elif runtime_shapes:
         print(f"  audio16_len      runtime={runtime_shapes} (no warmup snapshot)")
 
+    # v0.10.0-rc3 — GPU keep-alive thread observability.
+    if engine.cfg.gpu_keepalive_enabled:
+        ka_recent = list(s._recent_keepalive_ms)
+        if ka_recent:
+            print(
+                f"  gpu_keepalive    on  calls={s.keepalive_calls}  "
+                f"p50={_pct(ka_recent, 50):.2f} ms  "
+                f"p99={_pct(ka_recent, 99):.2f} ms  "
+                f"interval={engine.cfg.gpu_keepalive_interval_ms} ms"
+            )
+        else:
+            print(
+                f"  gpu_keepalive    on  (no calls yet — interval="
+                f"{engine.cfg.gpu_keepalive_interval_ms} ms)"
+            )
+    else:
+        print("  gpu_keepalive    off (set gpu_keepalive_enabled=true to A/B test)")
+
     # v0.7.0-rc8 — inference tail samples. Captures chunks where
     # inf_ms > 2× running p50, with the input shape + per-session-
     # stage breakdown so we can read what slow chunks have in common.
@@ -567,6 +588,9 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
         prefer_pw_cat=cfg.prefer_pw_cat,
         prefer_native_pw=cfg.prefer_native_pw,
         prefer_native_pw_buffer_ms=cfg.prefer_native_pw_buffer_ms,
+        gpu_keepalive_enabled=cfg.gpu_keepalive_enabled,
+        gpu_keepalive_interval_ms=cfg.gpu_keepalive_interval_ms,
+        gpu_keepalive_input_len=cfg.gpu_keepalive_input_len,
     )
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path

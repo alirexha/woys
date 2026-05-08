@@ -229,6 +229,11 @@ def main() -> int:
     _row("enqueue_lag p50", "enqueue_lag_p50_ms")
     _row("enqueue_lag p99", "enqueue_lag_p99_ms")
     print()
+    print("---- gpu keep-alive ----")
+    _row("keepalive_calls", "keepalive_calls", "8.0f")
+    _row("keepalive_p50 ms", "keepalive_p50_ms")
+    _row("keepalive_p99 ms", "keepalive_p99_ms")
+    print()
     print("---- shapes ----")
     for label, r in zip(labels, runs, strict=False):
         s = r["stats"]

@@ -150,6 +150,9 @@ USER_VISIBLE_ENGINE_FIELDS: tuple[str, ...] = (
     "prefer_pw_cat",
     "prefer_native_pw",
     "prefer_native_pw_buffer_ms",
+    "gpu_keepalive_enabled",
+    "gpu_keepalive_interval_ms",
+    "gpu_keepalive_input_len",
 )
 
 
@@ -497,6 +500,40 @@ class EngineConfig:
     # sessions take which path.
     use_tensorrt: bool = False
 
+    # v0.10.0-rc3 — GPU keep-alive thread to mitigate dynamic-boost
+    # variance.
+    #
+    # The v0.10.0-rc1/rc2 evidence (`docs/05-perf.md` v0.10.x table,
+    # LESSONS §29) established the audible cuts on this stack come
+    # from RVC inference tail variance (rvc.run p50=33 ms / p99=68 ms),
+    # which correlates 1:1 with GPU clock-state oscillation: 34 % of
+    # nvidia-smi clock samples sit > 100 MHz below the median during
+    # the engine's bursty workload. The mic_read window (~98 ms / chunk)
+    # is a long enough idle gap that the laptop GPU's dynamic boost
+    # backs off, and the next chunk's RVC pays a reboost-recovery cost.
+    #
+    # When enabled, a daemon thread issues a tiny ORT op on the
+    # contentvec session every `gpu_keepalive_interval_ms` ms.
+    # The op is intentionally cheap (~1-3 ms of GPU work) and uses
+    # an input shape pre-warmed at engine start so cuDNN doesn't
+    # re-tune. The intent is "keep utilization above the deboost
+    # threshold," not "do useful inference." Steady-state cost is
+    # ~5-15 % continuous GPU duty cycle.
+    #
+    # Default off in rc3 — A/B testing planned. If the rc3 5-min run
+    # shows writer_jitter p99 dropping toward the ≤ 30 ms gate, rc4
+    # will flip the default to True. If the keepalive op QUEUES on
+    # the same CUDA stream as engine inference and INCREASES rvc.run
+    # p99 instead, we use a separate session in rc4.
+    gpu_keepalive_enabled: bool = False
+    gpu_keepalive_interval_ms: int = 25
+    # Length (in 16 kHz samples) of the keepalive dummy input. 1600 = 100 ms
+    # of audio = ~5 features at 50 Hz framerate; tunable down to 320 = 20 ms
+    # if the chosen value over-loads the GPU stream. Pre-warmed at engine
+    # start with the same EXHAUSTIVE cuDNN search the realtime shapes get,
+    # so steady-state keepalive runs hit the cached path.
+    gpu_keepalive_input_len: int = 1600
+
 
 @dataclass
 class EngineStats:
@@ -695,6 +732,13 @@ class EngineStats:
     # describes one failure (engine main, writer, child) so a user with
     # multiple priority issues can see all of them, not just the last.
     priority_warnings: list[str] = field(default_factory=list)
+
+    # v0.10.0-rc3 — GPU keep-alive thread observability. Stays at zero
+    # when `gpu_keepalive_enabled=False` (default).
+    keepalive_calls: int = 0
+    last_keepalive_ms: float = 0.0
+    keepalive_avg_ms: float = 0.0
+    _recent_keepalive_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
     # v0.9.0-rc4 — back-compat alias for the field renamed from
     # `pacat_restarts` to `player_restarts`. External callers (tests,
@@ -1269,6 +1313,13 @@ class RealtimeEngine:
         self._writer_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
         self._watchdog_thread: threading.Thread | None = None
+        # v0.10.0-rc3 — GPU keep-alive thread; only started when
+        # `cfg.gpu_keepalive_enabled=True`.
+        self._keepalive_thread: threading.Thread | None = None
+        # The keepalive dummy input — pre-warmed at engine start so cuDNN
+        # has a cached algorithm for this shape. Allocated once, reused on
+        # every keepalive iteration.
+        self._keepalive_input: NDArrayF32 | None = None
         # Watchdog signal: writer flips this on BrokenPipe so the watchdog
         # respawns immediately instead of waiting for its next poll tick.
         self._pacat_dead_event = threading.Event()
@@ -2438,6 +2489,82 @@ class RealtimeEngine:
                 with contextlib.suppress(OSError):
                     debug_fp.close()
 
+    def _keepalive_loop(self) -> None:
+        """v0.10.0-rc3 — periodic tiny ORT op to keep the GPU at boosted
+        clock state during the engine's idle gaps.
+
+        Background: the v0.10.0-rc1/rc2 evidence (LESSONS §29) showed
+        the laptop GPU's dynamic boost backs off during the ~98 ms
+        mic_read window between chunks. Each chunk's RVC then pays a
+        variable reboost-recovery cost (rvc.run p99 = 68 ms vs p50 =
+        33 ms). nvidia-smi clock log showed 34 % of samples > 100 MHz
+        below median.
+
+        Implementation: at `gpu_keepalive_interval_ms` cadence, run
+        the cv (contentvec) ONNX session on a small dummy input
+        (`gpu_keepalive_input_len` samples). The session is shared
+        with the engine's `_extract_feats` path; ORT serializes
+        concurrent `session.run()` calls internally on the same
+        CUDA stream, so this op queues if engine is busy and runs
+        if engine is idle — which is the desired behavior.
+
+        Cost: ~1-3 ms of GPU work per call. At 25 ms cadence that's
+        ~5-12 % continuous GPU duty cycle. The intent is to keep
+        utilization above the dynamic-boost deboost threshold.
+
+        Defensive: any exception inside the run is silently dropped.
+        Goal is "do something on the GPU", not "produce useful output."
+        """
+        if self._cv is None or self._keepalive_input is None:
+            return
+        # Pre-warm the keepalive shape with EXHAUSTIVE-cuDNN-cached
+        # algos. If we don't, the first keepalive call hits a cold
+        # cuDNN path (~80 ms) which would itself cause a one-off
+        # writer jitter spike.
+        try:
+            in_dtype = np.float16 if "float16" in self._cv_input_dtype else np.float32
+            warm_in: np.ndarray = self._keepalive_input.reshape(1, -1).astype(in_dtype)  # type: ignore[type-arg]
+            for _ in range(2):
+                self._cv.run(["unit12"], {"audio": warm_in})
+        except Exception as e:
+            self.stats.priority_warnings.append(
+                f"gpu-keepalive warmup failed: {type(e).__name__}: {e}; thread will exit"
+            )
+            return
+
+        # v0.10.0-rc3 — keepalive runs at lower priority than the engine
+        # main / writer; the audio path always wins same-class tie-breaks.
+        self._apply_thread_priority(label="keepalive", priority=40)
+
+        interval_s = max(0.005, self.cfg.gpu_keepalive_interval_ms / 1000.0)
+        in_dtype = np.float16 if "float16" in self._cv_input_dtype else np.float32
+        dummy_in: np.ndarray = self._keepalive_input.reshape(1, -1).astype(in_dtype)  # type: ignore[type-arg]
+
+        # Track running average so the diag surface can show keepalive cost.
+        ema_alpha = 0.05
+        running_avg = 0.0
+        next_tick = time.perf_counter() + interval_s
+
+        while not self._stop_event.is_set():
+            now = time.perf_counter()
+            if now < next_tick:
+                # Use a short timeout-based wait so we react quickly to stop_event.
+                self._stop_event.wait(timeout=min(0.020, next_tick - now))
+                continue
+            t0 = time.perf_counter()
+            try:
+                self._cv.run(["unit12"], {"audio": dummy_in})
+            except Exception:
+                # Bail on persistent error — don't spam stats.last_error.
+                break
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            self.stats.keepalive_calls += 1
+            self.stats.last_keepalive_ms = elapsed_ms
+            self.stats._recent_keepalive_ms.append(elapsed_ms)
+            running_avg = ema_alpha * elapsed_ms + (1.0 - ema_alpha) * running_avg
+            self.stats.keepalive_avg_ms = running_avg
+            next_tick = max(next_tick + interval_s, time.perf_counter())
+
     def _watchdog_loop(self) -> None:
         """Daemon thread: respawns pacat if it dies mid-session (Brief §3 Fix 3).
 
@@ -2590,6 +2717,25 @@ class RealtimeEngine:
                 target=self._watchdog_loop, name="vcclient-pacat-watchdog", daemon=True
             )
             self._watchdog_thread.start()
+
+            # v0.10.0-rc3 — GPU keep-alive thread (default off). Spawns
+            # only in legacy in-process mode where we own `_cv` directly;
+            # the IPC subprocess mode keeps the GPU warm via its own
+            # constant-rate inference and doesn't need the keepalive.
+            if (
+                self.cfg.gpu_keepalive_enabled
+                and not self.cfg.inference_subprocess
+                and self._cv is not None
+            ):
+                # Allocate the dummy input once, here, so the warmup pass
+                # in _keepalive_loop doesn't allocate on the hot path.
+                self._keepalive_input = np.zeros(
+                    self.cfg.gpu_keepalive_input_len, dtype=np.float32
+                )
+                self._keepalive_thread = threading.Thread(
+                    target=self._keepalive_loop, name="vcclient-keepalive", daemon=True
+                )
+                self._keepalive_thread.start()
 
             in_stream = sd.InputStream(
                 samplerate=self.cfg.mic_rate,
@@ -2890,10 +3036,17 @@ class RealtimeEngine:
                     except subprocess.TimeoutExpired:
                         final_proc.kill()
             # Join helper threads so a fast restart sees a clean slate.
-            for t in (self._writer_thread, self._watchdog_thread, self._stderr_thread):
+            for t in (
+                self._writer_thread,
+                self._watchdog_thread,
+                self._stderr_thread,
+                self._keepalive_thread,
+            ):
                 if t is not None and t.is_alive():
                     t.join(timeout=0.5)
             self._writer_thread = None
             self._watchdog_thread = None
             self._stderr_thread = None
+            self._keepalive_thread = None
+            self._keepalive_input = None
             self._writer_queue = None

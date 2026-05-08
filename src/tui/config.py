@@ -64,6 +64,10 @@ class AppConfig:
     prefer_pw_cat: bool = _E.prefer_pw_cat
     prefer_native_pw: bool = _E.prefer_native_pw
     prefer_native_pw_buffer_ms: int = _E.prefer_native_pw_buffer_ms
+    # v0.10.0-rc3 — GPU keep-alive. Default off (A/B test surface).
+    gpu_keepalive_enabled: bool = _E.gpu_keepalive_enabled
+    gpu_keepalive_interval_ms: int = _E.gpu_keepalive_interval_ms
+    gpu_keepalive_input_len: int = _E.gpu_keepalive_input_len
     # TUI / app-only settings (not in EngineConfig).
     autostart_engine: bool = False
     enable_dbus: bool = True  # reserved for future D-Bus wiring (currently unused)
