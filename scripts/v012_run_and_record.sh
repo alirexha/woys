@@ -15,8 +15,19 @@ cd /home/alireza/ai/woys
 # Make sure the WoysSink null-sink + woys-mic source exist (idempotent).
 woys pw setup >/dev/null 2>&1 || true
 
-echo "[record] starting pw-record on WoysSink.monitor → ${WAV}"
-pw-record --target=WoysSink.monitor --rate=48000 --channels=2 --format=f32 "${WAV}" &
+# v0.12.2 — resolve WoysSink.monitor by SERIAL ID, not name. pw-record's
+# name-based --target silently falls back to the default source if the
+# named target isn't immediately recordable, which gave false-clean
+# "WoysSink.monitor is silent" verdicts in v0.12.0/v0.12.1. Always use
+# the numeric serial reported by `pactl list short sources` to pin the
+# capture to the intended node.
+WOYSSINK_SERIAL=$(pactl list short sources | awk '/WoysSink.monitor/ {print $1}')
+if [ -z "${WOYSSINK_SERIAL:-}" ]; then
+    echo "[record] WoysSink.monitor not present — `woys pw setup` first" >&2
+    exit 1
+fi
+echo "[record] starting pw-record on WoysSink.monitor (serial ${WOYSSINK_SERIAL}) → ${WAV}"
+pw-record --target=${WOYSSINK_SERIAL} --rate=48000 --channels=2 --format=f32 "${WAV}" &
 RECPID=$!
 # Give pw-record time to register with the graph before the engine starts streaming.
 sleep 0.5

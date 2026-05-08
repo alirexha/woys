@@ -38,6 +38,11 @@ def main() -> int:
     parser.add_argument("--tts-wav", type=Path, default=Path("/tmp/v012_1/tts_input.wav"))
     parser.add_argument("--out", type=Path, default=Path("/tmp/v012_1/tts_run.json"))
     parser.add_argument("--anti-jitter-mode", default="both")
+    parser.add_argument("--chunk-seconds", type=float, default=None)
+    parser.add_argument("--sola-crossfade-ms", type=float, default=None)
+    parser.add_argument("--sola-search-ms", type=float, default=None)
+    parser.add_argument("--sola-context-ms", type=float, default=None)
+    parser.add_argument("--sola-corr-threshold", type=float, default=None)
     args = parser.parse_args()
 
     import v010_harness as harness
@@ -68,9 +73,13 @@ def main() -> int:
         duration_s=args.duration,
         out_path=args.out,
         enable_sola=True,
-        chunk_seconds=None,
+        chunk_seconds=args.chunk_seconds,
         inference_subprocess=False,
         gpu_anti_jitter_mode=args.anti_jitter_mode,
+        sola_crossfade_ms=args.sola_crossfade_ms,
+        sola_search_ms=args.sola_search_ms,
+        sola_context_ms=args.sola_context_ms,
+        sola_corr_threshold=args.sola_corr_threshold,
     )
     harness._print_summary(out)
     return 0

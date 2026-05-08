@@ -2687,3 +2687,157 @@ mechanism is not objectively present on this stack. The user's
 perception is real but not measurable from inside the engine.
 That's the cue to ship the objective ceiling and stop. Continuing
 to investigate without a measurable signal is flailing.
+
+## 39. v0.12.2 — methodology correction: §36 / §38 / v0.12.1 conclusions were tainted by pw-record name-fallback
+
+**This retrospective invalidates §36 / §38 / the v0.12.1 closing
+claim.** The user reported cuts on WhatsApp async voice messages
+after v0.12.1 — which contradicts the "cuts are network-side / Opus
+codec" conclusion (async messages have no real-time path). The
+contradiction triggered a fresh investigation. The fresh
+investigation revealed that prior measurements were broken at the
+recording layer.
+
+### The bug
+
+`pw-record --target=<name>` silently FALLS BACK to the default
+source when the named target isn't immediately recordable (e.g.,
+SUSPENDED, not yet linked to its master, or otherwise unreadable).
+On this host the default source is the user's HyperX QuadCast 2 S
+mic, which during synthetic-harness runs is in a quiet room → the
+fallback recording is near-silent → woys-diag's calibrated cut
+detector finds "no events" → the prior tooling reports "audio is
+clean."
+
+The bug bit twice in v0.12.x:
+
+  * v0.12.0 Phase 1 (LESSONS §36) used
+    `pw-record --target=WoysSink.monitor` to capture engine output.
+    The recording was silence (HyperX fallback). All three
+    detectors (spectral flux, envelope autocorrelation, Hilbert
+    phase-jump spectrum) ran on silence, predictably returned
+    null. Conclusion "NSF reset hypothesis NOT confirmed" was
+    based on silent recordings.
+  * v0.12.1 (LESSONS §38) used the same recording target on
+    TTS-driven engine output. Same silent fallback. Same null
+    null detectors. Conclusion "objective floor reached, project
+    closes" was wrong on the same data.
+
+### How the bug was caught
+
+After the user's WhatsApp report, fresh attempt to compare
+`WoysSink.monitor` vs `woys-mic` recordings during a TTS-driven
+engine run. The two recordings were CROSS-CORRELATED:
+
+  * Test 1 (name-based --target): cross-corr = -0.0037 (random)
+    → recordings captured DIFFERENT content; one or both fell back
+  * Test 2 (--target by `pactl list short sources` SERIAL ID):
+    cross-corr = 1.0000 (with 42.7 ms lag)
+    → recordings captured the SAME content correctly
+
+With proper recording (serial-ID targeting), the engine output
+shows clear chunk-boundary periodicity:
+
+  * Top spectral-flux autocorrelation peak: **150 ms (= chunk_seconds)
+    with autocorr = 0.123**
+  * 17-23 % of detected flux events at chunk_seconds ± 8 ms
+  * Both `WoysSink.monitor` and `woys-mic` measure as "Significant
+    artifacts" by the calibrated woys-diag detector (75-85 events /
+    minute on 30-40 s of TTS-driven content)
+
+### What this tells us
+
+  * **The chunk-boundary periodic mechanism IS objectively
+    detectable** when recordings actually capture engine output.
+  * **The NSF-reset hypothesis returns to "supported by data"**.
+    The 150 ms = 6.67 Hz periodicity matches what the user
+    perceives as "train wagon on rails" rhythm.
+  * **The remap-source layer is NOT the bug** — the cuts are
+    already in `WoysSink.monitor` (engine output) and pass through
+    the remap-source mostly unchanged. Earlier "remap-source has
+    artifacts" measurement was based on the same fallback bug.
+
+### Methodology fix shipped
+
+  * `scripts/v012_run_and_record.sh` updated to resolve
+    `WoysSink.monitor` via numeric serial ID from `pactl list
+    short sources`, with a hard-fail if the source isn't present.
+  * `scripts/v012_2_proper_sweep.sh` shipped as the canonical
+    Phase-2-style A/B harness using serial-ID targeting.
+  * Future investigations should ALWAYS verify recordings capture
+    intended content via cross-correlation (or by checking RMS is
+    in the expected range for engine-converted speech, not silence).
+
+### Generalizable lesson — verify your instruments before drawing conclusions
+
+Three measurements that all return null against a hypothesis is
+strong evidence — IF the measurements were valid. v0.12.x had
+three nulls that were all instrument failures (silent recordings).
+The cross-correlation check between independent recording sources
+caught it; that should have been the FIRST thing tried in §36.
+
+When a measurement returns "all clean" / "no signal" / "below
+threshold" — especially against a hypothesis with strong prior
+support (the user perceives the artifact distinctly) — the next
+question is "is the instrument actually measuring what I think
+it's measuring?" Run a positive control: feed the instrument a
+known signal you can confirm by other means. If the instrument
+returns null on the known signal, the instrument is broken, not
+the hypothesis.
+
+For audio capture: a 30-second cross-correlation between two
+independent recording paths of the same source costs 30 seconds
+of compute and saves multi-day-effort wrong-conclusion rabbit
+holes.
+
+## 40. v0.12.2 — corrected Phase 2 sweep: chunk_seconds shifts the period, SOLA tuning marginal
+
+With the recording methodology fixed, re-ran the Phase 2 4-condition
+sweep (mode=both throughout, 30 s TTS-driven, capture from
+WoysSink.monitor by serial ID).
+
+| condition         | top autocorr peak    | flux frac at 150 ms | woys-diag /min |
+|-------------------|----------------------|---------------------|----------------|
+| baseline (chunk=0.15) | **150 ms = 0.123** | 17.0 %              | 85.1           |
+| chunk_020 (chunk=0.20) | 405 ms = 0.166 (= 2 × chunk_seconds!) | 5.3 %  | 87.1 |
+| sola_tuned        | 150 ms = 0.112 (-9 %) | 12.3 %              | 79.0           |
+| both              | 60 ms = 0.084 (smeared) | 9.0 %             | 79.0           |
+
+Key findings:
+
+  * **chunk_seconds = 0.20 shifts the periodicity to 200 ms (5 Hz)
+    but the mechanism remains.** The autocorr peak relocates from
+    150 ms to 405 ms (= 2 × 200 ms; even stronger than baseline at
+    150 ms). User would perceive the rhythm as slower (5 Hz vs
+    6.67 Hz) but it doesn't disappear.
+  * **SOLA tuning gives ~10 % reduction in 150 ms autocorr.**
+    Modest. Doesn't change woys-diag count meaningfully.
+  * **`both` mode smears periodicity** — top peak is now at 60 ms
+    instead of either 150 or 200 ms — but introduces its own
+    structure.
+  * **woys-diag count stays in 79-87 / minute range across all
+    conditions.** The COUNT of audible events is similar; only the
+    timing distribution changes.
+
+### Conclusion: the chunk-boundary mechanism is fundamental on this stack
+
+Three of the four conditions tested — chunk_seconds, SOLA tuning,
+or both — all leave a measurable chunk-boundary periodic signature.
+The user-perceived "train wagon" is the auditory system locking
+onto that periodicity even when individual events are
+sub-perceptual.
+
+To eliminate the rhythm rather than shift it requires:
+
+  * Real NSF state passing across chunks (model-side surgery,
+    upstream RVC export pipeline access required) — STILL out of
+    woys's scope as documented in §38
+  * Or different chunking strategy that doesn't have a fixed
+    chunk-period at all (architectural rework — out of scope)
+
+The v0.11.0 anti-jitter features remain the load-bearing
+improvement (36 × user-tested underrun reduction). v0.12.2 ships
+the methodology correction + the corrected Phase 2 baseline. No
+default changes. The user's manual A/B (chunk_seconds = 0.20 in
+config.toml) remains an option if they want to try the
+slower-rhythm tradeoff.
