@@ -2158,7 +2158,7 @@ class RealtimeEngine:
             print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
         self.stats.running = True
 
-        self._thread = threading.Thread(target=self._run_loop, name="vcclient-engine", daemon=True)
+        self._thread = threading.Thread(target=self._run_loop, name="woys-engine", daemon=True)
         self._thread.start()
 
     def _cfg_dict_for_subprocess(self) -> dict[str, Any]:
@@ -3082,7 +3082,7 @@ class RealtimeEngine:
             stderr_t = threading.Thread(
                 target=self._stderr_reader_loop,
                 args=(new_proc,),
-                name="vcclient-pacat-stderr",
+                name="woys-pacat-stderr",
                 daemon=True,
             )
             stderr_t.start()
@@ -3170,18 +3170,18 @@ class RealtimeEngine:
             self._last_writer_ts = None
             self._pacat_dead_event.clear()
             self._writer_thread = threading.Thread(
-                target=self._writer_loop, name="vcclient-pacat-writer", daemon=True
+                target=self._writer_loop, name="woys-pacat-writer", daemon=True
             )
             self._writer_thread.start()
             self._stderr_thread = threading.Thread(
                 target=self._stderr_reader_loop,
                 args=(initial_proc,),
-                name="vcclient-pacat-stderr",
+                name="woys-pacat-stderr",
                 daemon=True,
             )
             self._stderr_thread.start()
             self._watchdog_thread = threading.Thread(
-                target=self._watchdog_loop, name="vcclient-pacat-watchdog", daemon=True
+                target=self._watchdog_loop, name="woys-pacat-watchdog", daemon=True
             )
             self._watchdog_thread.start()
 
@@ -3197,7 +3197,7 @@ class RealtimeEngine:
             if torch_keepalive_on and not self.cfg.inference_subprocess:
                 self._torch_keepalive_thread = threading.Thread(
                     target=self._torch_keepalive_loop,
-                    name="vcclient-torch-keepalive",
+                    name="woys-torch-keepalive",
                     daemon=True,
                 )
                 self._torch_keepalive_thread.start()
@@ -3215,7 +3215,7 @@ class RealtimeEngine:
                     self.cfg.gpu_keepalive_input_len, dtype=np.float32
                 )
                 self._keepalive_thread = threading.Thread(
-                    target=self._keepalive_loop, name="vcclient-keepalive", daemon=True
+                    target=self._keepalive_loop, name="woys-keepalive", daemon=True
                 )
                 self._keepalive_thread.start()
 
@@ -3394,6 +3394,27 @@ class RealtimeEngine:
                     # diagnostic, not a cuts driver.
                     if self._sola is not None:
                         self.stats.sola_fallback_count = self._sola.fallback_count
+
+                    # v0.13.1 — live toggle: engine reads self.cfg.monitor
+                    # each iteration and opens/closes the monitor stream
+                    # as needed. Lets the TUI's 'm' keybind take effect
+                    # without an engine restart (~5 s of session loss).
+                    if self.cfg.monitor and monitor_stream is None:
+                        try:
+                            monitor_stream = sd.OutputStream(
+                                samplerate=self.cfg.sink_rate,
+                                channels=self.cfg.channels,
+                                dtype="float32",
+                            )
+                            monitor_stream.start()
+                        except Exception as e:
+                            self.stats.last_error = f"monitor: {type(e).__name__}: {e}"
+                            monitor_stream = None
+                    elif not self.cfg.monitor and monitor_stream is not None:
+                        with contextlib.suppress(Exception):
+                            monitor_stream.stop()
+                            monitor_stream.close()
+                        monitor_stream = None
 
                     # Optional self-monitor → host default output.
                     if monitor_stream is not None:

@@ -49,7 +49,7 @@ class EvdevHotkey:
             )
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="vcclient-hotkey", daemon=True)
+        self._thread = threading.Thread(target=self._loop, name="woys-hotkey", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:

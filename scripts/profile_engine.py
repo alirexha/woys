@@ -16,7 +16,7 @@ user doesn't have to remember them between debug sessions.
 Usage:
 
   # Start the engine in one terminal (any of these — they all spawn
-  # the `vcclient-engine` sub-thread the profiler attaches to):
+  # the `woys-engine` sub-thread the profiler attaches to):
   woys run --autostart        # full TUI
   woys diag --duration 60     # CLI diag mode
   python -m woys              # short-form
@@ -47,7 +47,7 @@ from pathlib import Path
 
 
 def find_engine_pid() -> int | None:
-    """Locate the `vcclient-engine` thread's owning process via pgrep.
+    """Locate the `woys-engine` thread's owning process via pgrep.
 
     The engine runs as a daemon thread inside the woys CLI / TUI
     process; we want the PID of that parent. pgrep -f matches against

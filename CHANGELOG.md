@@ -4,6 +4,98 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-05-08 — TUI 'm' monitor toggle + leftover `vcclient` / `VCClient` strings cleaned
+
+Three small bundled changes:
+
+### 1. TUI 'm' keybind: live monitor toggle
+
+New binding in the Textual TUI:
+
+  * `m` — toggle the engine's self-monitor stream (writes a copy of
+    converted audio to the host's default audio output so the user can
+    hear themselves while talking)
+
+The toggle is **live**: the engine's main run-loop reads
+`self.cfg.monitor` each chunk and opens / closes the `sd.OutputStream`
+as needed. No engine restart required, takes effect within the next
+chunk_seconds wall-clock window. The TUI emits a `monitor on` /
+`monitor off` notification on each press.
+
+The pre-existing keybinds remain as they were: `t` (engine toggle),
+`+` / `-` / `0` (pitch up / down / reset), `p` (cycle profile),
+`s` (save config), `q` (quit). `m` was the first letter not in use.
+
+### 2. TUI title: `VCClientApp` → `woys`
+
+Pre-v0.6.0 the package was `vcclient-cachy` and the Textual `App`
+subclass was named `VCClientApp`. The class name leaked into the
+TUI's header bar (Textual defaults `App.TITLE` to the class name
+when not set). v0.13.1 sets `WoysApp.TITLE = "woys"` and renames
+the class to `WoysApp`. A back-compat alias `VCClientApp = WoysApp`
+in `tui/app.py` and `tui/__init__.py` keeps any external scripts
+(or test files) that still import the old name working.
+
+### 3. Other leftover `vcclient` strings cleaned
+
+Audited every `vcclient` / `VCClient` string in `src/`, `scripts/`,
+and the build scripts. Renamed the user-visible thread names so
+`py-spy` flamegraphs and `top -H` output are consistent with the
+package name:
+
+| file | old name | new name |
+|------|----------|----------|
+| `src/audio/engine.py` | `vcclient-engine` | `woys-engine` |
+| `src/audio/engine.py` | `vcclient-pacat-writer` | `woys-pacat-writer` |
+| `src/audio/engine.py` | `vcclient-pacat-stderr` | `woys-pacat-stderr` |
+| `src/audio/engine.py` | `vcclient-pacat-watchdog` | `woys-pacat-watchdog` |
+| `src/audio/engine.py` | `vcclient-keepalive` | `woys-keepalive` |
+| `src/audio/engine.py` | `vcclient-torch-keepalive` | `woys-torch-keepalive` |
+| `src/tui/hotkey.py` | `vcclient-hotkey` | `woys-hotkey` |
+| `src/tui/control.py` | `vcclient-control` | `woys-control` |
+| `scripts/profile_engine.py` | `vcclient-engine` (docstring + grep target) | `woys-engine` |
+
+Strings deliberately NOT touched (load-bearing or historical):
+
+  * `src/server/*` — vendored upstream code (`w-okada/voice-changer`,
+    MIT-licensed); preserves attribution chain
+  * `src/audio/pipewire.py` `LEGACY_SOURCE_NAME = "vcclient-mic"` —
+    the v0.6.5 migration mechanism that recognizes pre-rename
+    installs and clears the orphan module
+  * `scripts/migrate_to_woys.py` — the v0.6.0 migration tool that
+    explicitly handles old-name → new-name rewrite paths
+  * `wok000/vcclient_model` HuggingFace URLs in `cli.py` /
+    `download_weights.py` / `src/server/const.py` — real upstream
+    HF org for model downloads
+  * `CHANGELOG.md` and `LESSONS.md` historical entries — those
+    references are deliberate
+
+### Test fix bundled
+
+`tests/test_audio_pipewire.py` used substring-match against pactl
+output (`SOURCE_NAME in line`) which mis-fired against the v0.13.0
+`woys-mic-clean` source name (substring match catches the
+"woys-mic" prefix). Updated to a tab-separated exact match — the
+test now passes regardless of whether the v0.13.0 RNNoise chain
+is loaded alongside the v0.12.x architecture.
+
+### Verification
+
+  * 156 fast tests pass
+  * Engine smoke (`woys engine` for 5 s) confirms thread names show
+    as `woys-*` in `ps -L`/`top -H`
+  * 'm' keybind: live toggle confirmed in TUI; engine doesn't
+    restart, monitor stream opens/closes within one chunk_seconds
+    window
+  * No engine code-path or default-value changes; v0.12.4 audio
+    behavior preserved
+
+### Project state
+
+woys at v0.13.1 is the v0.12.4 listener-ratified default + v0.13.0
+opt-in RNNoise tooling + v0.13.1 TUI ergonomics. No pending
+investigations.
+
 ## [0.13.0] — 2026-05-08 — opt-in RNNoise chain (`woys-mic-clean` source); 13 % residual cut reduction
 
 User-requested investigation: would chaining NoiseTorch (RNNoise-based)
