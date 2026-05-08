@@ -33,10 +33,21 @@ from dataclasses import dataclass
 # Names that survive across runs and uninstalls.
 SINK_NAME = "WoysSink"
 SOURCE_NAME = "woys-mic"
-# pactl prop strings: replace spaces with `\_` (pactl's escape) so the value
-# survives shell-style tokenization inside pipewire-pulse's argument parser.
-SINK_DESC = "woys_(sink)"
-SOURCE_DESC = "woys-mic_(woys)"
+# v0.13.3 descriptions. pipewire-pulse's pactl breaks spaces inside
+# `device.description=...` (the value is split on whitespace before the
+# proplist parser sees it). Hyphenated tokens render verbatim in app
+# device pickers, so we use them as a space substitute. The two values
+# below are what users will see in pavucontrol / Discord / Telegram /
+# CS2 input device dropdowns:
+#
+#   woys-no-cleanup      ← raw, low-latency woys-mic source (this file)
+#   woys-by-alirexha     ← cleaned RNNoise output (chain.py adds it)
+#
+# WoysSink is internal plumbing and gets the `_internal-` prefix so its
+# auto-monitor (visible to apps as a source) is recognizable as
+# something not-to-pick.
+SINK_DESC = "_internal-woys-engine-output"
+SOURCE_DESC = "woys-no-cleanup"
 
 # v0.6.5 — pre-rename source name. Probe / teardown still recognise it so
 # v0.6.4-and-earlier users can be cleanly upgraded on next `woys pw setup`.

@@ -4,6 +4,74 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.13.3] — 2026-05-09 — friendly source descriptions; apps see `woys-by-alirexha` and `woys-no-cleanup`, internals tagged `_internal-...`
+
+Polish release on top of v0.13.2's chain. No audio path changes — same
+`-27 %` cuts/min from RNNoise, same +40 ms latency cost, same routing.
+What changes is the names users see in app device dropdowns.
+
+### What apps see (after `woys chain setup`)
+
+| name in dropdown | description | what it is |
+|---|---|---|
+| **woys-by-alirexha** | woys-by-alirexha | RNNoise-cleaned source — daily driver |
+| **woys-mic** | woys-no-cleanup | raw v0.12.4 engine output, low latency, no RNNoise — fallback |
+| WoysSink.monitor | Monitor of _internal-woys-engine-output | plumbing |
+| woys-mic-clean.monitor | Monitor of _internal-clean-sink | plumbing |
+| woys-mic-rnnoise-bridge.monitor | Monitor of _internal-rnnoise-stage | plumbing |
+
+The old v0.13.2 dropdown had five woys entries in apparently-similar
+naming (`woys-mic_(woys)`, `Monitor of woys_(sink)`, `Monitor of woys-mic-clean_rnnoise`,
+etc.) with no obvious "pick this one" signal. v0.13.3 makes the
+daily-driver visually distinct from the fallback, and tags everything
+else with the `_internal-` prefix so the user knows not to pick it.
+
+### Implementation
+
+  * **new module:** `module-remap-source` named `woys-by-alirexha` that
+    remaps `woys-mic-clean.monitor` to a freshly-named source. This
+    is necessary because pipewire-pulse offers no API to override the
+    "Monitor of <sink-description>" prefix on an auto-monitor source —
+    so we wrap the monitor in a remap to get a clean name.
+  * **WoysSink description** changed from `woys_(sink)` to
+    `_internal-woys-engine-output`. (You'll see the change after the
+    next `woys pw teardown && woys pw setup`, or after the next reboot
+    if `woys-mic.service` reloads at login.)
+  * **woys-mic description** changed from `woys-mic_(woys)` to
+    `woys-no-cleanup`. Same reload conditions.
+  * **chain internal sinks** tagged `_internal-rnnoise-stage` and
+    `_internal-clean-sink`.
+  * Hyphens substitute for spaces because pipewire-pulse's pactl
+    splits `device.description=...` on whitespace before the proplist
+    parser sees the value — a description with a space is silently
+    truncated at the first space. New regression test
+    (`test_descriptions_have_no_spaces`) prevents future re-spacing.
+
+### Files
+
+  * `src/woys/chain.py` — adds `module-remap-source` step + `_internal-`
+    tags, four-stage `_unload_chain_modules` reverse-load order
+  * `src/audio/pipewire.py` — `SINK_DESC` and `SOURCE_DESC` updated
+  * `scripts/v013_2_rnnoise_chain.sh` — mirror of the chain.py changes
+    (filename kept for stability)
+  * `tests/test_chain.py` — assertions updated for 4 modules instead
+    of 3, new `_internal-` prefix checks, new no-space regression
+    guard
+  * `docs/23-rnnoise-chain.md` — updated dropdown table
+  * `LESSONS.md` §45 — pactl description-escaping caveat
+  * version bump everywhere (pyproject, __init__, PKGBUILD, .SRCINFO)
+
+### Migration note
+
+If you had v0.13.2 enabled (`woys chain enable`), `systemctl --user
+restart woys-chain.service` picks up the v0.13.3 topology. The
+service unit file itself is unchanged. Existing apps that had
+`woys-mic-clean.monitor` selected as their input WILL keep recording
+the cleaned audio (the .monitor source still exists; it's just no
+longer the recommended endpoint), but you'll want to switch to
+`woys-by-alirexha` once for the friendlier name and to free up the
+`.monitor` source for power users.
+
 ## [0.13.2] — 2026-05-09 — fix v0.13.0 RNNoise speaker leak (`media.class` regression) + `woys chain` systemd lifecycle
 
 Bug fix release for v0.13.0's opt-in RNNoise chain plus a small UX

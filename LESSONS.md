@@ -3263,3 +3263,104 @@ is doing roughly twice what we thought.
     measurement harness ran in conditions that masked the bug. A
     "final" claim should require at least one real-world use the
     measurement harness can't simulate.
+
+## 45. v0.13.3 — pipewire-pulse pactl breaks descriptions with spaces; auto-monitor descriptions can't be renamed (so use a remap-source)
+
+The user reported the v0.13.2 chain had a UX problem orthogonal to
+the audio path: their app dropdowns showed a wall of opaque names
+(`woys-mic_(woys)`, `Monitor of woys_(sink)`, `Monitor of
+woys-mic-clean_rnnoise`, `Monitor of woys-mic-rnnoise-bridge.monitor`)
+with no obvious "pick this one" signal. They asked for a friendly
+description like "woys by alirexha" on the daily-driver source and
+clear "(internal)" tags on the others.
+
+This turned into a longer fight than expected.
+
+### Discovery 1: pactl on pipewire-pulse silently truncates descriptions at the first space
+
+I started by trying the obvious:
+
+```
+pactl load-module module-null-sink \
+    sink_properties=device.description="woys by alirexha" \
+    sink_name=test ...
+```
+
+Result: apps see `Description: woys`. The space got eaten before
+the proplist parser saw the value. PA's standard escapes — quoted
+values, `\ ` literal-space, `%20` URL-encoding, `+` — none of them
+worked. Multiple `sink_properties=` args: only the LAST one wins
+(so you can't use one for the description and another for
+`node.never-default`). Newline as a within-value delimiter: the
+parser absorbed the newline into the description string.
+
+In short: pipewire-pulse's pactl tokenizes the entire command line
+on whitespace **before** invoking PA's proplist parser. There is no
+escape sequence that survives this tokenization. The only working
+form is `device.description=value-with-no-whitespace`.
+
+So friendly descriptions with real spaces are off the table on
+pipewire-pulse. The pragmatic answer is hyphens-as-spaces:
+`woys-by-alirexha`. Readable, sortable, immune to the parser.
+
+A regression test (`test_descriptions_have_no_spaces` in
+`tests/test_chain.py`) now asserts this constraint so a future
+"let's add a real space" PR fails CI.
+
+### Discovery 2: auto-monitor descriptions can't be overridden — wrap in a remap-source
+
+`module-null-sink` auto-creates a monitor source. That monitor's
+description is fixed at `Monitor of <sink description>`. There is
+no `monitor_properties=` arg, no post-load API in pactl, and
+`pw-cli set-param Props` either gets reset by wireplumber's session
+policy or doesn't write to the property keys apps actually read
+(`device.description`).
+
+So if we name the sink "woys-by-alirexha", the monitor users record
+from gets the prefix and shows up as "Monitor of woys-by-alirexha"
+— still recognizable but with the awkward "Monitor of " ahead of it.
+
+Fix: insert a `module-remap-source` between the sink's monitor and
+the user-facing role. The remap-source IS our own node and it
+takes a `source_properties=` arg, so we can give it any
+`device.description=...` we want — including a clean name without
+"Monitor of" anywhere. Final v0.13.3 chain:
+
+```
+woys-mic              ← raw, description "woys-no-cleanup"
+   ↓ loopback
+woys-mic-rnnoise-bridge  ← LADSPA, description "_internal-rnnoise-stage"
+   ↓ sink_master
+woys-mic-clean        ← null-sink, description "_internal-clean-sink"
+   ↓ auto monitor
+woys-mic-clean.monitor   (description still "Monitor of _internal-clean-sink")
+   ↓ remap-source
+woys-by-alirexha      ← user-facing, description "woys-by-alirexha"
+```
+
+The remap-source is a passthrough — no audio change, just renaming.
+Apps now see two clean options (`woys-no-cleanup` and
+`woys-by-alirexha`) plus the auto-monitors of internals tagged
+`_internal-...`. The hierarchy is finally legible at a glance.
+
+### Lessons
+
+  * **`device.description` values cannot contain whitespace** on
+    pipewire-pulse pactl. There is no escape that works. Plan around
+    this — use hyphens or middle-dots, never spaces.
+  * **Auto-monitor descriptions are not overridable.** If you need a
+    clean user-facing name from a sink-monitor topology, add a
+    `module-remap-source` whose own `source_properties=` you control.
+  * **Multiple props at module-load time are an inverted-pyramid
+    problem.** `sink_properties=` only honors the last invocation, so
+    you can have description OR never-default OR media-role, not
+    all three. If you need multiple, set the most user-facing one at
+    load and accept that the others either need a different mechanism
+    (often "do nothing and hope the default is fine") or a separate
+    PipeWire-conf-file approach (out of scope for a runtime tool).
+  * **Test the dropdown the user actually sees.** `pactl list short
+    sources` and `pactl list sources | grep Description` are the
+    same data app dropdowns enumerate. You don't need to spawn
+    pavucontrol or screenshot it — the text dump is authoritative.
+    Build a test that asserts the dropdown contents once you ship a
+    clean topology so you don't drift back to chaos.
