@@ -829,6 +829,16 @@ class EngineStats:
     # `woys diag` so apply / revert failures are visible.
     gpu_clock_lock_last_message: str = ""
 
+    # v0.11.0 — track the helper's last-known exit cause(s) so the
+    # watchdog's "respawned" message doesn't clobber the original
+    # death reason from `_stderr_reader_loop`. List-of-strings, capped
+    # at 10 entries; surfaced in `woys diag` output. Each entry is
+    # one of:
+    #   "native-pw: error: <reason>"  — from the helper's own stderr
+    #   "<backend> exited code=<N> at chunks=<idx>"  — from watchdog
+    #     when no stderr-side cause was captured before the exit
+    helper_exit_reasons: list[str] = field(default_factory=list)
+
     # v0.9.0-rc4 — back-compat alias for the field renamed from
     # `pacat_restarts` to `player_restarts`. External callers (tests,
     # scripts that scrape EngineStats) reading the old name still work
@@ -2594,7 +2604,14 @@ class RealtimeEngine:
                         self.stats.player_underruns = count
                     elif s.startswith("error:"):
                         # Surface the helper's hard-fail message to woys diag.
-                        self.stats.last_error = f"native-pw: {s[len('error:'):].strip()}"
+                        cause = f"native-pw: {s[len('error:') :].strip()}"
+                        self.stats.last_error = cause
+                        # v0.11.0 — also push to helper_exit_reasons so the
+                        # watchdog's "respawned" message can't clobber the
+                        # cause when the watchdog fires shortly after.
+                        self.stats.helper_exit_reasons.append(cause)
+                        if len(self.stats.helper_exit_reasons) > 10:
+                            self.stats.helper_exit_reasons.pop(0)
                 # else: pw-cat or unknown — drain-only.
         except (ValueError, OSError):
             # Pipe closed mid-read during shutdown — expected.
@@ -3008,9 +3025,24 @@ class RealtimeEngine:
                 # Discard the dead handle (caller already detected death).
                 self._pacat_proc = new_proc
             self.stats.player_restarts += 1
+            # v0.11.0 — preserve the helper's own death cause if the
+            # stderr reader captured one before the exit. If not, log
+            # the watchdog's view (exit code + chunk index) so the user
+            # can correlate. Either way, append to helper_exit_reasons
+            # rather than clobber last_error wholesale.
+            backend = self._player_backend or "player"
+            exit_code = proc.returncode
+            chunk_idx = self.stats.chunks_processed
+            watchdog_msg = (
+                f"{backend} exited code={exit_code} at chunk={chunk_idx} "
+                f"(restart #{self.stats.player_restarts})"
+            )
+            self.stats.helper_exit_reasons.append(watchdog_msg)
+            if len(self.stats.helper_exit_reasons) > 10:
+                self.stats.helper_exit_reasons.pop(0)
             self.stats.last_error = (
-                f"{self._player_backend or 'player'} respawned "
-                f"(restarts={self.stats.player_restarts})"
+                f"{backend} respawned (restarts={self.stats.player_restarts}); "
+                f"causes={self.stats.helper_exit_reasons[-3:]}"
             )
             # Spawn a fresh stderr reader bound to the new process. The old
             # reader thread will exit on its own once the dead pipe EOFs.

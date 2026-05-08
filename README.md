@@ -7,6 +7,23 @@
 
 Linux-native real-time voice changer. RVC-only, ONNX Runtime CUDA, PipeWire-native, terminal-controlled. Originally targeted CachyOS; runs on any modern Linux with PipeWire + an NVIDIA GPU.
 
+## Status (v0.11.0)
+
+Daily-use ready on RTX 2070 Mobile. Real-listener Telegram VoIP test
+on `gpu_anti_jitter_mode = "both"`:
+
+  * **Underrun rate: 0.2/sec** (was 7.3/sec in v0.9.0 — **36× reduction**)
+  * **Voice intelligibility: speech-recognizable** (was garbled)
+  * **Echo: gone** (latency back to v0.9.0 levels after the v0.9.1 → v0.9.2
+    rollback)
+  * **Cuts: ~1 every 5 s, subjective** (was ~1 every 1 s)
+
+The headline feature: opt-in `gpu_anti_jitter_mode = "both"` keeps the
+GPU's dynamic boost from auto-deboosting during the engine's mic_read
+idle window. Stock GPU specs only — no overclock, no power-limit
+changes, no firmware. Reverts on engine stop / SIGTERM / SIGINT.
+Documented in `docs/22-gpu-clock-lock.md`.
+
 ## What it is
 
 A fork-and-trim of [w-okada/voice-changer](https://github.com/w-okada/voice-changer) (MIT) that strips the engine to RVC-only, replaces the web GUI with a Textual TUI, integrates a persistent virtual mic via PipeWire, and ships as a proper Arch package. The fork keeps RVC inference on ONNX Runtime CUDA EP and removes the Beatrice / MMVC / so-vits-svc / DDSP-SVC / Diffusion-SVC / EasyVC / LLVC engine paths along with all Windows/WSL/macOS code.
@@ -15,21 +32,24 @@ A fork-and-trim of [w-okada/voice-changer](https://github.com/w-okada/voice-chan
 
 - **Inference floor `< 80 ms`** per chunk — the gate in
   `tests/test_smoke_rvc_onnx.py::LATENCY_FLOOR_MS` (measured on
-  RTX 2070, ORT-CUDA, RVC v2 + RMVPE).
-- **End-to-end mic → output**: ~500-540 ms with v0.8.0/v0.9.0/v0.9.2
-  defaults (chunk 150 + inference ~80 + native-pw output ~170 + PipeWire
-  codec ~30). v0.9.0 switched the playback backend to a native PipeWire
-  client (closes the per-quantum gap class from pw-cat); v0.9.1 made
-  it default but also expanded the ring-buffer slack to 191 ms by
-  default — a regression that added ~170 ms of echo without fixing
-  the audible cut class. **v0.9.2 reverts the slack default to 0** (one
-  PipeWire-quantum tolerance, ~21 ms slack); the knob
-  (`prefer_native_pw_buffer_ms`) stays tunable for users who prefer
-  to absorb writer-jitter at a latency cost. See `docs/05-perf.md`
-  for the rc-by-rc latency table and the v0.9.0-rc4 A/B that
-  established **both backends produce equivalent audible cut rates
-  on this hardware** — the cuts are upstream of the playback layer,
-  in the engine's writer-jitter (~80 ms std-dev). v0.10.x attacks that.
+  RTX 2070, ORT-CUDA, RVC v2 + RMVPE). v0.11.0 mode=both: ~45 ms
+  inference average in real Telegram session.
+- **End-to-end mic → output**: ~500-540 ms with v0.8.0 / v0.9.0 /
+  v0.9.2 / v0.11.0 defaults (chunk 150 + inference ~45 + native-pw
+  output ~170 + PipeWire codec ~30). v0.9.0 switched the playback
+  backend to a native PipeWire client (closes the per-quantum gap
+  class from pw-cat); v0.9.1 expanded the ring-buffer slack to 191 ms
+  by default — a regression that added ~170 ms of echo without
+  fixing the audible cut class. **v0.9.2 reverts the slack default
+  to 0** (one PipeWire-quantum tolerance, ~21 ms slack);
+  `prefer_native_pw_buffer_ms` stays tunable. v0.10.0 added per-stage
+  instrumentation + a synthetic harness that located the dominant
+  cause of audible cuts: NVIDIA dynamic-boost auto-deboost during
+  the ~98 ms mic_read window between chunks. **v0.11.0 attacks that
+  with `gpu_anti_jitter_mode = "both"` (clock_lock + torch
+  separate-stream keepalive).** Default off; opt-in via config.toml.
+  See `docs/22-gpu-clock-lock.md` and `docs/05-perf.md` for the
+  rc-by-rc latency table.
 - Idle VRAM `< 500 MB` (currently misses at ~1.35 GiB — foundation
   models dominate).
 - CPU `< 15 %` while active.
