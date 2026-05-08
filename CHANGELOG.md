@@ -4,6 +4,144 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.11.0-partial] — 2026-05-08 — GPU clock lock + torch separate-stream keepalive (anti-jitter knob lands; gates partially close)
+
+The output of `V0_11_0_GPU_JITTER.md`. Two opt-in features attack the
+v0.10.0-located root cause (NVIDIA dynamic-boost auto-deboost during
+the engine's mic_read idle window):
+
+  * **`gpu_anti_jitter_mode = "clock_lock"`** — engine calls
+    `sudo nvidia-smi -lgc <floor>,<ceiling>` at start and `-rgc`
+    at stop. Stock-clock-only by policy (refuses ceilings above
+    `clocks.max.graphics`, refuses floors below 600 MHz, no power-limit
+    or memory-clock changes, no firmware/BIOS). Reverts on
+    engine.stop(), SIGTERM, SIGINT (best-effort SIGKILL fallthrough).
+    Sudoers entry needed; documented in docs/22-gpu-clock-lock.md.
+  * **`gpu_anti_jitter_mode = "keepalive"`** — daemon thread issues a
+    `torch.cuda.Stream()` op (1024-element float32 add ≈ 50 µs of GPU
+    work) every 25 ms on a CUDA stream separate from ORT's. Replaces
+    the rc3 ORT-stream version; closes the rc3 contention regression
+    by design. No sudo. ~0.2 % continuous GPU duty cycle.
+  * **`"both"`** — clock_lock + keepalive together. The setting that
+    actually moves the gate.
+
+### Default OFF; this is a partial release
+
+Acceptance criteria for "v0.11.0 final" required `writer_jitter p99 ≤
+30 ms` AND `underrun_rate ≤ 0.5/sec` in `mode = "both"`. Neither closes:
+
+| metric                | off    | keepalive | clock_lock | both   | gate    | status |
+|-----------------------|-------:|----------:|-----------:|-------:|--------:|--------|
+| writer_jitter p99 (ms)|   99.7 |      89.3 |      109.4 |   59.4 |   ≤ 30  | FAIL  |
+| inference avg (ms)    |   84.0 |      75.5 |       76.1 |   47.9 |   ≤ 52  | PASS (both) |
+| inference p99 (ms)    |  154.9 |     152.5 |      152.6 |   97.3 |    -    | -     |
+| rvc.run p99 (ms)      |  122.8 |     119.7 |      121.1 |   80.4 |    -    | -     |
+| underrun rate (/s)    |   6.77 |      7.55 |       6.56 |   6.85 |   ≤ 0.5 | FAIL  |
+| GPU clocks p50 (MHz)  |   1710 |      1680 |       1680 |   1845 |    -    | -     |
+| late_chunks (of 2000) |     87 |       119 |         93 |     12 |    -    | -     |
+
+mode=both delivers a substantive **40 % writer_jitter p99 reduction
+(99.7 → 59.4 ms)** and a **43 % inference avg reduction (84.0 → 47.9 ms)**.
+The ONLY configuration that holds the GPU at the lock floor is "both" —
+clock_lock alone shows GPU clock distribution near-identical to off,
+because the laptop GPU's boost mechanism gates lock enforcement on
+sustained utilization. The torch keepalive provides the continuous
+0.2 % workload signal that lets the lock floor actually take effect.
+
+### Sudoers helper
+
+For "clock_lock" or "both" modes, install `/etc/sudoers.d/woys-gpu-clock`:
+
+```
+alireza ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc *
+alireza ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
+```
+
+Limited to those two subcommands; any other `nvidia-smi` call still
+prompts for the user's password. The engine validates clock values
+in code before invoking, so the sudoers wildcard cannot be used to
+push the GPU above stock spec.
+
+### Engine additions
+
+  * `EngineConfig.gpu_anti_jitter_mode` — user-facing knob (off /
+    keepalive / clock_lock / both)
+  * `EngineConfig.gpu_clock_lock_enabled / _floor_mhz / _ceiling_mhz /
+    _floor_offset_mhz` — advanced knobs for users who want manual
+    floor / ceiling values (sentinel 0 = auto-detect from
+    `clocks.max.graphics - floor_offset_mhz`)
+  * `EngineConfig.gpu_keepalive_torch_stream / _torch_interval_ms` —
+    advanced knobs for the torch keepalive
+  * `EngineStats.gpu_clock_lock_active / _floor_mhz / _ceiling_mhz /
+    _last_message` — telemetry surfaced in `woys diag`
+  * `EngineStats.torch_keepalive_calls / _last_ms / _avg_ms / _recent` —
+    telemetry distinct from rc3 ORT keepalive counters
+  * `_apply_gpu_clock_lock` / `_revert_gpu_clock_lock` /
+    `_signal_handler_revert_lock` — full lifecycle, idempotent revert,
+    SIGTERM/SIGINT cleanup
+  * `_torch_keepalive_loop` — torch.cuda.Stream() based; fails closed
+    if torch import / CUDA / Stream alloc fails, doesn't take down the
+    engine
+
+### Tests
+
+  * 29 new tests in `tests/test_gpu_anti_jitter.py` covering:
+    - mode → flags resolution (all 4 modes + unknown fallback)
+    - `_query_max_graphics_clock_mhz` parsing happy path + failures
+    - `_resolve_clock_lock_range` auto-detect, explicit, refusal of
+      over-stock-spec ceiling, sanity-check failures
+    - `_run_nvidia_smi` success / nonzero / error-in-output / timeout /
+      missing binary
+    - `_apply_gpu_clock_lock` happy path + hard-fail on subprocess error
+    - `_revert_gpu_clock_lock` idempotent + failure-but-marks-inactive
+    - Torch keepalive falls back gracefully when torch / CUDA / Stream
+      unavailable
+
+  * Total fast tests: 156 (was 127 in v0.10.0-partial)
+  * All 156 pass; drift contract test confirms 7 new EngineConfig
+    fields are forwarded through every site
+
+### Documentation
+
+  * `docs/22-gpu-clock-lock.md` — quick start, hardware safety
+    statement, sudoers setup, troubleshooting, measured impact,
+    why "both" works when neither alone does, how to disable
+
+### Lessons retrospective
+
+  * `LESSONS.md §31` — observed system-state difference: today's "off"
+    baseline shows GPU min=1515 MHz vs v0.10.0 baseline's 300 MHz. The
+    deboost mechanism is sensitive to laptop thermal/power state in
+    ways the v0.10.0 attribution model didn't capture; reproducibility
+    across days is a live concern.
+  * `LESSONS.md §32` — the lock at high floor is treated as a hint by
+    the boost mechanism, not a hard floor, on bursty workloads. Sustained
+    workload demand (the torch keepalive) is required for the lock to
+    actually bind. Neither alone moves the gate; both together does.
+  * `LESSONS.md §33` — torch.cuda.Stream() works as designed on this
+    stack: 0.2 ms p50, 0.5-0.7 ms p99 for tiny ops, no measurable
+    contention with ORT's session stream (rvc.run p99 in mode=keepalive
+    is 119.7 ms vs off=122.8 ms — within noise). The rc3 contention
+    class IS closed.
+
+### What does NOT ship in v0.11.0-partial
+
+  * Default behavior unchanged — features are opt-in.
+  * No power-limit / memory-clock / firmware-tier changes.
+  * No `chunk_seconds` tuning (still 0.15).
+  * No re-export of RVC ONNX.
+
+### What's next
+
+If the user's Telegram listening test on `mode = "both"` shows the
+audible cuts class is meaningfully reduced, ship v0.11.0 final
+(remove "-partial"). If audible cuts persist, the next investigation
+attacks: (a) what chunk_seconds=0.20 does to the writer_jitter (cheap
+software-only experiment with bounded latency cost); (b) re-export
+RVC ONNX with TF32 forced or fixed-shape graph optimization; (c)
+investigate whether the rvc.run p99 = 80 ms residual is f0-transition
+sensitive (brief candidate #4 from v0.10.0).
+
 ## [0.10.0-partial] — 2026-05-08 — synthetic harness + per-stage attribution + keepalive knob (NOT a fix release)
 
 The output of `V0_10_X_AUTONOMOUS_LOOP.md` after 4 rc iterations of

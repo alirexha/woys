@@ -179,6 +179,13 @@ class VCClientApp(App[int]):
                 gpu_keepalive_enabled=self.cfg.gpu_keepalive_enabled,
                 gpu_keepalive_interval_ms=self.cfg.gpu_keepalive_interval_ms,
                 gpu_keepalive_input_len=self.cfg.gpu_keepalive_input_len,
+                gpu_anti_jitter_mode=self.cfg.gpu_anti_jitter_mode,
+                gpu_clock_lock_enabled=self.cfg.gpu_clock_lock_enabled,
+                gpu_clock_lock_floor_mhz=self.cfg.gpu_clock_lock_floor_mhz,
+                gpu_clock_lock_ceiling_mhz=self.cfg.gpu_clock_lock_ceiling_mhz,
+                gpu_clock_lock_floor_offset_mhz=self.cfg.gpu_clock_lock_floor_offset_mhz,
+                gpu_keepalive_torch_stream=self.cfg.gpu_keepalive_torch_stream,
+                gpu_keepalive_torch_interval_ms=self.cfg.gpu_keepalive_torch_interval_ms,
             )
         )
         self.no_pw_setup = no_pw_setup

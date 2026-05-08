@@ -303,6 +303,17 @@ def _stats_dict(engine: Any, *, chunk_ms_target: float) -> dict[str, Any]:
         "keepalive_p99_ms": _pct(list(s._recent_keepalive_ms), 99)
         if s._recent_keepalive_ms
         else 0.0,
+        # v0.11.0 — torch keepalive + clock lock
+        "torch_keepalive_calls": int(getattr(s, "torch_keepalive_calls", 0)),
+        "torch_keepalive_p50_ms": _pct(list(getattr(s, "_recent_torch_keepalive_ms", []) or []), 50)
+        if getattr(s, "_recent_torch_keepalive_ms", None)
+        else 0.0,
+        "torch_keepalive_p99_ms": _pct(list(getattr(s, "_recent_torch_keepalive_ms", []) or []), 99)
+        if getattr(s, "_recent_torch_keepalive_ms", None)
+        else 0.0,
+        "gpu_clock_lock_active": bool(getattr(s, "gpu_clock_lock_active", False)),
+        "gpu_clock_lock_floor_mhz": int(getattr(s, "gpu_clock_lock_floor_mhz", 0)),
+        "gpu_clock_lock_ceiling_mhz": int(getattr(s, "gpu_clock_lock_ceiling_mhz", 0)),
     }
 
 
@@ -315,6 +326,7 @@ def _run_engine_synthetic(
     inference_subprocess: bool,
     gpu_keepalive_enabled: bool = False,
     gpu_keepalive_interval_ms: int | None = None,
+    gpu_anti_jitter_mode: str = "off",
 ) -> dict[str, Any]:
     """Run the engine for `duration_s` against the synthetic signal,
     return the stats dict (also written to `out_path` if provided)."""
@@ -350,6 +362,13 @@ def _run_engine_synthetic(
             else cfg.gpu_keepalive_interval_ms
         ),
         gpu_keepalive_input_len=cfg.gpu_keepalive_input_len,
+        gpu_anti_jitter_mode=gpu_anti_jitter_mode,
+        gpu_clock_lock_enabled=cfg.gpu_clock_lock_enabled,
+        gpu_clock_lock_floor_mhz=cfg.gpu_clock_lock_floor_mhz,
+        gpu_clock_lock_ceiling_mhz=cfg.gpu_clock_lock_ceiling_mhz,
+        gpu_clock_lock_floor_offset_mhz=cfg.gpu_clock_lock_floor_offset_mhz,
+        gpu_keepalive_torch_stream=cfg.gpu_keepalive_torch_stream,
+        gpu_keepalive_torch_interval_ms=cfg.gpu_keepalive_torch_interval_ms,
     )
     engine_cfg.inference_subprocess = inference_subprocess
     rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
@@ -485,9 +504,21 @@ def _print_summary(out: dict[str, Any]) -> None:
     print(f"  dropped_chunks          {s['dropped_chunks']}  (inference exceptions)")
     if s.get("keepalive_calls", 0) > 0:
         print(
-            f"  gpu_keepalive           calls={s['keepalive_calls']}  "
+            f"  gpu_keepalive (ort)     calls={s['keepalive_calls']}  "
             f"p50={s.get('keepalive_p50_ms', 0):.2f} ms  "
             f"p99={s.get('keepalive_p99_ms', 0):.2f} ms"
+        )
+    if s.get("torch_keepalive_calls", 0) > 0:
+        print(
+            f"  gpu_keepalive (torch)   calls={s['torch_keepalive_calls']}  "
+            f"p50={s.get('torch_keepalive_p50_ms', 0):.3f} ms  "
+            f"p99={s.get('torch_keepalive_p99_ms', 0):.3f} ms"
+        )
+    if s.get("gpu_clock_lock_active", False) or s.get("gpu_clock_lock_floor_mhz", 0) > 0:
+        print(
+            f"  gpu_clock_lock          active={s.get('gpu_clock_lock_active', False)}  "
+            f"floor={s.get('gpu_clock_lock_floor_mhz', 0)} MHz  "
+            f"ceiling={s.get('gpu_clock_lock_ceiling_mhz', 0)} MHz"
         )
     print(f"  warmup_audio16_lens     {s['warmup_audio16_lens']}")
     print(f"  runtime_audio16_lens    {s['runtime_audio16_lens']}")
@@ -506,13 +537,19 @@ def main() -> int:
     parser.add_argument(
         "--gpu-keepalive",
         action="store_true",
-        help="enable rc3 GPU keep-alive thread",
+        help="enable rc3 GPU keep-alive thread (ORT-stream)",
     )
     parser.add_argument(
         "--gpu-keepalive-interval-ms",
         type=int,
         default=None,
         help="keepalive cadence (default uses EngineConfig default)",
+    )
+    parser.add_argument(
+        "--anti-jitter-mode",
+        choices=["off", "keepalive", "clock_lock", "both"],
+        default="off",
+        help="v0.11.0 anti-jitter mode: off / keepalive (torch stream) / clock_lock (sudo nvidia-smi) / both",
     )
     parser.add_argument(
         "--pyspy",
@@ -557,6 +594,7 @@ def main() -> int:
         inference_subprocess=args.subprocess,
         gpu_keepalive_enabled=args.gpu_keepalive,
         gpu_keepalive_interval_ms=args.gpu_keepalive_interval_ms,
+        gpu_anti_jitter_mode=args.anti_jitter_mode,
     )
     _print_summary(out)
     return 0
