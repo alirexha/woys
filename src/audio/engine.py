@@ -644,6 +644,29 @@ class EngineStats:
     _recent_mic_read_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     _recent_enqueue_lag_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
+    # v0.10.0 — per-stage rolling windows for cv / rmvpe / rvc inference.
+    # The engine has tracked `last_*_ms` (most-recent only) and `inf_ms`
+    # (sum, with rolling p50/p95/p99) since v0.6.9. The aggregated `inf_ms`
+    # mixes the contribution of each stage; tail variance attribution
+    # requires per-stage percentiles. v0.10.0's writer-jitter investigation
+    # uses these to identify which stage owns the p99 tail. Populated by
+    # `_infer` in both legacy in-process and IPC-subprocess paths.
+    _recent_cv_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    _recent_rmvpe_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    _recent_rvc_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    # Set of `audio16k.shape[-1]` values seen at inference entry. The rc9
+    # broader pre-warm targets soxr's polyphase alternation pattern (4
+    # shapes on alireza's QuadCast 2 S: 1957/1958/2446/2447). If runtime
+    # introduces shapes outside the pre-warm set, cuDNN re-tunes on the
+    # cold shape (~80 ms one-off cost vs ~25 ms cached). The brief lists
+    # this as v0.10.x candidate #2; counter-evidence is "set size ≤ 4
+    # AND ⊆ warmup_shapes after the first 30 s of runtime."
+    unique_audio16_lens: set[int] = field(default_factory=set)
+    # Snapshot of the warmup-time shape set, taken once at the end of
+    # `_warmup_realtime_pipeline`. Compared against `unique_audio16_lens`
+    # in `woys diag` to spot the rc9 gap class.
+    warmup_audio16_lens: set[int] = field(default_factory=set)
+
     # v0.8.0 — inference subprocess telemetry. None / 0 when running
     # in-process (legacy path).
     child_pid: int | None = None
@@ -693,6 +716,25 @@ class EngineStats:
 
     def enqueue_lag_samples_ms(self) -> list[float]:
         return list(self._recent_enqueue_lag_ms)
+
+    # v0.10.0 — per-stage inference rolling-window accessors.
+    def cv_samples_ms(self) -> list[float]:
+        """Snapshot of the rolling per-chunk contentvec inference times in ms."""
+        return list(self._recent_cv_ms)
+
+    def rmvpe_samples_ms(self) -> list[float]:
+        """Snapshot of the rolling per-chunk RMVPE pitch-extraction times in ms."""
+        return list(self._recent_rmvpe_ms)
+
+    def rvc_samples_ms(self) -> list[float]:
+        """Snapshot of the rolling per-chunk RVC vocoder inference times in ms."""
+        return list(self._recent_rvc_ms)
+
+    def writer_interval_samples_ms(self) -> list[float]:
+        """Snapshot of the writer-thread inter-flush intervals in ms.
+        The std-dev is `writer_jitter_ms`; p99 is the load-bearing tail
+        metric the v0.10.x investigation targets (acceptance gate ≤30 ms)."""
+        return list(self._writer_intervals_ms)
 
 
 # v0.7.0-rc10: HEURISTIC → EXHAUSTIVE. The rc8 tail-chunk capture +
@@ -1615,6 +1657,11 @@ class RealtimeEngine:
             self.stats.last_rvc_ms = timings.rvc_ms
             self.stats.last_ipc_roundtrip_ms = timings.roundtrip_ms
             self.stats._recent_ipc_roundtrip_ms.append(timings.roundtrip_ms)
+            # v0.10.0 — per-stage rolling windows for percentile attribution.
+            self.stats._recent_cv_ms.append(timings.cv_ms)
+            self.stats._recent_rmvpe_ms.append(timings.rmvpe_ms)
+            self.stats._recent_rvc_ms.append(timings.rvc_ms)
+            self.stats.unique_audio16_lens.add(int(audio16k.shape[-1]))
             self.stats.nan_chunks = timings.nan_chunks_total
             ipc_typed: NDArrayF32 = ipc_result
             return ipc_typed
@@ -1682,9 +1729,20 @@ class RealtimeEngine:
             self.stats.nan_chunks += 1
         t_rvc1 = time.perf_counter()
         # Per-stage timing surfaces in the slow_chunk_log when a chunk goes late.
-        self.stats.last_cv_ms = (t_cv1 - t_cv0) * 1000.0
-        self.stats.last_rmvpe_ms = (t_rmvpe1 - t_cv1) * 1000.0
-        self.stats.last_rvc_ms = (t_rvc1 - t_rmvpe1) * 1000.0
+        cv_ms = (t_cv1 - t_cv0) * 1000.0
+        rmvpe_ms = (t_rmvpe1 - t_cv1) * 1000.0
+        rvc_ms = (t_rvc1 - t_rmvpe1) * 1000.0
+        self.stats.last_cv_ms = cv_ms
+        self.stats.last_rmvpe_ms = rmvpe_ms
+        self.stats.last_rvc_ms = rvc_ms
+        # v0.10.0 — per-stage rolling windows for percentile attribution.
+        # The pre-v0.10.0 path tracked only `_recent_inference` (sum); the
+        # writer-jitter investigation needs to know which stage owns the
+        # tail.
+        self.stats._recent_cv_ms.append(cv_ms)
+        self.stats._recent_rmvpe_ms.append(rmvpe_ms)
+        self.stats._recent_rvc_ms.append(rvc_ms)
+        self.stats.unique_audio16_lens.add(int(audio16k.shape[-1]))
         result_typed: NDArrayF32 = result
         return result_typed
 
@@ -1957,6 +2015,20 @@ class RealtimeEngine:
                     # path's `_safe_process_streaming_16k` will catch
                     # any inference failure that survives warmup.
                     break
+
+        # v0.10.0 — snapshot the model-input shape set seen during warmup
+        # (populated by `_infer` instrumentation as `audio16k.shape[-1]`,
+        # which equals `history_len + audio16_len` for every warmup call).
+        # Runtime continues adding to `unique_audio16_lens`; the diff
+        # surfaces shapes that hit cuDNN cold during the realtime session.
+        # Reset the rolling per-stage deques so warmup chunks don't
+        # pollute realtime percentile reads.
+        self.stats.warmup_audio16_lens = set(self.stats.unique_audio16_lens)
+        self.stats._recent_cv_ms.clear()
+        self.stats._recent_rmvpe_ms.clear()
+        self.stats._recent_rvc_ms.clear()
+        self.stats._recent_inference.clear()
+        self.stats._recent_total.clear()
 
     def stop(self, timeout: float = 2.0) -> None:
         self._stop_event.set()
