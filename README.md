@@ -7,7 +7,7 @@
 
 Linux-native real-time voice changer. RVC-only, ONNX Runtime CUDA, PipeWire-native, terminal-controlled. Originally targeted CachyOS; runs on any modern Linux with PipeWire + an NVIDIA GPU.
 
-## Status (v0.13.2)
+## Status (v0.13.3)
 
 Daily-use ready on RTX 2070 Mobile. The user's perceptual A/B
 test (Desktop WAV listening) ratified the v0.12.3 sweep top-1
@@ -35,7 +35,7 @@ Configurations that minimise latency at the cost of more cuts (e.g.
 remain available via `~/.config/woys/config.toml` for users who want
 that tradeoff.
 
-### v0.13.2 opt-in: RNNoise chain (`woys-mic-clean.monitor`)
+### v0.13.3 opt-in: RNNoise chain (`woys-by-alirexha`)
 
 If you want a further ~27 % cut reduction at +40 ms additional
 latency cost, install the LADSPA plugin and let `woys` manage the
@@ -44,7 +44,8 @@ chain:
 ```bash
 sudo pacman -S noise-suppression-for-voice
 woys chain enable    # systemd user unit; loads now + on every login
-# in your app, select `woys-mic-clean.monitor` (NOT bare `woys-mic-clean`)
+# in your app, select `woys-by-alirexha` (the cleaned daily driver)
+# fallback option named `woys-no-cleanup` is the raw v0.12.4 path
 woys chain disable   # remove unit + tear down chain
 ```
 
@@ -57,10 +58,11 @@ woys chain teardown
 ```
 
 See `docs/23-rnnoise-chain.md` for the measured impact and the
-v0.13.0 → v0.13.2 fix history (v0.13.0 had a routing bug that
-leaked filter-chain output to ALSA hardware sinks; v0.13.2 fixes it
-and the real RNNoise contribution is twice what we originally
-measured).
+v0.13.0 → v0.13.3 history (v0.13.0 had a routing bug that leaked
+filter-chain output to ALSA hardware sinks; v0.13.2 fixed it; v0.13.3
+adds friendly source names so app dropdowns show
+`woys-by-alirexha` / `woys-no-cleanup` instead of a wall of internal
+plumbing names).
 
 ## What it is
 

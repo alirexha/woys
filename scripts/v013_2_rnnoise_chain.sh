@@ -1,4 +1,13 @@
 #!/bin/bash
+# v0.13.3 — opt-in RNNoise chain after woys-mic, friendly device names.
+#
+# v0.13.3 adds `module-remap-source` on top of the v0.13.2 architecture
+# so apps see one user-facing daily-driver source named
+# `woys-by-alirexha` (with matching device.description), instead of
+# the auto-derived `Monitor of <sink-description>` that pipewire-pulse
+# offers no API to override. All intermediate sinks are tagged with
+# `_internal-...` descriptions so they sort/communicate "do not pick".
+#
 # v0.13.2 — opt-in RNNoise chain after woys-mic, FIXED routing.
 #
 # v0.13.0 architecture had a leak: the LADSPA filter-chain output stream
@@ -39,7 +48,12 @@ PLUGIN_PATH="/usr/lib/ladspa/librnnoise_ladspa.so"
 PLUGIN_LABEL="noise_suppressor_mono"
 SINK_FINAL="woys-mic-clean"
 SINK_BRIDGE="woys-mic-rnnoise-bridge"
+SOURCE_USER_FACING="woys-by-alirexha"
+DESC_USER_FACING="woys-by-alirexha"
+DESC_BRIDGE="_internal-rnnoise-stage"
+DESC_FINAL_SINK="_internal-clean-sink"
 LOOPBACK_MARKER="source=woys-mic sink=$SINK_BRIDGE"
+USER_REMAP_MARKER="master=$SINK_FINAL.monitor source_name=$SOURCE_USER_FACING"
 SYSTEMD_UNIT_NAME="woys-chain.service"
 SYSTEMD_UNIT_DIR="$HOME/.config/systemd/user"
 SYSTEMD_UNIT_PATH="$SYSTEMD_UNIT_DIR/$SYSTEMD_UNIT_NAME"
@@ -65,8 +79,13 @@ _require_woysmic() {
 }
 
 _unload_chain_modules() {
-    # Order: loopback, ladspa-sink, null-sink (reverse of load order).
-    for spec in "module-loopback.*$LOOPBACK_MARKER" \
+    # Order: leaves first, root last (reverse of load order).
+    #   1. user-facing remap-source  (depends on the .monitor of SINK_FINAL)
+    #   2. loopback                  (feeds woys-mic into SINK_BRIDGE)
+    #   3. ladspa-sink (SINK_BRIDGE) (writes into SINK_FINAL via sink_master)
+    #   4. null-sink   (SINK_FINAL)  (root)
+    for spec in "module-remap-source.*source_name=$SOURCE_USER_FACING" \
+                "module-loopback.*$LOOPBACK_MARKER" \
                 "module-ladspa-sink.*sink_name=$SINK_BRIDGE" \
                 "module-null-sink.*sink_name=$SINK_FINAL"; do
         for mod_id in $(pactl list short modules | awk -v p="$spec" '$0 ~ p {print $1}'); do
@@ -80,14 +99,11 @@ _load_chain() {
     _require_woysmic
     _unload_chain_modules  # idempotent — clear any stale chain first
 
-    # 1. Terminal sink (Audio/Sink class — its monitor is what apps
-    #    record from). The Audio/Source/Virtual class used in v0.13.0
-    #    caused wireplumber to refuse the LADSPA filter-chain output
-    #    as a valid playback target → orphan stream → leaked to alsa.
+    # 1. Terminal null-sink (Audio/Sink class — see v0.13.2 history).
     pactl load-module module-null-sink \
         media.class=Audio/Sink \
         sink_name="$SINK_FINAL" \
-        sink_properties=device.description=woys-mic-clean_rnnoise \
+        sink_properties=device.description="$DESC_FINAL_SINK" \
         rate=48000 channels=1 >/dev/null
 
     # 2. LADSPA-sink with the rnnoise plugin. Output goes to its
@@ -100,20 +116,29 @@ _load_chain() {
         sink_master="$SINK_FINAL" \
         plugin="$PLUGIN_PATH" \
         label="$PLUGIN_LABEL" \
+        sink_properties=device.description="$DESC_BRIDGE" \
         rate=48000 channels=1 >/dev/null
 
     # 3. Loopback that feeds woys-mic into the LADSPA bridge.
     pactl load-module module-loopback \
         source=woys-mic sink="$SINK_BRIDGE" \
         rate=48000 channels=1 latency_msec=30 >/dev/null
+
+    # 4. v0.13.3 — user-facing remap-source. Apps pick this one.
+    pactl load-module module-remap-source \
+        master="$SINK_FINAL.monitor" \
+        source_name="$SOURCE_USER_FACING" \
+        source_properties=device.description="$DESC_USER_FACING" \
+        rate=48000 channels=1 >/dev/null
 }
 
 case "$cmd" in
 setup)
     _load_chain
-    echo "[v0.13.2] RNNoise chain active. Apps select:"
-    echo "          woys-mic                    — raw v0.12.4 engine output (~75 cuts/min)"
-    echo "          woys-mic-clean.monitor      — RNNoise-processed (~55 cuts/min, +40 ms latency)"
+    echo "[v0.13.3] RNNoise chain active. Apps see two woys options in the input picker:"
+    echo "          $SOURCE_USER_FACING      — RNNoise-cleaned (+40 ms, ~ -27% cuts/min) [daily driver]"
+    echo "          woys-mic             — raw engine output, low latency, no RNNoise [fallback]"
+    echo "          (anything tagged '_internal-...' is plumbing — don't pick it)"
     ;;
 
 teardown)
@@ -122,20 +147,20 @@ teardown)
     ;;
 
 status)
-    echo "[v0.13.2] chain modules:"
+    echo "[v0.13.3] chain modules:"
     pactl list short modules 2>/dev/null \
-        | grep -E "$SINK_BRIDGE|sink_name=$SINK_FINAL|$LOOPBACK_MARKER" \
+        | grep -E "$SINK_BRIDGE|sink_name=$SINK_FINAL|$LOOPBACK_MARKER|source_name=$SOURCE_USER_FACING" \
         | head || echo "  (chain not loaded)"
     echo
-    echo "[v0.13.2] sources visible to apps:"
+    echo "[v0.13.3] sources visible to apps:"
     pactl list short sources 2>/dev/null | grep -E "woys|rnnoise" | head
     echo
     if [ -f "$SYSTEMD_UNIT_PATH" ]; then
-        echo "[v0.13.2] systemd user unit installed at $SYSTEMD_UNIT_PATH:"
+        echo "[v0.13.3] systemd user unit installed at $SYSTEMD_UNIT_PATH:"
         systemctl --user is-enabled "$SYSTEMD_UNIT_NAME" 2>&1 | sed 's/^/  enabled: /'
         systemctl --user is-active  "$SYSTEMD_UNIT_NAME" 2>&1 | sed 's/^/  active:  /'
     else
-        echo "[v0.13.2] systemd user unit NOT installed (use 'enable' to auto-load on login)"
+        echo "[v0.13.3] systemd user unit NOT installed (use 'enable' to auto-load on login)"
     fi
     ;;
 

@@ -1,5 +1,12 @@
 # 23 — RNNoise chain after woys-mic (v0.13.x)
 
+> **v0.13.3 update.** Apps now see `woys-by-alirexha` (cleaned, daily
+> driver) and `woys-no-cleanup` (raw fallback) directly in their
+> input device dropdown. Internal plumbing nodes are tagged
+> `_internal-...` in their descriptions so users know not to pick
+> them. No audio path or measurement changes — this is naming polish
+> on top of the v0.13.2 architecture.
+
 The v0.12.x sweep series eliminated the chunk-period periodic
 mechanism on this stack at the spectral level (LESSONS §42:
 autocorr@chunk_period = 0.000 in v0.12.4 default). The remaining
@@ -77,12 +84,31 @@ a future regression of the v0.13.0 bug shows up loud, not silent).
 If you don't have `woys` on PATH, the same logic lives in
 `scripts/v013_2_rnnoise_chain.sh` with the same actions.
 
-## Selecting the cleaned mic in apps
+## Selecting the cleaned mic in apps (v0.13.3)
 
 In Discord / Telegram / CS2's input-device picker, choose
-**`woys-mic-clean.monitor`** (NOT `woys-mic-clean` — that's a sink,
-not a recordable source). If the app doesn't expose the new source
-(rare; some apps cache device lists), restart the app after `setup`.
+**`woys-by-alirexha`**. That's it. If the app doesn't expose the
+new source (rare; some apps cache device lists), restart the app
+after `setup`.
+
+There's also a fallback option called **`woys-no-cleanup`** (the
+raw v0.12.4 engine output, no RNNoise, ~40 ms lower latency). Pick
+that one if the cleaned voice sounds over-suppressed for your
+content.
+
+The other monitor sources you'll see in the dropdown
+(`Monitor of _internal-...`) are internal plumbing — don't pick
+them. Their `_internal-` description prefix sorts them visually
+distinct from the two daily-use options.
+
+### v0.13.2 → v0.13.3 migration
+
+If you previously selected `woys-mic-clean.monitor` (the v0.13.2
+recommendation), it'll still work — that source still exists and
+still carries the cleaned audio. But `woys-by-alirexha` is the
+recommended endpoint going forward; it's friendlier-named and
+doesn't collide with users opening a power-user `.monitor` of the
+internal sink.
 
 ## Architecture (v0.13.2 — Architecture B)
 

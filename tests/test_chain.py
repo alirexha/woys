@@ -82,7 +82,9 @@ class _PactlRouter:
 
 
 def test_setup_loads_audio_sink_class_and_mono_chain() -> None:
-    """The fix: media.class=Audio/Sink + channels=1 throughout. Regression guard."""
+    """v0.13.2 routing fix + v0.13.3 friendly-naming topology. Regression guard
+    for: media.class=Audio/Sink, channels=1 throughout, and a user-facing
+    remap-source named `woys-by-alirexha` with matching device.description."""
     router = _PactlRouter(
         sources="1\twoys-mic\tdummy-driver\t1\tIDLE\n",
         modules="",  # no stale chain
@@ -96,30 +98,68 @@ def test_setup_loads_audio_sink_class_and_mono_chain() -> None:
 
     assert rc == 0
     loads = [c for c in router.calls if len(c) >= 2 and c[1] == "load-module"]
-    assert len(loads) == 3, f"expected 3 load-module calls, got {loads}"
+    assert len(loads) == 4, f"expected 4 load-module calls (v0.13.3), got {loads}"
 
-    null_sink, ladspa_sink, loopback = loads
+    null_sink, ladspa_sink, loopback, user_remap = loads
 
     # 1. Null-sink: must be Audio/Sink (NOT Audio/Source/Virtual — that
-    #    was the v0.13.0 bug).
+    #    was the v0.13.0 bug). Description is the _internal- marker so
+    #    users see "this isn't the source you want" in the dropdown.
     assert "module-null-sink" in null_sink
     assert "media.class=Audio/Sink" in null_sink
     assert f"sink_name={chain.SINK_FINAL}" in null_sink
     assert "channels=1" in null_sink
+    assert f"sink_properties=device.description={chain.DESC_FINAL_SINK}" in null_sink
+    assert chain.DESC_FINAL_SINK.startswith("_internal-"), (
+        "internal sink description must be marked clearly"
+    )
 
     # 2. LADSPA-sink: mono, sink_master points at woys-mic-clean,
-    #    plugin label is the mono variant.
+    #    plugin label is the mono variant, also tagged as internal.
     assert "module-ladspa-sink" in ladspa_sink
     assert f"sink_master={chain.SINK_FINAL}" in ladspa_sink
     assert f"sink_name={chain.SINK_BRIDGE}" in ladspa_sink
     assert "label=noise_suppressor_mono" in ladspa_sink
     assert "channels=1" in ladspa_sink
+    assert f"sink_properties=device.description={chain.DESC_BRIDGE}" in ladspa_sink
+    assert chain.DESC_BRIDGE.startswith("_internal-")
 
     # 3. Loopback: feeds woys-mic into the bridge, mono.
     assert "module-loopback" in loopback
     assert f"source={chain.SOURCE_RAW}" in loopback
     assert f"sink={chain.SINK_BRIDGE}" in loopback
     assert "channels=1" in loopback
+
+    # 4. v0.13.3 user-facing remap-source. THIS is what apps pick.
+    #    Both source_name and device.description are user-friendly,
+    #    so Discord/Telegram/CS2/pavucontrol all show the same string.
+    assert "module-remap-source" in user_remap
+    assert f"master={chain.SINK_FINAL}.monitor" in user_remap
+    assert f"source_name={chain.SOURCE_USER_FACING}" in user_remap
+    assert f"source_properties=device.description={chain.DESC_USER_FACING}" in user_remap
+    # A friendly name MUST NOT start with "_internal-" — otherwise users
+    # looking for the daily-driver source won't recognize it.
+    assert not chain.DESC_USER_FACING.startswith("_internal-")
+    assert not chain.SOURCE_USER_FACING.startswith("_internal-")
+
+
+def test_descriptions_have_no_spaces() -> None:
+    """v0.13.3 lesson: pactl on pipewire-pulse splits sink/source-property
+    values on whitespace before the proplist parser sees them. A description
+    containing a space is silently truncated at the first space — apps see
+    only the prefix. This test makes sure no future change reintroduces a
+    space into any of the descriptions exposed to users."""
+    for desc in (
+        chain.DESC_USER_FACING,
+        chain.DESC_BRIDGE,
+        chain.DESC_FINAL_SINK,
+    ):
+        assert " " not in desc, (
+            f"description {desc!r} contains a space — pactl will truncate it; use hyphens instead"
+        )
+        assert "\t" not in desc and "\n" not in desc, (
+            f"description {desc!r} contains whitespace — same caveat"
+        )
 
 
 def test_setup_refuses_when_plugin_missing() -> None:
@@ -139,18 +179,20 @@ def test_setup_refuses_when_woys_mic_absent() -> None:
 
 
 def test_setup_unloads_stale_chain_before_loading() -> None:
-    """Idempotency: if an old (potentially v0.13.0-broken) chain is
-    already loaded, setup must clear it first instead of stacking
-    duplicates."""
+    """Idempotency: if an old chain is already loaded (including a v0.13.2
+    chain or even a v0.13.0-broken one), setup must clear ALL four module
+    types instead of stacking duplicates."""
     stale = (
         f"42\tmodule-null-sink\tmedia.class=Audio/Source/Virtual sink_name={chain.SINK_FINAL}\n"
         f"43\tmodule-ladspa-sink\tsink_name={chain.SINK_BRIDGE} sink_master={chain.SINK_FINAL}\n"
         f"44\tmodule-loopback\tsource={chain.SOURCE_RAW} sink={chain.SINK_BRIDGE}\n"
+        f"45\tmodule-remap-source\tmaster={chain.SINK_FINAL}.monitor "
+        f"source_name={chain.SOURCE_USER_FACING}\n"
     )
     router = _PactlRouter(
         sources="1\twoys-mic\tdrv\t1\tIDLE\n",
         modules=stale,
-        # After the 3 load-module calls, modules listing reverts to
+        # After the 4 load-module calls, modules listing reverts to
         # empty so any leakage isn't double-counted as 'stale again'.
         modules_after_load={0: ""},
     )
@@ -162,8 +204,8 @@ def test_setup_unloads_stale_chain_before_loading() -> None:
         chain.setup()
 
     unload_ids = [c[2] for c in router.calls if c[:2] == ["pactl", "unload-module"]]
-    assert {"42", "43", "44"} <= set(unload_ids), (
-        f"expected stale 42/43/44 unloaded, got {unload_ids}"
+    assert {"42", "43", "44", "45"} <= set(unload_ids), (
+        f"expected stale 42/43/44/45 unloaded, got {unload_ids}"
     )
 
 
@@ -239,6 +281,8 @@ def test_disable_no_unit_still_unloads_modules() -> None:
         f"50\tmodule-null-sink\tsink_name={chain.SINK_FINAL}\n"
         f"51\tmodule-ladspa-sink\tsink_name={chain.SINK_BRIDGE}\n"
         f"52\tmodule-loopback\tsource={chain.SOURCE_RAW} sink={chain.SINK_BRIDGE}\n"
+        f"53\tmodule-remap-source\tmaster={chain.SINK_FINAL}.monitor "
+        f"source_name={chain.SOURCE_USER_FACING}\n"
     )
     router = _PactlRouter(modules=modules)
 
@@ -253,4 +297,4 @@ def test_disable_no_unit_still_unloads_modules() -> None:
     assert rc == 0
     fake_unit_path.unlink.assert_not_called()
     unload_ids = [c[2] for c in router.calls if c[:2] == ["pactl", "unload-module"]]
-    assert {"50", "51", "52"} <= set(unload_ids)
+    assert {"50", "51", "52", "53"} <= set(unload_ids)
