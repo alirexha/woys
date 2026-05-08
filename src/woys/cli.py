@@ -345,7 +345,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     print(f"  player xruns     : {s.xruns}  (pacat-only — pw-cat does not report)")
     print(f"  native-pw under. : {s.player_underruns}  (native-pw helper only)")
     print(f"  queue-full events: {s.queue_full_events}")
-    print(f"  player restarts  : {s.pacat_restarts}")
+    print(f"  player restarts  : {s.player_restarts}")
     # v0.7.0-rc4/rc5 — silent-drop counters previously invisible to
     # woys-diag. rc5 dropped `sola_drain_ms` (zero-pad bookkeeping) —
     # SOLA emits constant-size chunks now and never pads silence; see
@@ -434,7 +434,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
 
     # Exit non-zero if we saw any underruns or restarts — useful for CI
     # / shell scripting on top of this command.
-    return 1 if (s.xruns or s.queue_full_events or s.pacat_restarts) else 0
+    return 1 if (s.xruns or s.queue_full_events or s.player_restarts) else 0
 
 
 def cmd_engine(seconds: float, quiet: bool) -> int:

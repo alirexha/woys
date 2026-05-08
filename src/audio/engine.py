@@ -506,13 +506,16 @@ class EngineStats:
     # queue_full_events: writer queue was full when the engine tried to
     #   enqueue → engine has out-paced the writer/sink, treat as a
     #   self-detected underrun.
-    # pacat_restarts: watchdog respawned pacat (it died mid-session).
+    # player_restarts: watchdog respawned the playback backend
+    #   (pacat / pw-cat / native-pw helper) — it died mid-session.
+    #   v0.9.0-rc4 rename: was `pacat_restarts` through v0.9.0-rc3;
+    #   the legacy attribute alias is provided below for back-compat.
     # writer_jitter_ms: std dev (ms) of recent inter-chunk write
     #   intervals. Exceeding ~5 % of chunk_seconds*1000 is the
     #   underrun precursor we care about.
     xruns: int = 0
     queue_full_events: int = 0
-    pacat_restarts: int = 0
+    player_restarts: int = 0
     writer_jitter_ms: float = 0.0
     # v0.9.0 — when the native-pw helper is in use, the helper prints
     # "underruns=N\n" on stderr roughly once per second; the engine's
@@ -623,6 +626,18 @@ class EngineStats:
     # describes one failure (engine main, writer, child) so a user with
     # multiple priority issues can see all of them, not just the last.
     priority_warnings: list[str] = field(default_factory=list)
+
+    # v0.9.0-rc4 — back-compat alias for the field renamed from
+    # `pacat_restarts` to `player_restarts`. External callers (tests,
+    # scripts that scrape EngineStats) reading the old name still work
+    # for one release; v0.10 deletes the alias.
+    @property
+    def pacat_restarts(self) -> int:
+        return self.player_restarts
+
+    @pacat_restarts.setter
+    def pacat_restarts(self, value: int) -> None:
+        self.player_restarts = value
 
     # B23 / quality-019: public read-accessors for the rolling stat
     # windows. cli.py used to reach into the leading-underscore deques
@@ -2152,7 +2167,10 @@ class RealtimeEngine:
                 proc.stdin.write(payload)
                 proc.stdin.flush()
             except (BrokenPipeError, OSError) as e:
-                self.stats.last_error = f"pacat write failed ({type(e).__name__}); respawning"
+                self.stats.last_error = (
+                    f"{self._player_backend or 'player'} write failed "
+                    f"({type(e).__name__}); respawning"
+                )
                 self._pacat_dead_event.set()
                 # Brief pause so the watchdog has time to respawn before
                 # the next iteration tries to write again.
@@ -2281,8 +2299,11 @@ class RealtimeEngine:
             with self._pacat_lock:
                 # Discard the dead handle (caller already detected death).
                 self._pacat_proc = new_proc
-            self.stats.pacat_restarts += 1
-            self.stats.last_error = f"pacat respawned (restarts={self.stats.pacat_restarts})"
+            self.stats.player_restarts += 1
+            self.stats.last_error = (
+                f"{self._player_backend or 'player'} respawned "
+                f"(restarts={self.stats.player_restarts})"
+            )
             # Spawn a fresh stderr reader bound to the new process. The old
             # reader thread will exit on its own once the dead pipe EOFs.
             stderr_t = threading.Thread(
