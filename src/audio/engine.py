@@ -654,6 +654,15 @@ class EngineStats:
     _recent_cv_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     _recent_rmvpe_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     _recent_rvc_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    # v0.10.0-rc2 — RVC stage further split into pre / run / post so we
+    # can attribute the rvc tail to GPU work vs Python pre-/post-process
+    # (np.repeat, _to_pitch_coarse, astype, isnan/isinf scan). Populated
+    # only by the legacy in-process path; the IPC child reports an
+    # aggregate `rvc_ms` over the wire (rc3 will plumb the split through
+    # the protocol if rvc-pre/post turns out to be load-bearing).
+    _recent_rvc_pre_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    _recent_rvc_run_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+    _recent_rvc_post_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     # Set of `audio16k.shape[-1]` values seen at inference entry. The rc9
     # broader pre-warm targets soxr's polyphase alternation pattern (4
     # shapes on alireza's QuadCast 2 S: 1957/1958/2446/2447). If runtime
@@ -735,6 +744,24 @@ class EngineStats:
         The std-dev is `writer_jitter_ms`; p99 is the load-bearing tail
         metric the v0.10.x investigation targets (acceptance gate ≤30 ms)."""
         return list(self._writer_intervals_ms)
+
+    def rvc_pre_samples_ms(self) -> list[float]:
+        """Time spent in numpy pre-processing between RMVPE done and
+        `self._rvc.run` invocation: feats_2x = np.repeat, _to_pitch_coarse,
+        slice/reshape/astype on coarse + aligned pitch tensors."""
+        return list(self._recent_rvc_pre_ms)
+
+    def rvc_run_samples_ms(self) -> list[float]:
+        """Time spent inside `self._rvc.run` itself (the GPU op).
+        Compare against rvc_pre and rvc_post to split the rvc tail
+        between GPU and Python overhead."""
+        return list(self._recent_rvc_run_ms)
+
+    def rvc_post_samples_ms(self) -> list[float]:
+        """Time spent in numpy post-processing between rvc.run return
+        and the result returned to caller: np.array(out).astype.squeeze,
+        isnan/isinf scan, optional nan_to_num replacement."""
+        return list(self._recent_rvc_post_ms)
 
 
 # v0.7.0-rc10: HEURISTIC → EXHAUSTIVE. The rc8 tail-chunk capture +
@@ -1691,6 +1718,8 @@ class RealtimeEngine:
         pitchf = _interpolate_voiced_gaps_np(pitchf)
         t_rmvpe1 = time.perf_counter()
 
+        # v0.10.0-rc2 — split RVC stage into pre / run / post so the
+        # tail-attribution data tells us GPU work vs Python overhead.
         feats_2x = np.repeat(feats, 2, axis=1)
         pitch_coarse, pitchf_aligned = _to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
         pitch_coarse = pitch_coarse[: feats_2x.shape[1]].reshape(1, -1)
@@ -1700,16 +1729,17 @@ class RealtimeEngine:
         pitchf_aligned = pitchf_aligned[: feats_2x.shape[1]].reshape(1, -1).astype(np.float32)
 
         feats_dtype = np.float16 if self._is_half else np.float32
-        out = self._rvc.run(
-            ["audio"],
-            {
-                "feats": feats_2x.astype(feats_dtype),
-                "p_len": np.array([feats_2x.shape[1]], dtype=np.int64),
-                "pitch": pitch_coarse,
-                "pitchf": pitchf_aligned,
-                "sid": np.array([self.cfg.sid], dtype=np.int64),
-            },
-        )[0]
+        # Build the input dict (final astype on feats happens here too).
+        rvc_inputs = {
+            "feats": feats_2x.astype(feats_dtype),
+            "p_len": np.array([feats_2x.shape[1]], dtype=np.int64),
+            "pitch": pitch_coarse,
+            "pitchf": pitchf_aligned,
+            "sid": np.array([self.cfg.sid], dtype=np.int64),
+        }
+        t_rvc_pre1 = time.perf_counter()
+        out = self._rvc.run(["audio"], rvc_inputs)[0]
+        t_rvc_run1 = time.perf_counter()
         result = np.array(out).astype(np.float32).squeeze()
         # v0.6.9: belt-and-braces NaN sanitize. pacat is fed float32le; NaN
         # would be undefined behavior in PipeWire's mixer chain and the
@@ -1732,6 +1762,10 @@ class RealtimeEngine:
         cv_ms = (t_cv1 - t_cv0) * 1000.0
         rmvpe_ms = (t_rmvpe1 - t_cv1) * 1000.0
         rvc_ms = (t_rvc1 - t_rmvpe1) * 1000.0
+        # v0.10.0-rc2 — RVC sub-stages.
+        rvc_pre_ms = (t_rvc_pre1 - t_rmvpe1) * 1000.0
+        rvc_run_ms = (t_rvc_run1 - t_rvc_pre1) * 1000.0
+        rvc_post_ms = (t_rvc1 - t_rvc_run1) * 1000.0
         self.stats.last_cv_ms = cv_ms
         self.stats.last_rmvpe_ms = rmvpe_ms
         self.stats.last_rvc_ms = rvc_ms
@@ -1742,6 +1776,9 @@ class RealtimeEngine:
         self.stats._recent_cv_ms.append(cv_ms)
         self.stats._recent_rmvpe_ms.append(rmvpe_ms)
         self.stats._recent_rvc_ms.append(rvc_ms)
+        self.stats._recent_rvc_pre_ms.append(rvc_pre_ms)
+        self.stats._recent_rvc_run_ms.append(rvc_run_ms)
+        self.stats._recent_rvc_post_ms.append(rvc_post_ms)
         self.stats.unique_audio16_lens.add(int(audio16k.shape[-1]))
         result_typed: NDArrayF32 = result
         return result_typed
