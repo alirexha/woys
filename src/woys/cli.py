@@ -612,6 +612,30 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
     eng = RealtimeEngine(engine_cfg)
     print("starting engine...")
     eng.start()
+    # v0.11.0 — surface anti-jitter mode + clock lock state so the
+    # user sees that the policy actually took effect.
+    mode = (eng.cfg.gpu_anti_jitter_mode or "off").strip().lower()
+    if mode != "off":
+        print(f"gpu_anti_jitter_mode = {mode!r}")
+        if eng.stats.gpu_clock_lock_active:
+            print(
+                f"  clock_lock active: floor={eng.stats.gpu_clock_lock_floor_mhz} MHz, "
+                f"ceiling={eng.stats.gpu_clock_lock_ceiling_mhz} MHz "
+                f"(nvidia-smi: {eng.stats.gpu_clock_lock_last_message[:80]})"
+            )
+        elif mode in ("clock_lock", "both"):
+            print(
+                "  clock_lock NOT active despite mode — check last_error, "
+                "sudoers, or GPU spec query"
+            )
+        if mode in ("keepalive", "both"):
+            # Torch keepalive thread takes ~50ms to allocate stream + buffer;
+            # the chunk count check is just to confirm the thread didn't
+            # crash on first call.
+            print(
+                "  torch_keepalive thread spawning (verify with stats lines below; "
+                "torch_keepalive_calls should grow ~40 / sec at 25 ms cadence)"
+            )
     print(
         f"engine running. child_pid={eng.stats.child_pid} "
         f"rvc_output_sr={eng._rvc_output_sr} active_embedder={eng.active_embedder}"
