@@ -2955,3 +2955,70 @@ periodic mechanism is fundamental on this stack; tuning shifts but
 does not eliminate it. The user's v0.11.0 daily-use experience is
 the audible ceiling within software-only configurations on this
 hardware.
+
+## 42. v0.12.4 — listener verdict overrules the score formula
+
+v0.12.3 shipped with the low-latency tier of the 50-condition sweep
+as the new default (cuts/min 80.6 → 66.6 at +0 ms latency, 2.83-sigma
+significant). The +100 ms top-1 config was documented as an opt-in
+tradeoff and parked.
+
+The user listened to three reference WAVs on Desktop:
+`woys_baseline_v0_11_0.wav`, `woys_default.wav` (the v0.12.3 ship),
+and `woys_top1_opt-in.wav`. Verdict:
+
+> top1 is dramatically cleaner than v0.12.3 default. The chunk-period
+> rhythm is GONE — this is what woys should sound like.
+
+The user accepted +100 ms total e2e latency (~540 ms → ~640 ms) for
+chunk-period autocorrelation collapsing from 0.067 (v0.12.3 default)
+to **0.000** (top-1). v0.12.4 promotes the +100 ms config to the new
+default; chunk_seconds=0.15 family stays as a tunable.
+
+### Engineering finding
+
+The score formula I used in v0.12.3:
+
+```
+score = cuts/min + 50 × autocorr@chunk + 0.05 × latency_penalty_ms
+```
+
+ranked the absolute-best (top-1, +100 ms, score 63.2) ahead of the
+low-latency winner (top-5 in absolute terms, score 69.9). My ship
+decision applied a hard latency-cap filter (< 30 ms) that eliminated
+top-1 from contention for the default change. The user's listener
+verdict reversed my decision.
+
+The per-millisecond latency weight in my score (0.05) was set
+ad-hoc. The user's accept/reject curve for latency vs cuts is steeper
+than my arbitrary linear weighting suggested:
+
+  * 30 ms latency cap → I assumed everything above was unshippable
+  * Reality: 100 ms latency was acceptable when cuts/min dropped 13 %
+    AND chunk-period autocorrelation dropped to literal 0
+
+### Generalizable lesson — perceptual verdict beats synthetic score
+
+Both the cuts/min metric (woys-diag, calibrated to perception) AND
+the autocorr@chunk_period metric pointed at top-1 as the cleanest
+audio. The score formula's latency term was the only thing pushing
+back. When all the perception-grounded metrics agree on a config,
+the latency penalty needs a perceptual measurement, not an arbitrary
+linear weight.
+
+For future tuning sweeps where latency matters: ship the top-N by
+each-metric-individually as separate WAVs and let the listener pick.
+Pre-commit "best by score" decisions can be wrong about the user's
+actual tradeoff curve. Listener-in-the-loop is the cheap, definitive
+test once N is small (3-5).
+
+### What v0.12.4 is
+
+v0.12.4 is the user's chosen ceiling: **chunk_seconds = 0.25 +
+sola_search_ms = 16 + sola_corr_threshold = 0.30 + sola_crossfade_ms
+= 50 + sola_context_ms = 200**. At this configuration, on this
+hardware, with the v0.11.0 anti-jitter mode=both, the chunk-boundary
+periodic mechanism is bounded at autocorrelation = 0.000 by
+measurement and "the rhythm is GONE" by ear. Full stop.
+
+This is the last release. Project closes.

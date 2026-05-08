@@ -4,6 +4,102 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.12.4] — 2026-05-08 — user perceptual A/B picks v0.12.3 top-1; default profile shifts to chunk_seconds=0.25 + tuned SOLA
+
+After v0.12.3 shipped, the user listened to three reference WAVs
+on Desktop (`woys_baseline_v0_11_0.wav` 78 cuts/min, `woys_default.wav`
+the v0.12.3 default at 66.6 cuts/min, `woys_top1_opt-in.wav` the
++100 ms tradeoff at 58.2 cuts/min). The verdict:
+
+> top1 is dramatically cleaner than v0.12.3 default. The chunk-period
+> rhythm is GONE — this is what woys should sound like.
+
+The +100 ms latency cost is acceptable for the user's daily use:
+"CS2/Discord/Telegram conversations work fine with +100ms; the
+latency is well under any conversational threshold."
+
+### Default change shipped
+
+| field                  | v0.12.3 | v0.12.4 |
+|------------------------|--------:|--------:|
+| `chunk_seconds`        |    0.15 |  **0.25** |
+| `sola_search_ms`       |     4.0 |  **16.0** |
+| `sola_corr_threshold`  |    0.30 |    0.30 (unchanged) |
+| `sola_crossfade_ms`    |    30.0 |  **50.0** |
+| `sola_context_ms`      |   100.0 |   **200.0** |
+
+These are the v0.12.3 sweep top-1 values exactly. The user listened
+and picked them; the engineering finding (LESSONS §42) is that the
+subjective perceptual delta dwarfs the +100 ms latency penalty.
+
+### Measured impact
+
+| metric                    | v0.11.0 baseline | v0.12.3 default | v0.12.4 default |
+|---------------------------|-----------------:|----------------:|----------------:|
+| cuts/min (TTS sustained)  |      78.0        |      66.6       |     **58.2**    |
+| autocorr@chunk_period     |      0.136       |      0.067      |     **0.000**   |
+| total e2e latency         |     ~540 ms      |     ~540 ms     |     ~640 ms     |
+
+`autocorr@chunk_period = 0.000` means the chunk-boundary periodic
+mechanism (the "train wagon on rails" the user heard on sustained
+content since v0.10.x) is **entirely eliminated** at the spectral
+level. The metric isn't just shifted to a different period — it's
+gone.
+
+### Why chunk_seconds=0.25 succeeds where 0.15 + tighter SOLA didn't
+
+Chunk-boundary phase clicks happen because RVC's NSF source resets
+per inference call; SOLA's correlation search masks them by aligning
+the new chunk's overlap with the previous chunk. At 150 ms chunks,
+the search has limited room (4-12 ms typically) and finds locally-
+correct but globally-misaligned peaks → audible periodic rhythm. At
+250 ms chunks + 200 ms context + 16 ms search, SOLA finds genuinely
+correlated alignment within the much wider overlap window — the
+crossfade no longer introduces a chunk-rate perturbation. Result:
+zero spectral autocorrelation at the chunk period.
+
+The +100 ms is the only cost. The user accepted it after listening.
+
+### Files updated
+
+  * `src/audio/engine.py` — 4 SOLA/chunk default-value changes
+    with v0.12.4 inline rationale
+  * `tests/test_v070_migration.py` — 2 assertions updated; the
+    v0.6.x `chunk_seconds = 0.25` sentinel now coincides with the
+    v0.12.4 default (migration is a no-op for chunk_seconds, still
+    stamps schema version)
+  * `tests/test_v068_polish.py` — fallback-defaults assertion
+    updated to chunk_seconds=0.25
+  * `CHANGELOG.md` — this entry
+  * `README.md` — status block updated for v0.12.4 latency &
+    cuts/min
+  * `LESSONS.md` §42 — the user-listening-test methodology lesson:
+    when synthetic metrics + listener perception both agree on a
+    default change, the listener's verdict is load-bearing
+
+### Verification
+
+  * 156 fast tests pass (3 migration-test assertions updated)
+  * `./install.sh --skip-models` rebuilds with new defaults
+  * 5-second `woys engine` smoke confirms startup uses
+    chunk_seconds=0.25 + 16ms search + 200ms context
+
+### Project state
+
+**woys is feature-complete on this stack at v0.12.4.** The user's
+Desktop A/B test is the final perceptual verdict. v0.12.4 ships
+the listener's preference as the new default; chunk_seconds=0.15
+remains a tunable for users who prefer minimum latency over
+maximum cleanness.
+
+The chunk-boundary periodic mechanism is now bounded at
+**autocorr@chunk = 0.000** in default operation. There is no
+remaining in-scope work that could improve on this without leaving
+the synthetic-harness measurement regime (real-voice listener
+test = the user, who has ratified the configuration).
+
+This is the last release.
+
 ## [0.12.3] — 2026-05-08 — comprehensive 50-condition sweep; SOLA defaults retuned (default change)
 
 User-requested final tuning sweep before project closure. Phase 1
