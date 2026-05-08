@@ -294,6 +294,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         input_gate_hysteresis_ms=cfg.input_gate_hysteresis_ms,
         prefer_pw_cat=cfg.prefer_pw_cat,
         prefer_native_pw=cfg.prefer_native_pw,
+        prefer_native_pw_buffer_ms=cfg.prefer_native_pw_buffer_ms,
     )
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path
@@ -479,6 +480,7 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
         input_gate_hysteresis_ms=cfg.input_gate_hysteresis_ms,
         prefer_pw_cat=cfg.prefer_pw_cat,
         prefer_native_pw=cfg.prefer_native_pw,
+        prefer_native_pw_buffer_ms=cfg.prefer_native_pw_buffer_ms,
     )
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path

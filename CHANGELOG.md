@@ -4,6 +4,100 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-05-08 — flip native-pw default; tunable ring buffer; honest framing of cuts
+
+The output of the user's v0.9.0-rc4 → rc5 Telegram A/B. The result was
+definitive enough to act on:
+
+> Test 1 (native-pw): player_underruns=607 in ~85s = 7.3/sec.
+> Test 2 (pacat):     xruns=109       in ~60s = 1.8/sec, plus pacat
+>                     respawned once mid-run.
+> Telegram audible: identical background noise + identical micro-cuts
+> in both backends.
+
+Both backends produce the same audible result on this stack. The cuts
+are upstream of the playback layer — engine writer jitter at ~80 ms
+(documented since v0.6.10, unmoved by any single fix) overwhelms any
+output buffer's slack window. **v0.9.0's native PipeWire client
+eliminates one specific class of artifact (per-quantum gaps from
+pw-cat's synchronous-stdin-on-RT-thread pattern) but does NOT fix
+the dominant cause of audible cuts on this hardware.** The
+architectural win is real but not the headline win we hoped for.
+
+### Default flip
+
+`EngineConfig.prefer_native_pw` flipped from False to True. Per the
+v0.9.0-rc4 A/B, native-pw has the architectural advantage of:
+
+- Honest, observable per-quantum underrun counter (player_underruns)
+  that reflects what's really happening in the playback layer.
+- No mid-run respawns from pacat-style PulseAudio compatibility
+  edge cases (the v0.9.0-rc4 pacat test showed one such respawn).
+- The v0.7.x audit's lens 08 cut-signature class (~21/43 ms
+  quantum-aligned gaps from pw-cat) is structurally eliminated by
+  the SPSC ring + RT-thread separation, even if the dominant cuts
+  remain.
+
+The legacy pw-cat / pacat paths stay accessible by setting
+`prefer_native_pw = false` in `~/.config/woys/config.toml`. The
+v0.10 plan still calls for deleting them once the engine-side
+jitter work proves out.
+
+### Tunable ring buffer
+
+New `EngineConfig.prefer_native_pw_buffer_ms` (default 80). The
+helper's SPSC ring is sized to `next_pow2(chunk_frames + buffer_ms ×
+sink_rate / 1000)`, giving the engine writer ~that-many-ms of
+headroom before a late chunk underruns the ring.
+
+| buffer_ms | actual ring (chunk=0.15s) | underrun expectation @ j=80ms |
+|-----------|---------------------------|-------------------------------|
+| 0 / unset | chunk-only (~150 ms)      | severe — every late write     |
+| 80 (def)  | ~341 ms (~191 ms slack)   | rare (target ~1/min)          |
+| 200       | ~683 ms                   | near-zero, +700 ms total e2e  |
+
+Trades latency for cut tolerance. Pre-v0.9.1 the ring was hardcoded
+at 8192 frames (~170 ms total = ~21 ms slack = one quantum), which
+gave 7+ underruns/sec at the engine's measured 80 ms jitter.
+
+The drift contract test in `tests/test_engine_config_drift.py`
+caught the missing forward of the new field through cli.py and
+app.py construction sites — same class as the rc4 catch (third
+time the AST-walk has earned its keep).
+
+### Honest framing in user docs
+
+- README's audible-cuts section reframed: native-pw is correct
+  architecture, doesn't fix the dominant cuts, jitter is upstream.
+- `docs/05-perf.md` updated with the rc4 A/B numbers.
+- LESSONS.md §27: meta-lesson on equivalent-failure-across-backends
+  → cause is upstream of both.
+
+### Engine writer jitter is the v0.10.x target
+
+The 80 ms jitter is consistent across every test since v0.6.10. No
+single fix has moved it. Real engineering needed: candidates include
+perf-001 (per-chunk numpy alloc churn), perf-018 (`_input_history`
+ring buffer), an actual linux-rt kernel switch, and possibly a
+fundamental rework of the engine's chunk-based production cadence.
+v0.9.1 is the last cosmetic-class release in the v0.9.x line.
+
+### Verification status
+
+- 120 fast tests pass (no test count change; the AST drift test
+  already covers the new field).
+- Helper unchanged in this rc — same binary as v0.9.0-rc5.
+- Headless smoke confirms the new ring sizing computes correctly:
+  default 80ms → ring=16384 frames (191ms effective slack).
+
+### What does NOT ship in v0.9.1
+
+- No engine-side jitter reduction. That's v0.10.x.
+- No pacat path removal. Stays as fallback for one more release.
+- No README install-path changes. Helper still builds via
+  `make -C bin/`; install.sh handles it (same as v0.9.0).
+
+
 ## [0.9.0] — 2026-05-08 — native PipeWire client + mitigations doc
 
 The output of `V0_9_X_AUTONOMOUS.md`. Three fixes scoped, two shipped,

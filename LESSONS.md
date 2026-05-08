@@ -1616,3 +1616,94 @@ script.** The doc IS the feature.
   sequence guidance.
 
 The Telegram-specific verification of Fix 2 is the user's call.
+
+## 27. v0.9.0-rc4 → v0.9.1 — equivalent-failure-across-backends → cause is upstream
+
+The user's v0.9.0-rc4 Telegram A/B is the cleanest measurement woys
+has had on the cuts question. Two backends, same workload, same
+listener, same audible result:
+
+| Backend     | Counter           | Rate         | Audible cuts | Audible noise |
+|-------------|-------------------|--------------|--------------|---------------|
+| native-pw   | player_underruns  | 7.3/sec      | unchanged    | unchanged     |
+| pacat       | xruns             | 1.8/sec      | unchanged    | unchanged     |
+
+(The counters measure different events — native-pw counts per-quantum
+ring-empty events at 21 ms boundaries; pacat counts PulseAudio
+"Stream underrun" stderr lines at variable cadence — so the absolute
+numbers aren't directly comparable. But the user's audible verdict was
+the load-bearing data: both backends produce equivalent listening
+experience.)
+
+### Lesson — equivalent failure across the entire layer below the suspect
+### means the cause is above the suspect
+
+For three releases (v0.7.x), output_latency_ms was tuned 80→220→280 in
+search of the cuts. Audible response was flat across the sweep. The
+audit (`docs/16-audit/synthesis.md`) established that flat-across-sweep
+means the cuts are upstream of the buffer being tuned.
+
+v0.9.0 then attacked a DIFFERENT layer (the playback subprocess
+architecture) on the hypothesis that pw-cat's per-quantum gap class
+was the dominant cause. The architectural fix is correct (native-pw
+eliminates that mechanism by design — confirmed by the SPSC ring +
+RT-thread separation on a clean reading). But the audible result is
+flat across the v0.9.0-rc4 A/B too. Same shape of finding: equivalent
+failure ABOVE pw-cat means the cause is above pw-cat. Engine writer
+jitter (~80 ms std-dev, unmoved since v0.6.10) is the actual layer.
+
+Generalizable rule: **when fix candidate B replaces fix candidate A
+and the audible/observable failure is unchanged, the cause is above
+the layer where A and B both sit.** Stop attacking that layer.
+
+### Lesson — honest measurement requires the counter to be visible
+
+v0.9.0-rc1 added `EngineStats.player_underruns`. v0.9.0-rc1 also
+displayed it in `woys diag`. **It was not surfaced in `woys engine`'s
+own output.** The user runs `woys engine`, not `woys diag` — so for
+two rcs (rc1 → rc4) the counter existed in memory but was invisible.
+v0.9.0-rc5 added it to the periodic + final printout AFTER the user
+explicitly asked "Where is player_underruns?"
+
+The lesson is the obvious one but worth restating: **a counter is
+worth zero until it shows up in the user's actual workflow**. Adding
+the field to the dataclass doesn't help if `woys engine`, the TUI,
+and `woys diag` don't all surface it.
+
+Same for `player_restarts` — added in rc4 to the dataclass; added in
+rc5 to the engine output. Now two counters that took two rounds of
+"this is dead unless visible" feedback to surface.
+
+### Lesson — drift catch tests pay for themselves on every new field
+
+The AST-walk test in `tests/test_engine_config_drift.py` (added in
+v0.9.0-rc1 after the prefer_native_pw drift was caught manually)
+caught `prefer_native_pw_buffer_ms` missing from cli.py and app.py
+construction sites in v0.9.1's first build. Third time the
+EngineConfig drift class has been caught (rc4 / B9 / v0.9.0-rc1 /
+v0.9.1) — but the v0.9.1 catch was free, no manual debugging. The
+test paid for itself again.
+
+The remaining structural fix (replace explicit kwarg lists with a
+`from_app_config(cfg)` factory) is filed as v0.10.x. Cheaper to add
+the test than to refactor the construction sites; cheaper still to
+do the refactor when it stops being worth catching the same drift
+every release.
+
+### Lesson — distinguish architectural correctness from user-facing benefit
+
+v0.9.0 was correctly motivated and correctly implemented. The native
+PipeWire client genuinely eliminates the pw-cat per-quantum-gap
+mechanism (confirmed by reading upstream `pw-cat.c` and verifying our
+helper's RT path holds the SPSC discipline pw-cat doesn't). It also
+gives us an honest metric (player_underruns) the legacy backends
+never had.
+
+But "cuts in the user's Telegram experience" remains unchanged. The
+architectural improvement is real; the user-facing benefit on this
+specific cuts question is zero.
+
+For a personal tool, "did it fix the thing the user noticed?" is the
+final test. For an engineering portfolio, "is the architecture
+correct?" matters too. Both are true here — and they're independent
+findings that should both ship without one masquerading as the other.
