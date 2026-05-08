@@ -236,6 +236,9 @@ def _stats_dict(engine: Any, *, chunk_ms_target: float) -> dict[str, Any]:
     cv = s.cv_samples_ms()
     rm = s.rmvpe_samples_ms()
     rvc = s.rvc_samples_ms()
+    rvc_pre = s.rvc_pre_samples_ms()
+    rvc_run = s.rvc_run_samples_ms()
+    rvc_post = s.rvc_post_samples_ms()
     enq = s.enqueue_lag_samples_ms()
     mic = s.mic_read_samples_ms()
     wri = s.writer_interval_samples_ms()
@@ -275,6 +278,13 @@ def _stats_dict(engine: Any, *, chunk_ms_target: float) -> dict[str, Any]:
         "rvc_p50_ms": _pct(rvc, 50),
         "rvc_p95_ms": _pct(rvc, 95),
         "rvc_p99_ms": _pct(rvc, 99),
+        "rvc_pre_p50_ms": _pct(rvc_pre, 50),
+        "rvc_pre_p99_ms": _pct(rvc_pre, 99),
+        "rvc_run_p50_ms": _pct(rvc_run, 50),
+        "rvc_run_p95_ms": _pct(rvc_run, 95),
+        "rvc_run_p99_ms": _pct(rvc_run, 99),
+        "rvc_post_p50_ms": _pct(rvc_post, 50),
+        "rvc_post_p99_ms": _pct(rvc_post, 99),
         "mic_read_p50_ms": _pct(mic, 50),
         "mic_read_p99_ms": _pct(mic, 99),
         "enqueue_lag_p50_ms": _pct(enq, 50),
@@ -443,6 +453,16 @@ def _print_summary(out: dict[str, Any]) -> None:
     print(
         f"   .rvc     p50/p99   {s['rvc_p50_ms']:.1f} / {s['rvc_p99_ms']:.1f} ms"
     )
+    if "rvc_run_p50_ms" in s:
+        print(
+            f"     .rvc_pre   p50/p99   {s['rvc_pre_p50_ms']:.1f} / {s['rvc_pre_p99_ms']:.1f} ms"
+        )
+        print(
+            f"     .rvc_run   p50/p99   {s['rvc_run_p50_ms']:.1f} / {s['rvc_run_p99_ms']:.1f} ms"
+        )
+        print(
+            f"     .rvc_post  p50/p99   {s['rvc_post_p50_ms']:.1f} / {s['rvc_post_p99_ms']:.1f} ms"
+        )
     print(f"  late_chunks             {s['late_chunks']}  (>{chunk_ms:.0f} ms wall budget)")
     print(f"  dropped_chunks          {s['dropped_chunks']}  (inference exceptions)")
     print(f"  warmup_audio16_lens     {s['warmup_audio16_lens']}")

@@ -417,6 +417,29 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         f"p95={_pct(rvc_samples, 95):6.2f}  "
         f"p99={_pct(rvc_samples, 99):6.2f}  (n={len(rvc_samples)})"
     )
+    # v0.10.0-rc2 — rvc broken into pre/run/post. If post-rc2 reads
+    # show rvc_run owns most of the tail, the bottleneck is GPU
+    # work (ORT kernel selection variance / cuDNN); if rvc_pre or
+    # rvc_post owns it, the bottleneck is Python (numpy alloc churn,
+    # GIL contention with writer thread).
+    rvc_pre_samples = s.rvc_pre_samples_ms()
+    rvc_run_samples = s.rvc_run_samples_ms()
+    rvc_post_samples = s.rvc_post_samples_ms()
+    print(
+        f"   .rvc_pre        p50={_pct(rvc_pre_samples, 50):6.2f}  "
+        f"p95={_pct(rvc_pre_samples, 95):6.2f}  "
+        f"p99={_pct(rvc_pre_samples, 99):6.2f}  (n={len(rvc_pre_samples)})"
+    )
+    print(
+        f"   .rvc_run        p50={_pct(rvc_run_samples, 50):6.2f}  "
+        f"p95={_pct(rvc_run_samples, 95):6.2f}  "
+        f"p99={_pct(rvc_run_samples, 99):6.2f}  (n={len(rvc_run_samples)})"
+    )
+    print(
+        f"   .rvc_post       p50={_pct(rvc_post_samples, 50):6.2f}  "
+        f"p95={_pct(rvc_post_samples, 95):6.2f}  "
+        f"p99={_pct(rvc_post_samples, 99):6.2f}  (n={len(rvc_post_samples)})"
+    )
     print(
         f"  mic_read         p50={_pct(mic_samples, 50):6.2f}  "
         f"p95={_pct(mic_samples, 95):6.2f}  "
