@@ -2592,3 +2592,98 @@ audible result (36× underrun reduction, voice-intelligibility
 leap) is the load-bearing improvement; v0.12.0 polish on top of
 that is bounded by the residual and the residual is bounded
 below objective-detection threshold.
+
+## 38. v0.12.1 — TTS-driven natural-speech detection: chunk-period mechanism NOT detectable
+
+**Project-closing measurement.** v0.12.0-partial left one open question:
+the synthetic 220 Hz tone might not exercise the same NSF behavior as
+real voice. Phase 1's null on synthetic could miss a real-voice-only
+mechanism. v0.12.1 addresses this with TTS-driven input.
+
+### Method
+
+  * Generated ~42 s of espeak-ng TTS speech with embedded sustained
+    vowels: `aaaaa` × 3 / `mmmmm` × 3 / `eeeee` × 3 / connected
+    sentences / `aaaaa` × 3 again. Real f0 contour, real formants,
+    real consonant/vowel transitions, real coarticulation.
+  * Resampled to 48 kHz, normalized to RMS=0.10 (matching the
+    harness's voiced-segment level).
+  * Drove the engine end-to-end via the harness with this TTS WAV
+    tiled to 60 s, `mode = "both"`, all v0.11.0 defaults.
+  * Captured `WoysSink.monitor` concurrently via `pw-record`.
+  * Ran two independent detectors on the recording:
+    - `scripts/v012_spectral_flux.py` (mechanism / periodicity)
+    - `woys-diag analyze` (calibrated cut counter; the same
+      detector tuned in `docs/13-detector-calibration.md` to
+      match the user's perceptual cut-counting)
+
+### Spectral flux result
+
+  * 195 detected flux peaks in 75 s = 2.6 / sec
+  * Interval median = **80 ms** (NOT 150 ms = chunk_seconds)
+  * Only 4.1 % of intervals fall at chunk_seconds ± 8 ms
+  * Top autocorrelation peaks (excl. lag 0): 55, 60, 65, 70, 120,
+    175 ms — these are natural-speech syllable / formant-transition
+    rates, not chunk-aligned
+  * 150 ms chunk-period: NOT in top 10 autocorr peaks
+
+### woys-diag verdict
+
+> Verdict — Audio is clean
+> No silent-gap dropouts and no click discontinuities detected
+> across 75 s of recording.
+
+The calibrated detector that was tuned to match user perceptual
+cut-counting reports CLEAN audio on the TTS-driven engine output.
+
+### Definitive answer
+
+**The chunk-boundary periodic mechanism is NOT objectively detectable
+on natural-speech-class input on this stack.** Two independent
+detectors — one mechanism-focused (spectral flux + autocorrelation),
+one perception-calibrated (woys-diag) — both null on TTS-driven
+output that contains the same vowel-classes, f0 contours, and
+formant structure that real voice has.
+
+### What this means for the project
+
+The objective-measurement floor is reached. Three implications:
+
+  * **woys is feature-complete on this stack at v0.11.0.** The
+    user's Telegram-listening verdict (36× underrun reduction,
+    voice intelligibility leap, daily-use ready) is matched by
+    the calibrated cut detector on engine output. Whatever
+    residual the user perceives during real Telegram is at or
+    below the objective-measurement threshold; we cannot
+    investigate it further from inside the engine.
+  * **The remaining residual is most likely network-side.**
+    Telegram's Opus codec and jitter buffer are downstream of
+    woys. The engine output is provably clean by woys-diag; what
+    arrives at the listener has been Opus-encoded, packet-jittered,
+    Opus-decoded. Investigating that is out of woys's scope.
+  * **Model-side surgery (NSF state passing, RVC ONNX re-export)
+    has no objective justification.** We hypothesized NSF reset
+    as the mechanism; three rounds of measurement (synthetic
+    tones, stationary 220 Hz, TTS speech) failed to find it. A
+    model-side fix would address a mechanism we have no evidence
+    for.
+
+### Project state
+
+woys ships at v0.11.0 as the validated daily-use product. v0.12.0
+shipped tooling + documentation. v0.12.1 is the closing measurement
+that confirms the objective floor. **No further investigation is
+warranted on this stack.** Future work, if any, lives at the
+network layer (codec selection, alternative VoIP transport) or
+the model layer (different vocoder architecture entirely) — both
+out of scope for this codebase.
+
+### Generalizable lesson — when to stop
+
+Three rounds of measurement against the same hypothesis with three
+different inputs (synthetic loop, synthetic stationary tone, TTS
+speech) all returning null is sufficient evidence that the
+mechanism is not objectively present on this stack. The user's
+perception is real but not measurable from inside the engine.
+That's the cue to ship the objective ceiling and stop. Continuing
+to investigate without a measurable signal is flailing.

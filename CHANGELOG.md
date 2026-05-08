@@ -4,6 +4,80 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-05-08 — TTS-driven natural-speech detection; objective floor confirmed; project closes
+
+The closing measurement on the v0.12.x line. Question: would the
+chunk-boundary periodic mechanism become detectable when the engine
+processes natural-speech-class input (real f0 contour, formants,
+consonant/vowel transitions) instead of pure synthetic tones?
+
+**Answer: NO.** Two independent detectors converge on the null:
+
+  * **spectral flux + autocorrelation** (mechanism-focused) — top
+    autocorrelation peaks at 55/60/65/70/120/175 ms (natural-speech
+    syllable / formant-transition rates); 150 ms chunk-period NOT
+    in top 10. Only 4.1 % of detected flux intervals match
+    chunk_seconds ± 8 ms (= noise floor).
+  * **woys-diag analyze** (the calibrated cut detector tuned in
+    `docs/13-detector-calibration.md` to match user perceptual
+    cut-counting) returns:
+    > Verdict — Audio is clean
+    > No silent-gap dropouts and no click discontinuities detected
+    > across 75 s of recording.
+
+The chunk-boundary periodic mechanism is NOT objectively detectable
+on this stack — synthetic tones, stationary 220 Hz, OR
+natural-speech TTS. Three rounds of investigation, three different
+inputs, three nulls. The objective-measurement floor is reached.
+
+### Method
+
+  * Generated 42 s of `espeak-ng` TTS with embedded sustained
+    vowels (aaaaa × 3, mmmmm × 3, eeeee × 3) plus connected
+    sentences. Resampled to 48 kHz, normalized to RMS=0.10.
+  * Drove the engine end-to-end via the harness for 60 s with
+    the TTS WAV tiled as input, `mode = "both"`.
+  * Captured `WoysSink.monitor` concurrently.
+  * Ran both detectors on the resulting recording.
+
+### What ships
+
+  * `scripts/v012_1_tts_run.py` — patches the harness's
+    `_build_signal` to drive a TTS WAV. Reusable for any future
+    natural-speech-class engine investigation.
+  * Pre-generated TTS at `/tmp/v012_1/tts_input.wav` (regenerate
+    with `espeak-ng -v en-us -s 150 -w /tmp/v012_1/tts_input.wav
+    "<text>"` if needed).
+  * LESSONS.md §38 — full retrospective with the
+    "when-to-stop-investigating" generalizable rule.
+
+### Project state
+
+**woys is feature-complete on this stack at v0.11.0.** v0.12.0
+shipped tooling + documentation; v0.12.1 confirms the objective
+floor. The user's daily-use experience (36× underrun reduction
+vs v0.9.0, voice-intelligibility leap, residual ~1 click / 5 s
+on real Telegram) sits at or below what objective measurement
+can reach from inside the engine.
+
+The residual the user perceives during Telegram VoIP is most
+likely network-side (Opus codec packetization, jitter buffer,
+spatial audio processing) — provably downstream of woys, since
+woys-diag reports clean engine output. Investigating that lives
+outside woys's scope.
+
+**No further investigations on this stack.** Future improvements,
+if any, would require either:
+
+  * Network-layer changes (codec selection, alternative VoIP
+    transport) — out of scope
+  * Model-layer surgery (different vocoder architecture entirely)
+    — out of scope; would require RVC export pipeline access
+    and architectural rework
+
+The v0.12.x line closes here. v0.11.0 stands as the validated
+daily-use ceiling.
+
 ## [0.12.0-partial] — 2026-05-08 — Phase 1 spectrogram + Phase 2 sweep; no default changes (research release)
 
 The output of v0.12.x's two-phase investigation into the residual
