@@ -176,6 +176,9 @@ class VCClientApp(App[int]):
                 prefer_pw_cat=self.cfg.prefer_pw_cat,
                 prefer_native_pw=self.cfg.prefer_native_pw,
                 prefer_native_pw_buffer_ms=self.cfg.prefer_native_pw_buffer_ms,
+                gpu_keepalive_enabled=self.cfg.gpu_keepalive_enabled,
+                gpu_keepalive_interval_ms=self.cfg.gpu_keepalive_interval_ms,
+                gpu_keepalive_input_len=self.cfg.gpu_keepalive_input_len,
             )
         )
         self.no_pw_setup = no_pw_setup
