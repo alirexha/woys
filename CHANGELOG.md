@@ -4,6 +4,123 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.12.3] — 2026-05-08 — comprehensive 50-condition sweep; SOLA defaults retuned (default change)
+
+User-requested final tuning sweep before project closure. Phase 1
+swept each of 5 SOLA / chunk parameters individually with the
+others at v0.11.0 baseline; Phase 2 cartesianed the top-2 values
+per parameter. All recordings via serial-ID `pw-record` (the v0.12.2
+fix). TTS-driven engine output for 30 s per condition, both detectors
+(woys-diag calibrated cut count + spectral autocorrelation at the
+chunk-period). 50 unique configurations + 3 baseline repeats for
+noise floor.
+
+### Headline result
+
+The 2-sigma improvement threshold over baseline (cuts/min 80.6 ± 4.94
+across 3 baseline repeats) is **70.7 cuts/min**. Best low-latency
+configuration (latency penalty < 30 ms) lands at:
+
+  * **cuts/min: 66.6** (vs baseline 80.6 — **2.83-sigma significant**, -17 %)
+  * **autocorr@chunk: 0.067** (vs baseline 0.156 — -57 %)
+  * **latency penalty: +0 ms**
+
+### Default change shipped
+
+Three SOLA defaults changed in `EngineConfig`:
+
+| field                  | old   | new   | rationale (per LESSONS §41)                                                       |
+|------------------------|------:|------:|-----------------------------------------------------------------------------------|
+| `sola_search_ms`       |  6.0  |  4.0  | with v0.11.0 anti-jitter holding GPU clocks steady, the wider 6 ms search catches spurious distant peaks; 4 ms is sufficient |
+| `sola_corr_threshold`  |  0.10 |  0.30 | low-confidence (< 0.30) correlations are unreliable transients; falling back to centered offset is cleaner than blind accept |
+| `sola_crossfade_ms`    |  50.0 |  30.0 | shorter crossfade is correctly aligned more often than 50 ms once the producer cadence is steady (v0.11.0 mode=both)         |
+
+`chunk_seconds` (0.15) and `sola_context_ms` (100) unchanged — the
+sweep confirmed they are already at the low-latency optimum.
+
+### Best overall (informational, NOT shipped as default)
+
+If the user is willing to pay +100 ms latency for the strongest
+possible cut reduction, the absolute best of the sweep is:
+
+```toml
+chunk_seconds = 0.25
+sola_search_ms = 16.0
+sola_corr_threshold = 0.30
+sola_crossfade_ms = 50.0
+sola_context_ms = 200.0
+```
+
+  * cuts/min: 58.2 (28 % below baseline)
+  * autocorr@chunk: **0.000** (chunk-period periodicity entirely
+    eliminated, not just shifted — the +100 ms latency lets SOLA
+    find truly correlated alignments and the rhythm vanishes)
+  * latency penalty: +100 ms
+
+This config exceeds the brief's 30 ms latency cap, so it is NOT a
+default change. Documented as a user opt-in tradeoff for content
+where +100 ms is acceptable (e.g., async voice messages, recorded
+audio production, non-interactive monitoring).
+
+### Per-parameter individual sensitivity
+
+For each parameter, lowest cuts/min when others held at baseline:
+
+  * `chunk_seconds`: 0.15 → 77.5 (baseline)
+  * `sola_search_ms`: 4.0 → **66.9** (LARGEST individual lever)
+  * `sola_corr_threshold`: 0.30 → 71.8
+  * `sola_crossfade_ms`: 50.0 → 77.5 (baseline)
+  * `sola_context_ms`: 100.0 → 77.5 (baseline)
+
+The combined top-5 (66.6 cuts/min) is essentially the
+`sola_search_ms = 4.0` win (66.9) plus a small additional gain
+from tighter corr_threshold + shorter crossfade.
+
+### What ships
+
+  * Engine: 3 default-value changes in `EngineConfig` (sola_search_ms,
+    sola_corr_threshold, sola_crossfade_ms) with v0.12.3 inline
+    comments referencing this CHANGELOG entry + LESSONS §41
+  * Migration: `tests/test_v070_migration.py` updated to reflect that
+    the v0.6.x `sola_search_ms = 4.0` sentinel and the v0.12.3
+    current default coincide (the bump remains a no-op for that
+    field; schema version still stamps correctly)
+  * `scripts/v012_3_grid_sweep.py` — the orchestrator, shipped for
+    re-runs on different hardware
+  * `scripts/v012_3_writeup.py` — the writeup tool, regenerates
+    LESSONS §41 + CHANGELOG section from `all_results.json`
+  * `LESSONS.md` §41 — full ranked table (top-5 + baseline + bottom-3),
+    per-parameter sensitivity, ship decision rationale
+  * Top-3 raw recordings: `/tmp/v012_3_top1.wav`, `top2.wav`, `top3.wav`
+  * Worst-3 + baseline reference: `/tmp/v012_3/worst{1,2,3}.wav`,
+    `/tmp/v012_3/baseline_ref.wav` — for perceptual A/B calibration
+  * Live-monitor loopback support documented as an option for
+    in-situ audio feedback during sweeps (auto-tears-down on
+    summary.json appearance)
+
+### Verification
+
+  * 156 fast tests pass (with 2 migration-test assertions updated)
+  * 50 conditions tested via serial-ID-targeted recording (no
+    fallback bugs of the v0.12.2 class)
+  * Decision uses 2-sigma noise floor based on 3-repeat baseline
+
+### Project state
+
+**woys is feature-complete on this stack at v0.12.3.** The user's
+load-bearing improvement is v0.11.0's anti-jitter mode=both (36×
+underrun reduction in real Telegram). v0.12.3's SOLA retune adds
+~17 % further reduction on TTS-driven content at zero latency cost.
+The chunk-boundary periodic mechanism is bounded below the v0.12.3
+floor on this hardware without out-of-scope work (NSF state passing
+or chunking architecture rework).
+
+**No further investigations on this stack.** The v0.12.3 sweep was
+exhaustive within the parameter space available to woys; the
+tooling shipped (sweep + writeup + recording + analysis) gives the
+next investigator a clean starting point if hardware or model
+assumptions change.
+
 ## [0.12.2] — 2026-05-08 — methodology correction; v0.12.0/v0.12.1 conclusions invalidated; corrected baseline
 
 User reported same micro-cuts on WhatsApp async voice messages

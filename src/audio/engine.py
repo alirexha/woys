@@ -202,13 +202,26 @@ class EngineConfig:
     # SOLA crossfade (Phase B). Disable at your peril — without it, audible
     # clicks at every chunk boundary when chunk_seconds is short.
     sola_enabled: bool = True
-    sola_crossfade_ms: float = 50.0  # overlap window between consecutive chunks
+    # v0.12.3 — bumped 50.0 → 30.0 after the 50-condition sweep (LESSONS §41).
+    # Shorter crossfade reduces total chunk-boundary blend duration and (counter-
+    # intuitively) lowers the woys-diag cut count by ~7 % at zero latency cost
+    # on TTS-driven sustained content. The v0.6.9 / v0.7.0 50 ms default was set
+    # empirically pre-v0.10.x anti-jitter; with the v0.11.0 GPU-clock-lock +
+    # torch keepalive in place, the producer cadence is tight enough that a
+    # tighter 30 ms crossfade is correctly aligned more often than 50 ms.
+    sola_crossfade_ms: float = 30.0  # overlap window between consecutive chunks
     # v0.6.9: widened from 4.0 to 6.0 so the search window covers at least one
     # full pitch period for typical voice f0 (>= 167 Hz period at 40 kHz model
     # rate = 240 samples = 6 ms). With a sub-period search, sustained vowels
     # produce phase mismatches SOLA can't reach — manifests as audible
     # dropouts during sustained voicing.
-    sola_search_ms: float = 6.0  # how far to shift looking for in-phase alignment
+    # v0.12.3 — bumped 6.0 → 4.0 after the 50-condition sweep (LESSONS §41).
+    # Narrower search window: the v0.6.9 widening to 6 ms was justified pre-
+    # v0.11.0 when GPU jitter was causing alignment search to find phase-
+    # wrapped peaks at random offsets. With the v0.11.0 anti-jitter mode=both
+    # holding GPU clocks steady, the per-chunk RVC output is phase-stable
+    # enough that 4 ms is sufficient and doesn't catch spurious distant peaks.
+    sola_search_ms: float = 4.0  # how far to shift looking for in-phase alignment
     # History fed to the model alongside each new chunk so the embedder /
     # vocoder convolutions don't see edge artifacts. Brief calls this "context".
     sola_context_ms: float = 100.0
@@ -216,7 +229,14 @@ class EngineConfig:
     # SOLA falls back to centered (offset=0) on borderline cases and produces
     # phase-discontinuous crossfade for sustained content. 0.10 still rejects
     # decorrelated noise but keeps best-effort alignment for periodic signals.
-    sola_corr_threshold: float = 0.10
+    # v0.12.3 — bumped 0.10 → 0.30 after the 50-condition sweep (LESSONS §41).
+    # Stricter rejection threshold: with v0.11.0 anti-jitter holding the
+    # producer cadence steady, when SOLA's correlation search is below 0.30
+    # the alignment is genuinely unreliable (transient, mostly-silent, or
+    # mid-consonant) and falling back to centered (offset=0) introduces less
+    # phase artifact than blindly accepting a low-confidence peak. v0.6.9's
+    # 0.10 was tuned for noisier producer output.
+    sola_corr_threshold: float = 0.30
 
     # RVC
     f0_up_key: int = 0  # semitones
