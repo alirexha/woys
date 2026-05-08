@@ -188,7 +188,7 @@ class ControlServer:
             signal.signal(signal.SIGTERM, _exit_on_signal)
 
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="vcclient-control", daemon=True)
+        self._thread = threading.Thread(target=self._loop, name="woys-control", daemon=True)
         self._thread.start()
 
     def _unlink_path(self) -> None:

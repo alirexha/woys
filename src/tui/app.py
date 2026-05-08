@@ -111,7 +111,13 @@ class LatencyPanel(Static):
         )
 
 
-class VCClientApp(App[int]):
+class WoysApp(App[int]):
+    # v0.13.1 — explicit TITLE so Textual's header doesn't fall back to
+    # the class name. The class was named VCClientApp pre-v0.6.0 (when
+    # the package was vcclient-cachy); rename followed the v0.6.0
+    # rebrand to woys.
+    TITLE = "woys"
+
     CSS = """
     Screen { background: $surface; }
     #meter { margin: 1 2; }
@@ -124,6 +130,7 @@ class VCClientApp(App[int]):
         Binding("minus", "pitch_down", "pitch -"),
         Binding("0", "pitch_reset", "pitch 0"),
         Binding("p", "cycle_profile", "profile"),
+        Binding("m", "toggle_monitor", "monitor"),
         Binding("s", "save_cfg", "save"),
         Binding("q,ctrl+c", "quit", "quit"),
     ]
@@ -395,6 +402,18 @@ class VCClientApp(App[int]):
         self.engine.cfg.f0_up_key = 0
         self.cfg.f0_up_key = 0
 
+    def action_toggle_monitor(self) -> None:
+        """v0.13.1 — toggle the engine's self-monitor stream (writes a
+        copy of the converted audio to the host's default output so the
+        user can hear themselves). Live: the engine's run-loop checks
+        `self.cfg.monitor` each iteration and opens / closes the
+        sd.OutputStream as needed, so the toggle takes effect within
+        the next chunk_seconds wall-clock window with no engine restart."""
+        new_state = not self.cfg.monitor
+        self.cfg.monitor = new_state
+        self.engine.cfg.monitor = new_state
+        self.notify(f"monitor {'on' if new_state else 'off'}", timeout=2.0)
+
     def action_cycle_profile(self) -> None:
         """Phase 4 — cycle to the next saved profile.
 
@@ -550,5 +569,11 @@ def run_tui(
         cfg.autostart_engine = True
     if monitor is not None:
         cfg.monitor = monitor
-    app = VCClientApp(cfg=cfg, no_pw_setup=no_pw_setup)
+    app = WoysApp(cfg=cfg, no_pw_setup=no_pw_setup)
     return app.run() or 0
+
+
+# v0.13.1 — back-compat alias for the pre-v0.6.0 class name. Several
+# tests (and any user scripts) still import VCClientApp from tui.app
+# directly. Safe to remove in a future major.
+VCClientApp = WoysApp

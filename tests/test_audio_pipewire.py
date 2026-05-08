@@ -57,10 +57,22 @@ def test_virtual_mic_round_trip() -> None:
             assert state.source_module_id is not None
 
             # Verify Discord/CS2-visible names appear in pactl listings.
+            # v0.13.1 — match exact tab-separated name. Substring match
+            # was brittle once v0.13.0 added a `woys-mic-clean` source
+            # whose name contains `woys-mic` (the v0.6.5 / v0.12.x
+            # virtual-mic name).
             sources = _pactl_lists("sources")
             sinks = _pactl_lists("sinks")
-            assert any(SOURCE_NAME in line for line in sources), sources
-            assert any(SINK_NAME in line for line in sinks), sinks
+
+            def _has_named(rows: list[str], name: str) -> bool:
+                for row in rows:
+                    parts = row.split("\t")
+                    if len(parts) >= 2 and parts[1].strip() == name:
+                        return True
+                return False
+
+            assert _has_named(sources, SOURCE_NAME), sources
+            assert _has_named(sinks, SINK_NAME), sinks
 
             # Idempotent — second ensure returns same module IDs.
             again = vm.ensure()
@@ -73,10 +85,18 @@ def test_virtual_mic_round_trip() -> None:
         assert not after.fully_present, f"teardown left state behind: {after}"
         sources = _pactl_lists("sources")
         sinks = _pactl_lists("sinks")
-        assert not any(SOURCE_NAME in line for line in sources), (
+
+        def _has_named(rows: list[str], name: str) -> bool:
+            for row in rows:
+                parts = row.split("\t")
+                if len(parts) >= 2 and parts[1].strip() == name:
+                    return True
+            return False
+
+        assert not _has_named(sources, SOURCE_NAME), (
             f"orphan source after teardown: {sources}"
         )
-        assert not any(SINK_NAME in line for line in sinks), f"orphan sink after teardown: {sinks}"
+        assert not _has_named(sinks, SINK_NAME), f"orphan sink after teardown: {sinks}"
     finally:
         # Restore the host's pre-test state — if the user had the mic loaded
         # before the test started, give it back to them.
