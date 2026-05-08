@@ -4,6 +4,101 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-05-08 — opt-in RNNoise chain (`woys-mic-clean` source); 13 % residual cut reduction
+
+User-requested investigation: would chaining NoiseTorch (RNNoise-based)
+after woys help with the residual chunk-boundary clicks left after
+v0.12.4's chunk_seconds=0.25 + tuned SOLA defaults?
+
+Expected outcome: probably no improvement on the chunks themselves
+(RNNoise wasn't trained for clicks). Verified with hard data instead
+of speculating.
+
+### Result: 13 % measurable improvement, modest
+
+60 s TTS-driven engine, v0.12.4 defaults, mode=both, two concurrent
+recordings (woys-mic and woys-mic-clean recorded by serial ID):
+
+| metric | woys-mic | woys-mic-clean | Δ |
+|---|---:|---:|---:|
+| woys-diag cuts/min | 86.5 | **75.2** | **-13 %** |
+| woys-diag total events | 99 | 86 | -13 |
+| spectral autocorr peak at 150 ms | 0.111 | **0.079** | -29 % |
+| latency post-engine | +0 ms | +40 ms | +40 ms |
+| total e2e latency on v0.12.4 stack | ~640 ms | ~680 ms | +40 ms |
+
+13 % reduction is real but modest. RNNoise wasn't designed for
+click suppression — it's a voice/noise classifier. Some clicks
+classify as non-voice and get attenuated as a side effect, not by
+design.
+
+### What ships
+
+  * `scripts/v013_0_rnnoise_chain.sh` — `setup` / `teardown` / `status`
+    helper that loads/unloads the 3 PipeWire modules in order.
+    Idempotent. Refuses to load if `/usr/lib/ladspa/librnnoise_ladspa.so`
+    is missing or `woys pw setup` hasn't run.
+  * `docs/23-rnnoise-chain.md` — install steps, architecture diagram,
+    measured impact, troubleshooting, "why this isn't shipped as
+    default" rationale.
+
+### NoiseTorch CLI specifically tested
+
+`noisetorch -i -s woys-mic` returns "PulseAudio error:
+commandLoadModule -> No such entity" on this stack (PipeWire 1.6.4
++ pipewire-pulse 15.0). The failure mode is in NoiseTorch's PipeWire
+compatibility layer (sink/master ordering), not in the underlying
+RNNoise. The standalone `noise-suppression-for-voice` package
+provides the same RNNoise plugin (`/usr/lib/ladspa/librnnoise_ladspa.so`)
+loadable directly via `pactl load-module module-ladspa-sink`. v0.13.0
+uses this path; NoiseTorch's TUI is unnecessary.
+
+### Why opt-in, not default
+
+  * Latency: v0.12.4 already trades +100 ms over v0.11.0 for rhythm-
+    GONE perceptual quality. +40 ms more puts total e2e at ~680 ms,
+    close to conversational comfort threshold. Users who chose
+    v0.12.4's tradeoff may not want further latency.
+  * 13 % is real but modest, on residual transients the user already
+    accepted as acceptable in v0.12.4.
+  * It depends on a non-woys system package
+    (`noise-suppression-for-voice`) and adds 3 PipeWire modules.
+    Cleaner to ship as documented opt-in than as a default-on
+    behavior change.
+
+### How to use
+
+```bash
+sudo pacman -S noise-suppression-for-voice
+./scripts/v013_0_rnnoise_chain.sh setup
+# Apps select `woys-mic-clean` instead of `woys-mic`
+./scripts/v013_0_rnnoise_chain.sh teardown   # when not needed
+```
+
+### Verification
+
+  * Both detectors agree on the 13 % reduction (woys-diag
+    independently calibrated, spectral-flux mechanism-focused)
+  * Manual setup → teardown → status round-trip clean
+  * The chain runs in parallel; v0.12.4's `woys-mic` source is
+    unaffected
+  * 156 fast tests still pass (no engine code changes)
+
+### LESSONS §43 — investigation outcome
+
+Documented as a measured finding rather than speculation.
+Generalizable lesson: when you can cheaply test a "probably no"
+hypothesis with hard data, do it — sometimes "probably no" is
+"actually 13 %" and worth shipping as opt-in.
+
+### Project state
+
+woys is feature-complete on this stack at v0.13.0. Default behavior
+is unchanged from v0.12.4 (the listener's chosen ceiling); v0.13.0
+is purely additive opt-in tooling.
+
+This is genuinely the last release.
+
 ## [0.12.4] — 2026-05-08 — user perceptual A/B picks v0.12.3 top-1; default profile shifts to chunk_seconds=0.25 + tuned SOLA
 
 After v0.12.3 shipped, the user listened to three reference WAVs

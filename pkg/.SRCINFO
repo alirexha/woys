@@ -1,6 +1,6 @@
 pkgbase = woys
 	pkgdesc = Linux-native real-time voice changer (RVC + ONNX + PipeWire) — fork of w-okada/voice-changer
-	pkgver = 0.12.4
+	pkgver = 0.13.0
 	pkgrel = 1
 	url = https://github.com/alirexha/woys
 	arch = x86_64
@@ -19,7 +19,7 @@ pkgbase = woys
 	optdepends = evdev: opt-in global hotkey for engine toggle
 	optdepends = pavucontrol: GUI to wire the mic into Discord/CS2 manually
 	optdepends = qpwgraph: live PipeWire graph visualizer
-	source = woys-0.12.4::git+https://github.com/alirexha/woys.git#tag=v0.12.4
+	source = woys-0.13.0::git+https://github.com/alirexha/woys.git#tag=v0.13.0
 	sha256sums = SKIP
 
 pkgname = woys
