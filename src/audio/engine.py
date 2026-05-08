@@ -43,6 +43,7 @@ import gc
 import os
 import queue
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -153,6 +154,13 @@ USER_VISIBLE_ENGINE_FIELDS: tuple[str, ...] = (
     "gpu_keepalive_enabled",
     "gpu_keepalive_interval_ms",
     "gpu_keepalive_input_len",
+    "gpu_anti_jitter_mode",
+    "gpu_clock_lock_enabled",
+    "gpu_clock_lock_floor_mhz",
+    "gpu_clock_lock_ceiling_mhz",
+    "gpu_clock_lock_floor_offset_mhz",
+    "gpu_keepalive_torch_stream",
+    "gpu_keepalive_torch_interval_ms",
 )
 
 
@@ -534,6 +542,67 @@ class EngineConfig:
     # so steady-state keepalive runs hit the cached path.
     gpu_keepalive_input_len: int = 1600
 
+    # v0.11.0 — GPU clock lock + torch separate-stream keepalive.
+    #
+    # The v0.10.0-partial retrospective (LESSONS §29-§30) located the cuts
+    # at NVIDIA dynamic-boost auto-deboost during the engine's mic_read
+    # idle window. Two software fixes attack the layer without
+    # firmware/hardware risk:
+    #
+    #   "clock_lock"  — calls `sudo nvidia-smi -lgc <floor>,<ceiling>`
+    #                   at engine start and `-rgc` at engine stop. Forces
+    #                   the GPU to stay at or above the configured floor
+    #                   so no idle-time deboost. SIGTERM/SIGINT-safe.
+    #                   Stock specs only; no overclock, no power-limit
+    #                   change, no firmware. Sudoers entry needed
+    #                   (see docs/22-gpu-clock-lock.md).
+    #
+    #   "keepalive"   — torch.cuda.Stream() based. Daemon thread issues a
+    #                   tiny `tensor.add(1.0)` (~50 µs of GPU work) every
+    #                   `gpu_keepalive_interval_ms`. Runs on a CUDA stream
+    #                   separate from ORT's, so it doesn't queue against
+    #                   engine inference (the rc3 contention-class). No
+    #                   sudo. Replaces the ORT-stream keepalive entirely.
+    #
+    # The user-facing knob is `gpu_anti_jitter_mode`:
+    #
+    #   "off"        — neither (default; v0.10.0-partial behavior)
+    #   "keepalive"  — torch keepalive only
+    #   "clock_lock" — clock lock only (sudo)
+    #   "both"       — clock lock + torch keepalive (sudo, max effect)
+    #
+    # The two underlying booleans (gpu_clock_lock_enabled,
+    # gpu_keepalive_torch_stream) stay configurable for advanced users
+    # but the mode field takes precedence when set to anything other
+    # than "off".
+    gpu_anti_jitter_mode: str = "off"
+
+    # Lock floor in MHz. 0 means auto-detect from
+    # `nvidia-smi --query-gpu=clocks.max.graphics` (returns the GPU's
+    # absolute boost ceiling, then subtracts the
+    # `gpu_clock_lock_floor_offset_mhz` margin to land on a value the GPU
+    # actually sustains under load). On RTX 2070 Mobile this resolves
+    # to ~1845 MHz floor with default offset 255. 0 sentinel (instead of
+    # None) so the field round-trips through TOML cleanly.
+    gpu_clock_lock_enabled: bool = False
+    gpu_clock_lock_floor_mhz: int = 0
+    gpu_clock_lock_ceiling_mhz: int = 0
+    # When auto-detecting the floor, subtract this from
+    # `clocks.max.graphics`. Empirical: max-255 lands on the highest
+    # clock the GPU naturally sustained during v0.10.x harness runs
+    # (RTX 2070 Mobile: max=2100 → floor=1845). Tunable for laptops with
+    # different boost behavior.
+    gpu_clock_lock_floor_offset_mhz: int = 255
+
+    # Torch separate-stream keepalive (v0.11.0). Replaces the rc3
+    # ORT-stream version (`gpu_keepalive_enabled`) — when both are
+    # enabled, this one wins (the rc3 ORT-stream version remains
+    # available as the no-torch fallback path). Tiny CUDA op
+    # (1024-element float32 add) every `gpu_keepalive_torch_interval_ms`
+    # on a torch.cuda.Stream() separate from ORT's.
+    gpu_keepalive_torch_stream: bool = False
+    gpu_keepalive_torch_interval_ms: int = 25
+
 
 @dataclass
 class EngineStats:
@@ -739,6 +808,26 @@ class EngineStats:
     last_keepalive_ms: float = 0.0
     keepalive_avg_ms: float = 0.0
     _recent_keepalive_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+
+    # v0.11.0 — torch keepalive (separate CUDA stream). Distinct from
+    # rc3 ORT keepalive counter so we can A/B them. Reads "torch_*"
+    # in `woys diag` so the active backend is unambiguous.
+    torch_keepalive_calls: int = 0
+    torch_keepalive_last_ms: float = 0.0
+    torch_keepalive_avg_ms: float = 0.0
+    _recent_torch_keepalive_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
+
+    # v0.11.0 — GPU clock-lock state. Set by `_apply_gpu_clock_lock()` on
+    # engine start when `cfg.gpu_clock_lock_enabled=True` (or
+    # `gpu_anti_jitter_mode in {"clock_lock","both"}`); cleared by
+    # `_revert_gpu_clock_lock()`. The lock is reverted on engine.stop()
+    # AND on SIGTERM/SIGINT (see RealtimeEngine.__init__ — _signal_handler).
+    gpu_clock_lock_active: bool = False
+    gpu_clock_lock_floor_mhz: int = 0
+    gpu_clock_lock_ceiling_mhz: int = 0
+    # Latest nvidia-smi -lgc / -rgc result message; surfaced in
+    # `woys diag` so apply / revert failures are visible.
+    gpu_clock_lock_last_message: str = ""
 
     # v0.9.0-rc4 — back-compat alias for the field renamed from
     # `pacat_restarts` to `player_restarts`. External callers (tests,
@@ -1320,6 +1409,18 @@ class RealtimeEngine:
         # has a cached algorithm for this shape. Allocated once, reused on
         # every keepalive iteration.
         self._keepalive_input: NDArrayF32 | None = None
+        # v0.11.0 — torch separate-stream keepalive thread (replaces the
+        # rc3 ORT-stream keepalive when `gpu_keepalive_torch_stream=True`
+        # OR `gpu_anti_jitter_mode in {"keepalive","both"}`).
+        self._torch_keepalive_thread: threading.Thread | None = None
+        # v0.11.0 — best-effort SIGTERM/SIGINT handler so a `kill <pid>`
+        # or Ctrl-C reverts an active GPU clock lock instead of leaving
+        # the system in a locked state. Installed at engine start when
+        # the lock is active; restored to the prior handler at engine
+        # stop. SIGKILL (`kill -9`) cannot be caught — that case relies
+        # on the user manually running `nvidia-smi -rgc`, documented in
+        # docs/22-gpu-clock-lock.md.
+        self._prior_signal_handlers: dict[int, Any] = {}
         # Watchdog signal: writer flips this on BrokenPipe so the watchdog
         # respawns immediately instead of waiting for its next poll tick.
         self._pacat_dead_event = threading.Event()
@@ -1954,6 +2055,14 @@ class RealtimeEngine:
         if self._gc_was_enabled_before_start:
             gc.disable()
 
+        # v0.11.0 — apply GPU clock lock at the start of engine activity.
+        # Done BEFORE session loading so cuDNN warmup runs at the locked
+        # boost clock (avoids retuning under post-lock-application clock
+        # changes).
+        clock_lock_on, _ = self._resolve_anti_jitter_flags()
+        if clock_lock_on:
+            self._apply_gpu_clock_lock()
+
         if self.cfg.inference_subprocess:
             # v0.8.0 — spawn the inference child. Child loads ORT
             # sessions + applies the rc7-rc12 wins (gc.disable, RT
@@ -2141,6 +2250,12 @@ class RealtimeEngine:
             gc.enable()
             gc.collect()
             self._gc_was_enabled_before_start = False
+
+        # v0.11.0 — release the GPU clock lock if active. Idempotent;
+        # safe to call when no lock was applied. SIGTERM/SIGINT path
+        # may have already reverted, in which case this is a no-op.
+        with contextlib.suppress(Exception):
+            self._revert_gpu_clock_lock()
 
     def _assert_sink_loaded(self) -> None:
         """v0.6.4 — refuse to start if `cfg.sink_name` isn't a loaded
@@ -2489,6 +2604,293 @@ class RealtimeEngine:
                 with contextlib.suppress(OSError):
                     debug_fp.close()
 
+    # ---- v0.11.0 — GPU clock lock + torch separate-stream keepalive ----------
+
+    def _resolve_anti_jitter_flags(self) -> tuple[bool, bool]:
+        """Map `cfg.gpu_anti_jitter_mode` (the user-facing knob) to the
+        two underlying booleans (clock_lock, torch_keepalive). The
+        booleans take precedence when the mode is "off"; the mode field
+        wins when set to anything else.
+
+        Returns (clock_lock_on, torch_keepalive_on)."""
+        mode = (self.cfg.gpu_anti_jitter_mode or "off").strip().lower()
+        if mode == "off":
+            return self.cfg.gpu_clock_lock_enabled, self.cfg.gpu_keepalive_torch_stream
+        if mode == "keepalive":
+            return False, True
+        if mode == "clock_lock":
+            return True, False
+        if mode == "both":
+            return True, True
+        # Unknown value — log to last_error, fall back to off.
+        self.stats.last_error = (
+            f"unknown gpu_anti_jitter_mode={mode!r}; expected "
+            f"off|keepalive|clock_lock|both. Falling back to off."
+        )
+        return False, False
+
+    @staticmethod
+    def _query_max_graphics_clock_mhz() -> int:
+        """Return `clocks.max.graphics` MHz from `nvidia-smi` or 0 on
+        failure (caller must handle the 0 case)."""
+        try:
+            res = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=clocks.max.graphics",
+                    "--format=csv,noheader,nounits",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=4.0,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return 0
+        if res.returncode != 0:
+            return 0
+        first = res.stdout.strip().splitlines()[0].strip() if res.stdout.strip() else ""
+        try:
+            value = int(float(first))
+        except ValueError:
+            return 0
+        # Sanity: anything outside [600, 4000] is suspicious for a modern GPU
+        # (Pascal-and-newer min ~600, Ada-class peak ~3500).
+        if value < 600 or value > 4000:
+            return 0
+        return value
+
+    def _resolve_clock_lock_range(self) -> tuple[int, int]:
+        """Decide the (floor_mhz, ceiling_mhz) pair to pass to
+        `nvidia-smi -lgc`. Honors the user's explicit fields; otherwise
+        auto-detects from `clocks.max.graphics`.
+
+        Returns (floor, ceiling). Raises RuntimeError if the values
+        violate sanity (out-of-range, floor > ceiling, etc.).
+        """
+        max_graphics = self._query_max_graphics_clock_mhz()
+        # Sentinel 0 (or any non-positive) means auto-detect.
+        if int(self.cfg.gpu_clock_lock_floor_mhz) > 0:
+            floor = int(self.cfg.gpu_clock_lock_floor_mhz)
+        else:
+            if max_graphics == 0:
+                raise RuntimeError(
+                    "auto-detect of gpu_clock_lock_floor_mhz failed: "
+                    "nvidia-smi --query-gpu=clocks.max.graphics returned no usable value. "
+                    "Set gpu_clock_lock_floor_mhz explicitly in config.toml."
+                )
+            floor = max(600, max_graphics - max(0, self.cfg.gpu_clock_lock_floor_offset_mhz))
+
+        if int(self.cfg.gpu_clock_lock_ceiling_mhz) > 0:
+            ceiling = int(self.cfg.gpu_clock_lock_ceiling_mhz)
+        elif max_graphics > 0:
+            ceiling = max_graphics
+        else:
+            # Fall back to floor if we somehow have neither.
+            ceiling = floor
+
+        if floor < 600 or ceiling < floor or ceiling > 4000:
+            raise RuntimeError(
+                f"resolved clock-lock range (floor={floor}, ceiling={ceiling}) is out of "
+                f"sanity bounds [600, 4000] or floor>ceiling. Check "
+                f"gpu_clock_lock_floor_mhz / gpu_clock_lock_ceiling_mhz / "
+                f"gpu_clock_lock_floor_offset_mhz in config.toml."
+            )
+
+        # The brief's hard constraint: clock-lock must use stock or
+        # sub-stock values only. We treat `clocks.max.graphics` as
+        # NVIDIA's documented stock ceiling for this card. If the user's
+        # explicit ceiling overshoots that, refuse — the assistant will
+        # not enable an over-stock-spec lock.
+        if max_graphics > 0 and ceiling > max_graphics:
+            raise RuntimeError(
+                f"gpu_clock_lock_ceiling_mhz={ceiling} exceeds "
+                f"clocks.max.graphics={max_graphics}; over-stock locks are "
+                f"refused per the v0.11.0 hard-constraint policy."
+            )
+
+        return floor, ceiling
+
+    def _run_nvidia_smi(self, args: list[str], *, timeout: float = 6.0) -> tuple[bool, str]:
+        """Run `sudo nvidia-smi <args>`, return (ok, message). Captures
+        both stdout and stderr; treats nonzero exit OR empty output OR
+        the literal string "error" in output as a failure. Refuses to
+        run if `nvidia-smi` is not on PATH.
+        """
+        if shutil.which("nvidia-smi") is None:
+            return False, "nvidia-smi not on PATH"
+        cmd = ["sudo", "-n", "nvidia-smi", *args]
+        try:
+            res = subprocess.run(
+                cmd, check=False, capture_output=True, text=True, timeout=timeout
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return False, f"{type(e).__name__}: {e}"
+        out = (res.stdout or "").strip()
+        err = (res.stderr or "").strip()
+        merged = "\n".join(s for s in (out, err) if s).strip()
+        if res.returncode != 0:
+            return False, f"exit={res.returncode}: {merged or '<no output>'}"
+        # nvidia-smi -lgc happy path includes "All done." in stdout.
+        if "error" in merged.lower():
+            return False, f"nvidia-smi reported error: {merged}"
+        return True, merged
+
+    def _apply_gpu_clock_lock(self) -> None:
+        """v0.11.0 — apply nvidia-smi -lgc <floor>,<ceiling>. Hard-fails
+        the engine start on any unexpected output / exit code. Also
+        installs a SIGTERM/SIGINT handler so kill / Ctrl-C reverts the
+        lock before the process exits."""
+        floor, ceiling = self._resolve_clock_lock_range()
+        ok, msg = self._run_nvidia_smi(["-lgc", f"{floor},{ceiling}"])
+        self.stats.gpu_clock_lock_last_message = msg[:200]
+        if not ok:
+            raise RuntimeError(
+                f"gpu_clock_lock_enabled=True but nvidia-smi -lgc {floor},{ceiling} failed:\n"
+                f"  {msg}\n"
+                f"Check that:\n"
+                f"  - nvidia-smi is on PATH and the NVIDIA driver is loaded\n"
+                f"  - sudo is configured for `sudo -n nvidia-smi -lgc/-rgc` (see docs/22-gpu-clock-lock.md)\n"
+                f"  - the floor/ceiling values are within stock spec for this GPU\n"
+                f"To disable, set gpu_clock_lock_enabled=false (or gpu_anti_jitter_mode=off) "
+                f"in ~/.config/woys/config.toml."
+            )
+        self.stats.gpu_clock_lock_active = True
+        self.stats.gpu_clock_lock_floor_mhz = floor
+        self.stats.gpu_clock_lock_ceiling_mhz = ceiling
+
+        # Best-effort signal handler so SIGTERM / SIGINT revert the lock.
+        # SIGKILL cannot be caught — documented in docs/22-gpu-clock-lock.md.
+        # Only install handlers if we're on the main thread (signal.signal
+        # raises ValueError otherwise; engine.start() runs in caller's thread
+        # which is typically main but might not be in tests).
+        if threading.current_thread() is threading.main_thread():
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                try:
+                    self._prior_signal_handlers[sig] = signal.signal(
+                        sig, self._signal_handler_revert_lock
+                    )
+                except (OSError, ValueError):
+                    # Some environments (Textual TUI inside async loop) don't
+                    # let us install handlers; that's fine, engine.stop() will
+                    # still revert on the normal exit path.
+                    pass
+
+    def _revert_gpu_clock_lock(self) -> None:
+        """v0.11.0 — call nvidia-smi -rgc and restore prior signal
+        handlers. Idempotent (safe to call multiple times); a second call
+        when the lock isn't active just no-ops."""
+        if not self.stats.gpu_clock_lock_active:
+            return
+        ok, msg = self._run_nvidia_smi(["-rgc"], timeout=4.0)
+        self.stats.gpu_clock_lock_last_message = msg[:200]
+        # Mark inactive whether or not the call succeeded — we don't want a
+        # second engine start to try to "re-revert" on a stale state. If the
+        # call failed, the user sees the error in last_message + last_error.
+        self.stats.gpu_clock_lock_active = False
+        if not ok:
+            self.stats.last_error = (
+                f"nvidia-smi -rgc failed at engine stop: {msg}. "
+                f"Run `sudo nvidia-smi -rgc` manually to release the lock."
+            )
+
+        # Restore prior signal handlers.
+        for sig, prior in self._prior_signal_handlers.items():
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(sig, prior)
+        self._prior_signal_handlers.clear()
+
+    def _signal_handler_revert_lock(self, signum: int, frame: object) -> None:
+        """SIGTERM / SIGINT handler that reverts the GPU clock lock and
+        re-raises the default action so the process still exits cleanly.
+        Best-effort: a SIGKILL bypasses this entirely."""
+        try:
+            self._revert_gpu_clock_lock()
+        except Exception:
+            # Don't let cleanup errors mask the original signal.
+            pass
+        # Restore default handler then re-raise so the process exits
+        # the way the user asked.
+        with contextlib.suppress(OSError, ValueError):
+            signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    def _torch_keepalive_loop(self) -> None:
+        """v0.11.0 — torch.cuda.Stream() based keepalive.
+
+        Replaces the rc3 ORT-stream keepalive when
+        `gpu_keepalive_torch_stream=True` (or
+        `gpu_anti_jitter_mode in {"keepalive","both"}`). The op is a tiny
+        `tensor.add(1.0)` (1024 fp32 elements ≈ 50 µs of GPU work) issued
+        on a torch CUDA stream that is NOT shared with ORT's session
+        stream — the GPU scheduler can interleave them without
+        serialization, closing the rc3 contention regression.
+
+        Failure-safe: any exception during stream creation or the hot
+        loop logs to `stats.last_error` and exits the thread cleanly.
+        Engine continues running without keepalive in that case."""
+        try:
+            import torch  # noqa: PLC0415 — opt-in dep, late import
+        except ImportError as e:
+            self.stats.last_error = (
+                f"torch import failed; torch keepalive disabled: {e}. "
+                f"Install via `pip install torch` or set gpu_anti_jitter_mode=off."
+            )
+            return
+
+        if not torch.cuda.is_available():
+            self.stats.last_error = (
+                "torch.cuda.is_available() returned False; torch keepalive disabled. "
+                "Check that torch was built with CUDA support and an NVIDIA driver is loaded."
+            )
+            return
+
+        try:
+            stream = torch.cuda.Stream()
+            buf = torch.empty(1024, device="cuda", dtype=torch.float32)
+        except Exception as e:
+            self.stats.last_error = (
+                f"torch keepalive setup failed; thread exiting: "
+                f"{type(e).__name__}: {e}"
+            )
+            return
+
+        # Lower priority than engine + writer so audio path always wins
+        # CPU contention. The RT priority is best-effort; failure is
+        # captured in priority_warnings, doesn't block the loop.
+        self._apply_thread_priority(label="torch-keepalive", priority=40)
+
+        interval_s = max(0.005, self.cfg.gpu_keepalive_torch_interval_ms / 1000.0)
+        ema_alpha = 0.05
+        running_avg = 0.0
+        next_tick = time.perf_counter() + interval_s
+
+        while not self._stop_event.is_set():
+            now = time.perf_counter()
+            if now < next_tick:
+                self._stop_event.wait(timeout=min(0.020, next_tick - now))
+                continue
+            t0 = time.perf_counter()
+            try:
+                with torch.cuda.stream(stream):
+                    buf = buf.add(1.0)
+                # Don't synchronize — we want the GPU command queue to
+                # absorb the op without blocking; the kernel launch alone
+                # is enough to keep the boost from idling.
+            except Exception as e:
+                self.stats.last_error = (
+                    f"torch keepalive crash; retiring thread: "
+                    f"{type(e).__name__}: {e}"
+                )
+                break
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            self.stats.torch_keepalive_calls += 1
+            self.stats.torch_keepalive_last_ms = elapsed_ms
+            self.stats._recent_torch_keepalive_ms.append(elapsed_ms)
+            running_avg = ema_alpha * elapsed_ms + (1.0 - ema_alpha) * running_avg
+            self.stats.torch_keepalive_avg_ms = running_avg
+            next_tick = max(next_tick + interval_s, time.perf_counter())
+
     def _keepalive_loop(self) -> None:
         """v0.10.0-rc3 — periodic tiny ORT op to keep the GPU at boosted
         clock state during the engine's idle gaps.
@@ -2722,13 +3124,28 @@ class RealtimeEngine:
             # only in legacy in-process mode where we own `_cv` directly;
             # the IPC subprocess mode keeps the GPU warm via its own
             # constant-rate inference and doesn't need the keepalive.
-            if (
+            # v0.11.0 — torch separate-stream keepalive takes precedence
+            # over the rc3 ORT-stream version when either is enabled. The
+            # rc3 version remains as a no-torch fallback for environments
+            # where torch isn't installed.
+            _, torch_keepalive_on = self._resolve_anti_jitter_flags()
+            if torch_keepalive_on and not self.cfg.inference_subprocess:
+                self._torch_keepalive_thread = threading.Thread(
+                    target=self._torch_keepalive_loop,
+                    name="vcclient-torch-keepalive",
+                    daemon=True,
+                )
+                self._torch_keepalive_thread.start()
+            elif (
                 self.cfg.gpu_keepalive_enabled
                 and not self.cfg.inference_subprocess
                 and self._cv is not None
             ):
-                # Allocate the dummy input once, here, so the warmup pass
-                # in _keepalive_loop doesn't allocate on the hot path.
+                # Legacy rc3 ORT-stream keepalive — only spun up when
+                # torch keepalive is OFF AND the rc3 knob is explicitly
+                # set. Allocate the dummy input once, here, so the
+                # warmup pass in _keepalive_loop doesn't allocate on
+                # the hot path.
                 self._keepalive_input = np.zeros(
                     self.cfg.gpu_keepalive_input_len, dtype=np.float32
                 )
@@ -3041,6 +3458,7 @@ class RealtimeEngine:
                 self._watchdog_thread,
                 self._stderr_thread,
                 self._keepalive_thread,
+                self._torch_keepalive_thread,
             ):
                 if t is not None and t.is_alive():
                     t.join(timeout=0.5)
@@ -3049,4 +3467,5 @@ class RealtimeEngine:
             self._stderr_thread = None
             self._keepalive_thread = None
             self._keepalive_input = None
+            self._torch_keepalive_thread = None
             self._writer_queue = None

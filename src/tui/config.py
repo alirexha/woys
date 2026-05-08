@@ -68,6 +68,14 @@ class AppConfig:
     gpu_keepalive_enabled: bool = _E.gpu_keepalive_enabled
     gpu_keepalive_interval_ms: int = _E.gpu_keepalive_interval_ms
     gpu_keepalive_input_len: int = _E.gpu_keepalive_input_len
+    # v0.11.0 — GPU clock lock + torch separate-stream keepalive.
+    gpu_anti_jitter_mode: str = _E.gpu_anti_jitter_mode
+    gpu_clock_lock_enabled: bool = _E.gpu_clock_lock_enabled
+    gpu_clock_lock_floor_mhz: int = _E.gpu_clock_lock_floor_mhz
+    gpu_clock_lock_ceiling_mhz: int = _E.gpu_clock_lock_ceiling_mhz
+    gpu_clock_lock_floor_offset_mhz: int = _E.gpu_clock_lock_floor_offset_mhz
+    gpu_keepalive_torch_stream: bool = _E.gpu_keepalive_torch_stream
+    gpu_keepalive_torch_interval_ms: int = _E.gpu_keepalive_torch_interval_ms
     # TUI / app-only settings (not in EngineConfig).
     autostart_engine: bool = False
     enable_dbus: bool = True  # reserved for future D-Bus wiring (currently unused)

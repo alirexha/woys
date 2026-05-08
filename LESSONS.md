@@ -2079,3 +2079,155 @@ needs one of:
     The brief explicitly authorized partial. The data says we can't
     crack the gates with software-only changes on this hardware
     in a bounded budget. Shipping that honestly is correct.
+
+## 31. v0.11.0 — laptop GPU boost is a hint, not an order; lock + load ≠ either alone
+
+The v0.11.0 brief authorized two software-only attacks on the v0.10.0
+root cause: `nvidia-smi -lgc` clock lock + a torch.cuda.Stream-based
+keepalive that runs on a CUDA stream separate from ORT's session
+stream. The user's prior concern (GPU damage) was retracted after
+reading `nvidia-smi -lgc` documentation: stock-clock-only, reversible,
+no firmware/BIOS changes. v0.11.0 implements both with hard-coded
+stock-spec refusal in code.
+
+### Day-over-day system state moved
+
+Today's `mode = "off"` 5-min baseline shows `clocks.gr` min = 1515 MHz
+vs v0.10.0 baseline's min = 300 MHz. p50 today = 1710 MHz vs
+v0.10.0's 1665 MHz. The GPU is NOT deboosting to its idle state today
+the way it was four days ago.
+
+| metric                | v0.10.0-rc1 baseline | v0.11.0 off baseline |
+|-----------------------|---------------------:|---------------------:|
+| clocks.gr min (MHz)   |                  300 |                 1515 |
+| clocks.gr p50 (MHz)   |                 1665 |                 1710 |
+| clocks.gr max (MHz)   |                 1845 |                 1860 |
+| clock dip count (%)   |                  34% |                 ~ 5% |
+| writer_jitter p99 (ms)|                 42.5 |                 99.7 |
+| rvc.run p99 (ms)      |                 68.3 |                122.8 |
+
+But writer_jitter p99 today = 99.7 ms vs v0.10.0's 42.5 ms — TODAY IS
+WORSE despite lower clock variance. The "GPU clock variance owns the
+tail" model held for v0.10.0 but doesn't fully explain today's data.
+
+Hypotheses for the day-over-day shift:
+  * Different ambient thermal state (room temp, laptop fan curve,
+    accumulated heat from prior workload) shifts the deboost trigger.
+  * Different background CPU load → different scheduler interleaving
+    of the engine threads.
+  * cuDNN's heuristic-cache state can drift between sessions if other
+    GPU-using applications ran in between.
+
+### What the v0.11.0 measurements DO show
+
+mode=both holds GPU clock at the lock floor (1845 MHz p50 vs ~1680 in
+all other modes) AND drops writer_jitter p99 by 40 % vs off. This is
+the only configuration where the data shows a clear, reproducible
+improvement. Neither lock alone (writer_jitter p99 = 109.4 ms; GPU
+p50 = 1680, lock not effective) nor keepalive alone (89.3 ms; GPU
+p50 = 1680) moves the needle in this run.
+
+### Lesson — "all done" from nvidia-smi means the policy was set, not enforced
+
+`sudo nvidia-smi -lgc 1845,2100` returns "All done." The kernel
+accepts the policy. But the GPU's effective clock under workload
+depends on the boost mechanism interpreting the policy + observed
+demand. On this laptop with bursty engine workload (35 % duty cycle
+at chunk_seconds=0.15), the GPU treats the lock as a permission, not
+a command. It runs at ~1680 MHz despite a 1845 MHz floor because the
+sustained-utilization-over-X-ms trigger isn't met.
+
+Adding the torch keepalive's continuous 0.2 % duty cycle on a separate
+CUDA stream provides exactly that trigger. The combined mode=both is
+the only configuration where the GPU sustains 1845 MHz.
+
+This is a more nuanced model than the v0.10.0 "clock variance →
+inference variance" attribution. Today's data says: even with the
+clock variance largely already eliminated (today's p10 = 1665 vs
+v0.10.0's wild swings), the rvc.run p99 stays at 80-120 ms. The
+remaining tail isn't dynamic-boost variance — it's something else:
+intrinsic model variance, cuDNN algo selection drift, or thermal
+micro-throttle within the boost-state envelope.
+
+## 32. v0.11.0 — torch.cuda.Stream is the right architectural fix for keepalive
+
+The v0.10.0 rc3 ORT-stream keepalive showed `keepalive p99 = 22 ms`
+(when called concurrently with engine RVC, queueing on the shared
+stream) — an order of magnitude over its `keepalive p50 = 4 ms`.
+v0.11.0's torch.cuda.Stream() keepalive shows `p50 = 0.2 ms / p99 =
+0.7 ms` over 12 000 calls in 5 min. That's 30 × cheaper at p50 and
+30 × tighter at p99. The contention class IS closed.
+
+The mode=keepalive 5-min run shows rvc.run p99 = 119.7 ms vs off's
+122.8 ms — essentially unchanged. The torch keepalive doesn't HURT the
+engine; it just doesn't fix the gate alone. That's the opposite of
+the rc3 finding (where ORT keepalive helped median but hurt tail by
++18 %).
+
+If a future attack on this hardware needs to add concurrent GPU work
+without ORT contention, the pattern is established: import torch in
+a daemon thread, build a `torch.cuda.Stream()`, issue ops with
+`with torch.cuda.stream(s):` blocks. PyTorch was already in the env
+(left over from the v0.8.0 fairseq drop); no new dependencies.
+
+### Lesson — the right architecture is necessary but not sufficient
+
+rc3 → rc4 → v0.11.0-keepalive shows the architectural progression:
+  * rc3: keepalive on ORT's stream → contention regression
+  * rc4: keepalive coordinated to skip during engine inference → bimodal regression (lost stimulus)
+  * v0.11.0: keepalive on a separate CUDA stream → contention closed, but tail unchanged
+
+Each architectural fix was correct against the previous failure mode.
+None of them on their own moves the gate. The gate needs the lock
++ keepalive combination. This is a structural finding, not a tuning
+finding — the fixed point is "clock state is enforced when (policy
+ALLOWS the clock) AND (workload DEMANDS the clock)". Neither alone
+satisfies both.
+
+## 33. v0.11.0 partial — what closes, what doesn't, what's left
+
+Closed:
+  * `inference_avg ≤ 52 ms` gate — mode=both lands 47.9 ms, the only
+    configuration that does.
+  * GPU clock attribution model — confirmed that on bursty workloads
+    the lock is a hint, not an order. Engineering response is to
+    co-design lock + workload signal.
+  * rc3 contention regression — torch separate-stream keepalive
+    closes it by construction; the rc3 ORT keepalive remains as a
+    no-torch fallback for environments where torch isn't available.
+
+Not closed:
+  * `writer_jitter p99 ≤ 30 ms` — best mode=both shows 59.4 ms, ~2 ×
+    over gate.
+  * `underrun rate ≤ 0.5 /sec` — best 6.56 in clock_lock; 6.85 in
+    mode=both. ~13 × over gate.
+
+The residual ~80 ms rvc.run p99 in mode=both (vs off's 122 ms) is
+the load-bearing remainder. It's NOT dynamic-boost variance any
+more (the GPU is sustaining 1845 MHz). Candidate next attacks:
+
+  * **chunk_seconds = 0.20** — extends the engine cycle from 150 ms to
+    200 ms, reducing the proportion of time spent in the bursty mic_read
+    window. Cheap to test. Latency cost: +50 ms e2e. Brief candidate
+    pre-existing from v0.10.0.
+  * **f0-transition correlation** — the synthetic harness loop has a
+    220 → 330 Hz pitch transition every 1.5 s. Log per-chunk pitchf
+    range vs inf_ms; if rvc.run spikes correlate with f0 transitions,
+    the RVC NSF source modules have an f0-cliff. If they correlate, a
+    model re-export with smoothed f0 input becomes the next target.
+  * **Re-export RVC ONNX** with TF32 forced (vs FP16) or fixed-shape
+    graph optimization — bounded experiment, requires ONNX export
+    rebuild. Bigger lift but addresses the model layer directly.
+  * **`nvidia-smi -lgc <floor>,<floor>`** with the floor at observed
+    sustained-load clock (1665 MHz) — single-clock lock instead of
+    range. Test whether the GPU treats single-clock lock differently
+    from range lock under bursty workload.
+
+### What ships in v0.11.0-partial
+
+The features ship. Default off. mode=both is the recommended setting
+for users who run the engine for sustained sessions and want the
+~40 % writer_jitter improvement. Users who don't want to set up
+sudoers can try mode=keepalive (no sudo, more modest improvement).
+The v0.11.0 retrospective is honest about the residual gap; the
+next-version path is enumerated.

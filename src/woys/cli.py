@@ -298,6 +298,13 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         gpu_keepalive_enabled=cfg.gpu_keepalive_enabled,
         gpu_keepalive_interval_ms=cfg.gpu_keepalive_interval_ms,
         gpu_keepalive_input_len=cfg.gpu_keepalive_input_len,
+        gpu_anti_jitter_mode=cfg.gpu_anti_jitter_mode,
+        gpu_clock_lock_enabled=cfg.gpu_clock_lock_enabled,
+        gpu_clock_lock_floor_mhz=cfg.gpu_clock_lock_floor_mhz,
+        gpu_clock_lock_ceiling_mhz=cfg.gpu_clock_lock_ceiling_mhz,
+        gpu_clock_lock_floor_offset_mhz=cfg.gpu_clock_lock_floor_offset_mhz,
+        gpu_keepalive_torch_stream=cfg.gpu_keepalive_torch_stream,
+        gpu_keepalive_torch_interval_ms=cfg.gpu_keepalive_torch_interval_ms,
     )
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path
@@ -591,6 +598,13 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
         gpu_keepalive_enabled=cfg.gpu_keepalive_enabled,
         gpu_keepalive_interval_ms=cfg.gpu_keepalive_interval_ms,
         gpu_keepalive_input_len=cfg.gpu_keepalive_input_len,
+        gpu_anti_jitter_mode=cfg.gpu_anti_jitter_mode,
+        gpu_clock_lock_enabled=cfg.gpu_clock_lock_enabled,
+        gpu_clock_lock_floor_mhz=cfg.gpu_clock_lock_floor_mhz,
+        gpu_clock_lock_ceiling_mhz=cfg.gpu_clock_lock_ceiling_mhz,
+        gpu_clock_lock_floor_offset_mhz=cfg.gpu_clock_lock_floor_offset_mhz,
+        gpu_keepalive_torch_stream=cfg.gpu_keepalive_torch_stream,
+        gpu_keepalive_torch_interval_ms=cfg.gpu_keepalive_torch_interval_ms,
     )
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path
