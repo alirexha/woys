@@ -4,6 +4,124 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.13.2] — 2026-05-09 — fix v0.13.0 RNNoise speaker leak (`media.class` regression) + `woys chain` systemd lifecycle
+
+Bug fix release for v0.13.0's opt-in RNNoise chain plus a small UX
+addition that turns the chain into a real first-class feature instead
+of a one-shot script.
+
+### 1. The bug
+
+When the user ran `./scripts/v013_0_rnnoise_chain.sh setup`, audio
+played through the system speakers regardless of woys's monitor
+toggle. With monitor also enabled, audio doubled (two paths: woys's
+own monitor + the leaked path). This made the chain unusable for any
+realistic call/game scenario.
+
+`pw-link -l` confirmed the leak:
+
+```
+output.filter-chain-1803-15:output_FL → alsa_output.pci-0000_00_1f.3.analog-stereo:playback_FL
+output.filter-chain-1803-15:output_FR → alsa_output.pci-0000_00_1f.3.analog-stereo:playback_FR
+```
+
+The LADSPA filter-chain stream was being auto-routed by wireplumber
+to the default ALSA sink — every chunk played both into woys-mic-clean
+AND straight to the laptop's analog output.
+
+### 2. Root cause
+
+Two cooperating mistakes in the v0.13.0 script:
+
+  * **`media.class=Audio/Source/Virtual`** on the destination
+    null-sink. That class tells wireplumber "this is a source-only
+    node" — it is *not* a valid playback target for the filter-chain
+    stream. So `sink_master=woys-mic-clean` on the LADSPA-sink never
+    bound. The filter-chain output became an orphan Stream/Output/
+    Audio node, which wireplumber's session policy then routes to the
+    user's default sink (i.e., my speakers).
+  * **mono/stereo mismatch.** v0.13.0's loopback was `channels=1`
+    (matching woys-mic) but the LADSPA-sink defaulted to stereo.
+    `noise_suppressor_mono` is a 1-in/1-out plugin; PipeWire spawned
+    two filter instances in parallel and the resulting stereo output
+    stream wouldn't have bound to a mono master even if `Audio/Sink`
+    had been used. Both legs are now forced `channels=1`.
+
+The combination meant the "13% improvement" measured in v0.13.0 was
+not RNNoise at all — it was woys-mic plus speaker echo plus whatever
+ambient room reflection the recording mic picked up.
+
+### 3. The fix
+
+Architecture B (now the default in `scripts/v013_2_rnnoise_chain.sh`
+and the new `src/woys/chain.py`):
+
+```
+woys-mic
+    ↓ module-loopback (channels=1)
+woys-mic-rnnoise-bridge   (module-ladspa-sink, plugin=rnnoise mono)
+    ↓ sink_master
+woys-mic-clean            (module-null-sink, media.class=Audio/Sink, channels=1)
+    ↓ auto-created monitor
+woys-mic-clean.monitor    ← apps record from THIS
+```
+
+The cost: apps now select `woys-mic-clean.monitor` instead of
+`woys-mic-clean`. The benefit: **zero links** from the chain to any
+ALSA hardware sink (verified via `pw-link -l` and the new
+`woys chain status` self-check).
+
+Re-measured impact under the same TTS-driven harness used in v0.12.x:
+
+| source                        | cuts/min |
+| ----------------------------- | -------- |
+| woys-mic (raw, v0.12.4)       | 75.4     |
+| woys-mic-clean.monitor (v0.13.2) | 54.7  |
+
+That's **−27 %** — the real RNNoise contribution, double v0.13.0's
+contaminated 13 %.
+
+Latency cost on top of v0.12.4: ~40 ms (loopback + RNNoise frame).
+
+### 4. New: `woys chain` subcommand
+
+The script lives on (`scripts/v013_2_rnnoise_chain.sh`) for users who
+want to load the chain without going through `woys`, but the canonical
+entry point now is the CLI:
+
+  * `woys chain setup` — load the chain (idempotent, clears stale modules first)
+  * `woys chain teardown` — unload the chain
+  * `woys chain status` — show currently loaded chain modules, sources
+    visible to apps, and a self-check that flags any ALSA-hardware
+    leak (so a future regression of this bug is loud, not silent)
+  * `woys chain enable` — install `~/.config/systemd/user/woys-chain.service`,
+    `daemon-reload`, then `enable --now` it. Chain auto-loads on every
+    login from then on.
+  * `woys chain disable` — stop, disable, remove the unit, and
+    teardown the chain.
+
+The systemd unit is tiny (Type=oneshot, RemainAfterExit=yes) and uses
+`woys chain setup`/`teardown` as ExecStart/ExecStop, so the unit
+inherits the ALSA-leak self-check on every reload.
+
+### Files
+
+  * **add** `src/woys/chain.py` — Python source-of-truth for the chain
+  * **add** `scripts/v013_2_rnnoise_chain.sh` — standalone bash wrapper
+    with the same topology (kept in sync with chain.py)
+  * **mod** `src/woys/cli.py` — `chain` subparser with the five actions
+  * **mod** `docs/23-rnnoise-chain.md` — updated for Architecture B,
+    `.monitor` suffix, and `woys chain` UX
+  * **mod** `LESSONS.md` — §44 wireplumber auto-routing of unrouted
+    Stream/Output/Audio + Architecture-A-vs-B lesson
+
+### Note: `scripts/v013_0_rnnoise_chain.sh` left in tree
+
+The buggy v0.13.0 script is intentionally retained (not deleted) so
+that anyone reading old chat logs / commit history can still find it
+and see exactly which architecture failed. The v0.13.2 script and
+`woys chain` subcommand are what users should actually run.
+
 ## [0.13.1] — 2026-05-08 — TUI 'm' monitor toggle + leftover `vcclient` / `VCClient` strings cleaned
 
 Three small bundled changes:
