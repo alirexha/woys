@@ -333,28 +333,46 @@ static int stdin_reader_loop(struct app_state *s) {
 }
 
 /* --------------------------------------------------------------------
- * Stderr telemetry tick (SIGALRM-driven, low-priority)
+ * Stderr telemetry tick (dedicated timer thread)
  *
  * Reports `underruns=N` periodically so woys's stderr reader can
  * surface a real xrun count — closing audit lens 09 rank 1
- * ("pw-cat is silent on underruns"). NOT real-time critical.
+ * ("pw-cat is silent on underruns").
+ *
+ * v0.9.0-rc3: was SIGALRM-driven and didn't work. SIGALRM gets
+ * delivered to whichever thread Linux picks (often PipeWire's data
+ * thread, not main) — the main thread's blocking read() never
+ * receives EINTR, so the periodic emit never fires. Fixed by using a
+ * dedicated tick thread that wakes every UNDERRUN_REPORT_SECS and
+ * prints. NOT real-time critical (SCHED_OTHER, no GIL involvement
+ * since this is C).
  * -------------------------------------------------------------------- */
 
-static volatile sig_atomic_t g_alarm_fired = 0;
-
-static void alarm_handler(int sig) {
-    (void)sig;
-    g_alarm_fired = 1;
-}
-
-/* Called from the main loop in a non-RT context. */
-static void maybe_emit_underruns(struct app_state *s) {
-    if (!g_alarm_fired) return;
-    g_alarm_fired = 0;
-    uint64_t cur = atomic_load_explicit(&s->underruns, memory_order_relaxed);
-    fprintf(stderr, "underruns=%llu\n", (unsigned long long)cur);
-    fflush(stderr);
-    alarm(UNDERRUN_REPORT_SECS);
+static void *underrun_tick_thread(void *userdata) {
+    struct app_state *s = userdata;
+    /* Wait for stream to be ready before emitting; otherwise we'd
+     * print "underruns=0" before the engine even sees `ready`. */
+    while (!atomic_load_explicit(&s->ready, memory_order_acquire) &&
+           !atomic_load_explicit(&s->should_exit, memory_order_acquire)) {
+        usleep(50000); /* 50 ms */
+    }
+    while (!atomic_load_explicit(&s->should_exit, memory_order_acquire)) {
+        /* Use clock_nanosleep with CLOCK_MONOTONIC and EINTR-resume so
+         * the periodic emit fires reliably regardless of which thread
+         * any signal lands on (the v0.9.0-rc2 SIGALRM-based attempt
+         * landed on PipeWire's data thread, never reached the main
+         * thread, never fired). */
+        struct timespec req = { UNDERRUN_REPORT_SECS, 0 };
+        struct timespec rem;
+        while (clock_nanosleep(CLOCK_MONOTONIC, 0, &req, &rem) == EINTR) {
+            req = rem;
+        }
+        if (atomic_load_explicit(&s->should_exit, memory_order_acquire)) break;
+        uint64_t cur = atomic_load_explicit(&s->underruns, memory_order_relaxed);
+        fprintf(stderr, "underruns=%llu\n", (unsigned long long)cur);
+        fflush(stderr);
+    }
+    return NULL;
 }
 
 /* --------------------------------------------------------------------
@@ -462,10 +480,6 @@ int main(int argc, char **argv) {
      * (not relevant for this helper since we only read stdin and write
      * stderr; but block it from killing the process). */
     signal(SIGPIPE, SIG_IGN);
-
-    /* Telemetry alarm */
-    sa.sa_handler = alarm_handler;
-    sigaction(SIGALRM, &sa, NULL);
 
     pw_init(&argc, &argv);
 
@@ -586,8 +600,16 @@ int main(int argc, char **argv) {
             g_state.quantum, g_state.rate, g_state.channels, g_state.target);
     fflush(stderr);
 
-    /* Arm the underrun-report alarm. */
-    alarm(UNDERRUN_REPORT_SECS);
+    /* Spawn the underrun-tick thread (replaces the SIGALRM mechanism that
+     * never reliably hit the main thread; see comment on
+     * underrun_tick_thread). */
+    pthread_t tick_thread;
+    int tick_rc = pthread_create(&tick_thread, NULL, underrun_tick_thread, &g_state);
+    if (tick_rc != 0) {
+        fprintf(stderr, "warning: underrun-tick thread spawn failed (%d); "
+                        "stderr underruns=N reporting will only fire at exit\n",
+                tick_rc);
+    }
 
     /* The main thread reads stdin until EOF (engine shutdown) or
      * SIGINT/SIGTERM. */
@@ -597,6 +619,11 @@ int main(int argc, char **argv) {
     /* Mark voluntary shutdown so the state-changed callback's
      * UNCONNECTED handler stays silent — see the comment there. */
     atomic_store_explicit(&g_state.should_exit, 1, memory_order_release);
+
+    /* Reap the tick thread (it observes should_exit). */
+    if (tick_rc == 0) {
+        pthread_join(tick_thread, NULL);
+    }
 
     /* Final underrun report so the engine sees a closing "underruns=N"
      * line before our exit. Skip if process is dying mid-write. */
@@ -623,8 +650,5 @@ cleanup_loop:
 cleanup_pw:
     pw_deinit();
     ring_free(&g_state.ring);
-    /* Suppress unused-variable warnings if maybe_emit_underruns isn't
-     * called from the inner loop in this version. */
-    (void)maybe_emit_underruns;
     return rc;
 }
