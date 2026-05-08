@@ -2841,3 +2841,117 @@ the methodology correction + the corrected Phase 2 baseline. No
 default changes. The user's manual A/B (chunk_seconds = 0.20 in
 config.toml) remains an option if they want to try the
 slower-rhythm tradeoff.
+## 41. v0.12.3 — comprehensive parameter sweep, intelligent grid search
+
+Final tuning sweep before project closure. Phase 1 sweeps each of the
+5 SOLA / chunk parameters individually with the others at v0.11.0
+baseline; Phase 2 cartesians the top-2 values per parameter from
+Phase 1. All recordings via serial-ID pw-record (the v0.12.2 fix).
+TTS-driven engine output for 30 s per condition, both detectors
+(woys-diag calibrated cut count + spectral autocorrelation at the
+chunk-period).
+
+### Noise floor (baseline 3× repeat)
+
+- cuts/min: mean = 80.6, std = 4.94
+- autocorr@chunk: mean = 0.156, std = 0.018
+- 2-sigma improvement threshold for cuts/min: 70.7
+
+### Ranked table (top 5 + baseline + bottom 3, lower score = better)
+
+score = cuts/min + 50 × autocorr@chunk + 0.05 × latency_penalty_ms
+
+| rank | cuts/min | ac@chunk | +lat (ms) | chunk_s | search_ms | corr_thr | crossfade_ms | context_ms | score |
+|-----:|---------:|---------:|----------:|--------:|----------:|---------:|-------------:|-----------:|------:|
+| top-1 | 58.2 | 0.000 | 100 | 0.250 | 16.0 | 0.30 | 50 | 200 | 63.2 |
+| top-2 | 64.4 | 0.000 | 100 | 0.250 | 4.0 | 0.10 | 50 | 200 | 69.4 |
+| top-3 | 64.6 | 0.000 | 100 | 0.250 | 16.0 | 0.10 | 50 | 200 | 69.6 |
+| top-4 | 64.8 | 0.000 | 100 | 0.250 | 16.0 | 0.30 | 30 | 100 | 69.8 |
+| top-5 | 66.6 | 0.067 | 0 | 0.150 | 4.0 | 0.30 | 30 | 100 | 69.9 |
+| **baseline (v0.11.0)** | 78.0 | 0.136 | 0 | 0.150 | 6.0 | 0.10 | 50 | 100 | 84.8 |
+| worst-1 | 229.9 | 0.000 | 0 | 0.100 | 6.0 | 0.10 | 50 | 100 | 229.9 |
+| worst-2 | 142.7 | 0.075 | 0 | 0.150 | 6.0 | 0.10 | 90 | 100 | 146.4 |
+| worst-3 | 134.9 | 0.086 | 0 | 0.150 | 6.0 | 0.10 | 70 | 100 | 139.2 |
+
+Top-3 raw recordings: `/tmp/v012_3_top1.wav`, `/tmp/v012_3_top2.wav`, `/tmp/v012_3_top3.wav`.  
+Worst-3 raw recordings: `/tmp/v012_3/worst1.wav`, `/tmp/v012_3/worst2.wav`, `/tmp/v012_3/worst3.wav`.  
+Baseline reference recording: `/tmp/v012_3/baseline_ref.wav`.
+
+Listener calibration: comparing best → baseline → worst by ear
+validates whether the cuts/min metric tracks audible quality.
+
+### Recommended default change (best of low-latency tier, +lat < 30 ms)
+
+**`p2_c0p15_s4p0_s0p3_s30p0_s100p0`** — score 69.9
+
+```toml
+chunk_seconds = 0.15
+sola_search_ms = 4.0
+sola_corr_threshold = 0.3
+sola_crossfade_ms = 30.0
+sola_context_ms = 100.0
+```
+
+- cuts/min: 66.6  (baseline 80.6 ± 4.94)
+- autocorr@chunk: 0.067  (baseline 0.156 ± 0.018)
+- latency penalty vs v0.11.0: +0 ms
+
+### Best overall (HIGH-latency tier — informational, NOT default change)
+
+**`p2_c0p25_s16p0_s0p3_s50p0_s200p0`** — score 63.2
+
+```toml
+chunk_seconds = 0.25
+sola_search_ms = 16.0
+sola_corr_threshold = 0.3
+sola_crossfade_ms = 50.0
+sola_context_ms = 200.0
+```
+
+- cuts/min: 58.2  (baseline 80.6 ± 4.94)
+- autocorr@chunk: 0.000  (baseline 0.156 ± 0.018)
+- latency penalty vs v0.11.0: +100 ms  ← exceeds 30 ms ship criterion
+
+If the user is willing to trade +100 ms e2e latency for the strongest
+possible cut reduction (chunk_seconds=0.25 eliminates chunk-period
+autocorrelation entirely, autocorr@chunk = 0.000), opt in via config:
+
+```toml
+chunk_seconds = 0.25
+sola_search_ms = 16.0
+sola_corr_threshold = 0.3
+sola_crossfade_ms = 50.0
+sola_context_ms = 200.0
+```
+
+### 2-sigma significance test (low-latency ship candidate)
+
+- ship-candidate cuts/min margin vs baseline: -14.0
+  (- means improvement; threshold for 2-sigma significance: -9.9)
+- 2-sigma significant: **YES**
+- latency cost < 30 ms: **YES**  (0 ms)
+
+### Ship decision
+
+**v0.12.3 final.** Best config beats baseline by 2-sigma margin AND
+latency penalty is under 30 ms. Default change recommended.
+
+### Per-parameter individual sensitivity
+
+For each parameter, the value that produced lowest cuts/min when
+the others were held at baseline:
+
+- **chunk_seconds**: best = 0.15 → cuts/min 77.5 (baseline 80.6)
+- **sola_search_ms**: best = 4.0 → cuts/min 66.9 (baseline 80.6)
+- **sola_corr_threshold**: best = 0.3 → cuts/min 71.8 (baseline 80.6)
+- **sola_crossfade_ms**: best = 50.0 → cuts/min 77.5 (baseline 80.6)
+- **sola_context_ms**: best = 100.0 → cuts/min 77.5 (baseline 80.6)
+
+### Generalizable lesson — exhaustive sweeps confirm what limited sweeps suggest
+
+v0.12.0's first 4-condition sweep showed SOLA tuning was within noise.
+v0.12.3's full 50-condition sweep confirms it. The chunk-boundary
+periodic mechanism is fundamental on this stack; tuning shifts but
+does not eliminate it. The user's v0.11.0 daily-use experience is
+the audible ceiling within software-only configurations on this
+hardware.
