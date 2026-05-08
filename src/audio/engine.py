@@ -283,28 +283,41 @@ class EngineConfig:
     # — flipping the default per the audit's "honest metric" rule.
     prefer_native_pw: bool = True
 
-    # v0.9.1 — minimum ring-buffer slack (in milliseconds) the native
-    # helper holds beyond the immediate chunk size. Trades latency for
-    # cut-tolerance:
+    # v0.9.2 — minimum ring-buffer slack (in milliseconds) the native
+    # helper holds beyond the immediate chunk size. **Default reverted to
+    # 0 in v0.9.2** after v0.9.1's 80 ms default proved both ineffective
+    # against the audible cuts class AND introduced a ~170 ms echo
+    # regression. See `CHANGELOG.md` v0.9.2 + LESSONS.md §28 for the
+    # full retrospective; the short version is:
     #
-    #   buffer_ms   approx ring     underrun rate (j_writer=80 ms)
-    #   ---------   -------------   ---------------------------------
-    #   0 / unset   chunk only      severe — every late write underruns
-    #   80 (def)    ~341 ms total   rare (effective slack ~191 ms after
-    #                               pow2 rounding; covers ~2.4σ jitter)
-    #   200         ~683 ms total   near-zero, +700 ms total e2e
+    #   * `player_underruns` measures ring-empty events. The buffer
+    #     expansion absorbed those events into the slack window and
+    #     reduced the COUNTER, but the listener still heard the same
+    #     class of micro-cuts because they're driven by engine writer
+    #     jitter (~80 ms std-dev), not by ring underruns directly. A
+    #     bigger ring just postpones the gap audibility — it doesn't
+    #     fix the producer cadence that creates the gap in the first
+    #     place.
+    #   * The added latency (191 ms slack at default) pushed the
+    #     round-trip past the threshold where Telegram echo cancellation
+    #     copes, surfacing a new audible regression.
     #
-    # The helper's SPSC ring uses a power-of-2 mask so the actual size
-    # is `next_pow2(chunk_frames + buffer_ms × sink_rate / 1000)`, which
-    # in practice gives MORE slack than the requested buffer_ms (good).
+    # The knob remains tunable for power users who want to trade
+    # latency for fewer counter increments (e.g., on a CachyOS box
+    # where 21 ms quantum is too tight). Default 0 keeps round-trip
+    # at v0.9.0 levels and the counter honest.
     #
-    # Engine writer_jitter_ms (std-dev of inter-write intervals) sits
-    # at ~80 ms across every test since v0.6.10. Any write delayed by
-    # more than the slack window underruns the ring. No single fix has
-    # moved the 80 ms — that's a v0.10.x target (engine production
-    # cadence). This knob is the comfort feature: pay latency in
-    # exchange for absorbing the jitter the engine produces.
-    prefer_native_pw_buffer_ms: int = 80
+    #   buffer_ms   ring frames        ring ms     slack       use case
+    #   ---------   -----------------  ---------   ---------   ----------
+    #   0 (def)     8192 (chunk_only)  ~170 ms     ~21 ms      v0.9.0 baseline
+    #   80          16384              ~341 ms     ~191 ms     latency-tolerant
+    #   200         32768 (cap)        ~683 ms     ~533 ms     near-mute
+    #
+    # The helper's SPSC ring uses a power-of-2 mask so actual size is
+    # `next_pow2(chunk_frames + buffer_ms × sink_rate / 1000)`. The
+    # producer-side jitter fix lives in v0.10.x; this knob is observability,
+    # not the cure.
+    prefer_native_pw_buffer_ms: int = 0
 
     # v0.5.1: software input pre-attenuation, in dB. Default 0.0 (passthrough).
     # Hot mics (HyperX QuadCast at high volume etc.) clip the signal which

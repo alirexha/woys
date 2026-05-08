@@ -4,6 +4,59 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-05-08 — housekeeping: revert v0.9.1's buffer-expansion default
+
+v0.9.1 expanded the native-pw ring-buffer default to 80 ms slack
+(`prefer_native_pw_buffer_ms = 80`, ring=16384 frames, ~341 ms total).
+Real-listener test reported back: the audible cut rate was unchanged
+(consistent with the v0.9.0-rc4 finding that cuts are upstream of the
+playback layer), AND the added latency surfaced a ~170 ms echo
+regression on Telegram VOIP that wasn't there in v0.9.0.
+
+The mistake was a category error: ring capacity absorbs writer
+*overshoot* (producer faster than consumer briefly), but the cuts
+class is driven by writer *jitter* — gaps where the producer fails to
+deliver a chunk on its 150 ms cadence. A bigger ring lets the consumer
+drain longer during such a gap before going silent, which DECREASES
+the `player_underruns` counter without DECREASING the listener-audible
+gap. The counter improvement was real; the audible improvement was
+zero; the latency cost was ~170 ms.
+
+### Changes
+
+- `EngineConfig.prefer_native_pw_buffer_ms` default flipped from 80
+  back to 0 (chunk-only ring = 8192 frames, ~170 ms total, ~21 ms
+  slack — equivalent to v0.9.0 and the helper's compile-time default).
+- The knob remains tunable for power users who want to trade latency
+  for fewer counter increments.
+- README + engine.py inline comment + LESSONS.md §28 updated with
+  the honest retrospective.
+- `prefer_native_pw=True` default flip from v0.9.1 STAYS — that part
+  of v0.9.1 was correct (architecturally honest counter, no mid-session
+  pacat respawns, eliminates pw-cat per-quantum gap class). The
+  buffer-expansion was the mistake, not the backend default.
+
+### Verification
+
+- 127 fast tests pass.
+- Drift test (`tests/test_engine_config_drift.py`) confirms the
+  default reverted everywhere (EngineConfig + AppConfig + profiles).
+- Helper compile-time default (`DEFAULT_RING_FRAMES = 8192` in
+  `bin/woys-pw-out.c`) unchanged; engine now produces the same
+  ring size as the helper's standalone default.
+
+### What does NOT change in v0.9.2
+
+- The native-pw helper binary itself.
+- `prefer_native_pw=True` default (still True, still correct).
+- The 80 ms engine writer-jitter problem — that's still v0.10.x.
+
+### Honest framing: this is a rollback, not a fix
+
+v0.9.2 returns the audible cuts/echo trade-off to v0.9.0's profile.
+It does not improve cuts. The producer-cadence work (which would
+actually move the audible needle) is the next-release target.
+
 ## [0.9.1] — 2026-05-08 — flip native-pw default; tunable ring buffer; honest framing of cuts
 
 The output of the user's v0.9.0-rc4 → rc5 Telegram A/B. The result was
