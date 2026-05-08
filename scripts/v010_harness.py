@@ -327,6 +327,10 @@ def _run_engine_synthetic(
     gpu_keepalive_enabled: bool = False,
     gpu_keepalive_interval_ms: int | None = None,
     gpu_anti_jitter_mode: str = "off",
+    sola_crossfade_ms: float | None = None,
+    sola_search_ms: float | None = None,
+    sola_context_ms: float | None = None,
+    sola_corr_threshold: float | None = None,
 ) -> dict[str, Any]:
     """Run the engine for `duration_s` against the synthetic signal,
     return the stats dict (also written to `out_path` if provided)."""
@@ -346,9 +350,9 @@ def _run_engine_synthetic(
         output_process_time_ms=cfg.output_process_time_ms,
         embedder=cfg.embedder,
         sola_enabled=enable_sola,
-        sola_crossfade_ms=cfg.sola_crossfade_ms,
-        sola_search_ms=cfg.sola_search_ms,
-        sola_context_ms=cfg.sola_context_ms,
+        sola_crossfade_ms=sola_crossfade_ms if sola_crossfade_ms is not None else cfg.sola_crossfade_ms,
+        sola_search_ms=sola_search_ms if sola_search_ms is not None else cfg.sola_search_ms,
+        sola_context_ms=sola_context_ms if sola_context_ms is not None else cfg.sola_context_ms,
         input_gain_db=cfg.input_gain_db,
         input_gate_dbfs=cfg.input_gate_dbfs,
         input_gate_hysteresis_ms=cfg.input_gate_hysteresis_ms,
@@ -370,6 +374,8 @@ def _run_engine_synthetic(
         gpu_keepalive_torch_stream=cfg.gpu_keepalive_torch_stream,
         gpu_keepalive_torch_interval_ms=cfg.gpu_keepalive_torch_interval_ms,
     )
+    if sola_corr_threshold is not None:
+        engine_cfg.sola_corr_threshold = sola_corr_threshold
     engine_cfg.inference_subprocess = inference_subprocess
     rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
     if rvc_path is not None:
@@ -551,6 +557,11 @@ def main() -> int:
         default="off",
         help="v0.11.0 anti-jitter mode: off / keepalive (torch stream) / clock_lock (sudo nvidia-smi) / both",
     )
+    # v0.12.0 — SOLA-param overrides for the Phase 2 A/B sweep.
+    parser.add_argument("--sola-crossfade-ms", type=float, default=None)
+    parser.add_argument("--sola-search-ms", type=float, default=None)
+    parser.add_argument("--sola-context-ms", type=float, default=None)
+    parser.add_argument("--sola-corr-threshold", type=float, default=None)
     parser.add_argument(
         "--pyspy",
         type=Path,
@@ -595,6 +606,10 @@ def main() -> int:
         gpu_keepalive_enabled=args.gpu_keepalive,
         gpu_keepalive_interval_ms=args.gpu_keepalive_interval_ms,
         gpu_anti_jitter_mode=args.anti_jitter_mode,
+        sola_crossfade_ms=args.sola_crossfade_ms,
+        sola_search_ms=args.sola_search_ms,
+        sola_context_ms=args.sola_context_ms,
+        sola_corr_threshold=args.sola_corr_threshold,
     )
     _print_summary(out)
     return 0
