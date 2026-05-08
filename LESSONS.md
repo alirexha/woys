@@ -1950,3 +1950,132 @@ to the real session's audio-output mechanics, only the input is
 deterministic. This is the methodological gap that bit v0.9.1: that
 default change shipped without an in-house harness run. The harness
 exists now and any future default change should clear it before tag.
+
+## 30. v0.10.0-rc3 / rc4 — keepalive bimodal: stream contention is the ceiling
+
+rc3 implemented the v0.10.0-rc1/rc2 evidence-pointed-at fix: a
+daemon thread issues a tiny contentvec ONNX op every 25 ms while
+the engine is running, intended to keep the laptop GPU's dynamic
+boost above the deboost threshold during the ~98 ms mic_read window
+between chunks. Default off; opt-in via `gpu_keepalive_enabled`.
+
+### rc3 (uncoordinated keepalive) 5-min result
+
+| metric                | rc1 baseline | rc3 keepalive | Δ      |
+|-----------------------|-------------:|-------------:|-------:|
+| GPU clocks p50 (MHz)  | 1665         | **1875**     | **+12 %** |
+| GPU dip count (% of samples) | 34 % | 30 %         | -12 % |
+| inference p50 (ms)    | 51.1         | **39.7**     | **-22 %** |
+| rvc.run p50 (ms)      | 33.3 (rc2)   | **22.8**     | **-31 %** |
+| rvc.run p99 (ms)      | 68.3 (rc2)   | **80.0**     | **+18 %** ← regression |
+| writer_jitter p99 ms  | 42.5         | **51.2**     | **+21 %** ← regression |
+| keepalive p50 / p99   | -            | 3.93 / 22.10 | -      |
+| late_chunks           | 114 / 1982   | 1 / 2001     | -99 %  |
+
+The clock-boost theory is **partially confirmed**: GPU stayed warmer,
+median RVC dropped 31 %, GPU temperature stayed within bounds.
+
+The trade-off: rc3's keepalive op shares the engine's CUDA stream.
+When a keepalive call is in-flight while engine RVC fires, both
+queue and serialize. Result: rvc.run p99 + 12 ms; writer_interval
+p99 grew. The keepalive's own p99 = 22 ms (vs p50 = 4 ms) is the
+same effect mirrored.
+
+### rc4 attempt — coordinate via `_gpu_inference_active` event
+
+Hypothesis: skip keepalive ticks when engine is mid-inference.
+Should retain rc3's median win without rc3's tail regression.
+
+Implementation: engine sets a `threading.Event` around
+`_safe_process_streaming_16k`; keepalive thread checks `is_set()`
+each tick and skips if true (5 ms re-poll on skip).
+
+5-min rc4 result — **strictly worse** than rc3 on every metric:
+
+| metric                | rc3       | rc4 coord  | Δ      |
+|-----------------------|----------:|----------:|-------:|
+| GPU clocks p50 (MHz)  | 1875      | **1695**   | **-10 %** |
+| inference p50 (ms)    | 39.7      | 43.8       | +10 %  |
+| rvc.run p50 (ms)      | 22.8      | 25.2       | +11 %  |
+| rvc.run p99 (ms)      | 80.0      | **123.8**  | **+55 %** |
+| writer_jitter p99 ms  | 51.2      | **94.4**   | **+84 %** |
+| late_chunks           | 1         | 24         | +24x   |
+| keepalive p99 (ms)    | 22.1      | **8.6**    | -61 %  ← coord works |
+
+The coordination event itself does what it advertised: keepalive
+p99 dropped from 22 to 8 ms, confirming stream contention is
+prevented. **But removing the keepalive's stimulus during the 35-50
+ms inference window let the GPU deboost during inference itself**
+— and the deboost-recovery cost on the next inference is bigger
+than rc3's contention cost.
+
+Concretely: rc3 had keepalive firing constantly = GPU saw work every
+~5-25 ms continuously = stayed at p50=1875 MHz. rc4 coordinated =
+GPU saw work in mic_read only = ~98 ms windows of stimulus, then
+~50 ms of "engine work + immediately back to no-keepalive" = GPU
+clock floor dropped back to baseline-like 1695 MHz, with worse
+tail outliers.
+
+### What this proves and disproves
+
+  * **Confirmed:** GPU dynamic boost on this RTX 2070 Mobile is
+    sensitive to sub-50 ms idle gaps. Constant keepalive lifts the
+    floor by ~210 MHz; coordinated-only-during-mic_read keepalive
+    does not.
+  * **Confirmed:** ORT serializes concurrent `session.run()` calls
+    on the same CUDA stream. Two threads using the same session
+    pay queueing cost.
+  * **Disproven:** That coordination would be net-positive. The
+    intuition was "remove contention, keep the GPU warm." The
+    reality is the keepalive's contention cost is smaller than its
+    deboost-prevention benefit in steady state.
+
+### Hardware ceiling reached for software-only fixes
+
+The remaining ~10-15 ms gap to the writer_jitter p99 ≤ 30 ms gate
+needs one of:
+
+  1. **Locked GPU clock** (`nvidia-smi -lgc <min>,<max>`). Definitive,
+     ~5 W/h idle power cost. Requires root + brief explicitly carves
+     out user permission. Out of scope for v0.10.0; v0.11.x candidate
+     once the user's preference on the power tradeoff is known.
+  2. **Separate CUDA stream for keepalive** via PyTorch's
+     `torch.cuda.Stream()`. PyTorch is already in the env. The
+     keepalive op would run on a torch stream while ORT sessions
+     run on ORT's stream; the GPU scheduler can interleave. Closes
+     the rc3 contention class without paying rc4's coordination
+     cost. v0.11.x candidate.
+  3. **chunk_seconds=0.20-0.25** — fewer idle gaps per second,
+     each gap is a higher % of a longer cycle. Cheap to test;
+     trades latency for jitter. v0.11.x candidate.
+  4. **Re-export RVC with optimization flags** — only if the model
+     itself has tail variance independent of GPU state. No evidence
+     for or against yet.
+
+### Lessons for the v0.10.x process
+
+  * **Bimodal is a real outcome, not noise.** rc3's "median good /
+    tail bad" is reproducible across runs. When a fix has bimodal
+    effect, the right response is "ship the knob default-off and
+    let the user pick" — not "fix until tail also improves" if the
+    second goal would require new infrastructure.
+  * **The first instinct ('coordinate to avoid contention') was
+    correct engineering and wrong physics.** Stream contention is
+    real, but the GPU's deboost mechanism dominates. This is the
+    third time in this project (v0.7.x output_latency tuning,
+    v0.9.1 buffer expansion, v0.10.0-rc4 keepalive coordination)
+    where a clean engineering fix didn't produce the predicted
+    outcome because the dominant cause was at a different layer.
+    Each time the fix is to ship the experiment, capture the
+    data, and update the model — not to keep tweaking the same
+    layer.
+  * **GPU power-state is part of the system.** woys treats ORT,
+    cuDNN, PipeWire as the load-bearing components; the NVIDIA
+    driver's dynamic boost was previously invisible. After v0.10.x
+    it's a first-class consideration: any future fix that
+    introduces idle gaps > 50 ms should account for the deboost
+    cost in latency budget.
+  * **An honest partial release > a forced "lands gates" claim.**
+    The brief explicitly authorized partial. The data says we can't
+    crack the gates with software-only changes on this hardware
+    in a bounded budget. Shipping that honestly is correct.
