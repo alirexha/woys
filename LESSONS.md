@@ -2348,3 +2348,247 @@ Generalizable rule: when a high-priority message is set, append to
 a small history list before overwriting the prior message — the
 prior message is often the cause and the new message is often the
 effect. Two lines vs zero is a free win.
+
+## 36. v0.12.0 Phase 1 — NSF-reset hypothesis NOT confirmed on synthetic
+
+The user reported "train wagon on rails" rhythmic clicks on sustained
+vowels in real Telegram VoIP after v0.11.0. The hypothesis going in:
+RVC's NSF source module phase-resets at every chunk boundary, producing
+a periodic discontinuity at chunk_seconds = 150 ms (6.67 Hz). SOLA's
+crossfade was thought to mask but not eliminate this.
+
+Phase 1 method: drive the engine end-to-end through the v0.10.x
+synthetic harness with `gpu_anti_jitter_mode = "both"`. Capture
+`WoysSink.monitor` via `pw-record` concurrently. Run two distinct
+input conditions:
+
+  * Default loop signal (220 Hz / 330 Hz / silence transitions)
+  * Stationary 220 Hz tone for 30 s — no internal transitions, so
+    any periodic structure in the output is engine-side
+
+Three independent detectors run against the captured WAVs.
+
+### Routing first — confirmed
+
+LTAS at synthetic-tone harmonics (220, 330, 440, 660 Hz) is in the
+noise floor (−85 to −92 dB; floor is −119 dB). Top peaks land at
+1775 Hz, 387 Hz, 105 Hz — formant structure consistent with the
+configured RVC model (donald_trump). Synthetic input is suppressed,
+RVC output is captured. **The user's earlier "real voice" claim
+about a manual recording was perceptual, not a routing fault.** The
+e_girl model on a male voice with no pitch shift may produce output
+close enough to the input timbre that it's not subjectively distinct.
+
+### Three detectors, three null results
+
+  * **Spectral flux** at 5 ms hop, peaks selected at +4σ above MAD
+    median, 50 ms minimum gap → 64 peaks in 32 s = 2.0 / sec.
+    Median interval 255 ms (NOT 150 ms). Only 3.2 % of intervals fall
+    at chunk_seconds ± 8 ms.
+  * **Envelope autocorrelation** of the steady-state portion → top
+    peak at 50 ms (autocorrelation = 0.365). Decays smoothly from
+    there. AC at 150 ms = 0.173, AC at 300 ms = 0.148. No periodic
+    peak at chunk_seconds or harmonics; just monotonic decay
+    consistent with smooth-envelope autocorrelation.
+  * **Hilbert phase-jump spectrum** at the f0 band (80–200 Hz
+    bandpass) → top spectral peaks at 60–92 Hz (= sub-harmonics of
+    the f0 ~110 Hz). Chunk-rate (6.67 Hz), SOLA-crossfade rate
+    (20 Hz), quantum rate (47 Hz) all sit at noise floor (−80 dB).
+
+If NSF reset were producing 6.67 Hz periodic discontinuities, AT
+LEAST ONE of these should show a peak at 150 ms / 6.67 Hz / their
+multiples. None do.
+
+### What this rules out (or doesn't)
+
+**Rules out:** the NSF-reset-at-chunk-boundary mechanism as the
+*dominant, audible-on-synthetic-stationary-input* cause. If it
+exists, it's below the threshold of statistical detection on
+RTX 2070 Mobile + this RVC model + this chunk_seconds.
+
+**Does not rule out:**
+  * NSF reset existing at sub-detection amplitude. The user's
+    auditory system is more sensitive to low-amplitude transients
+    than a +4σ statistical threshold; perception isn't bounded
+    by spectral flux.
+  * Real-voice triggering NSF discontinuity differently than
+    pure-sine input. NSF source models trained on speech may
+    behave qualitatively differently on synthetic tones (the
+    RMVPE / cv encoders see "voiced periodic" but the real f0
+    contour, formant structure, and noise residual are absent).
+  * Network-side artifacts (Opus packetization, jitter buffer)
+    in Telegram VoIP that don't appear in WoysSink.monitor.
+  * Pattern-imposition: a low-rate stochastic click sequence
+    (the user's measured 0.2 / sec underrun rate ≈ 1 click /
+    5 s) CAN be perceived as rhythmic when it overlaps a
+    quasi-periodic carrier (sustained vowel at constant f0),
+    even if the underlying events are aperiodic.
+
+### Synthetic harness vs real-mic delta
+
+Synthetic harness underrun rate in this session: 11.8 / sec.
+Real-Telegram underrun rate from user's session: 0.2 / sec. The
+synthetic harness OVERSTATES underruns by ~60×, because the mock
+`sd.InputStream` paces chunks via `time.sleep` which has worse RT
+properties than ALSA's USB-isochronous mic clock. **The harness is
+optimized for objective comparability (deterministic input, repeatable
+runs), not for fidelity to real-mic timing.** Findings about
+*relative* differences across configurations are valid; absolute
+underrun counts are not directly comparable to real-mic operation.
+
+### Implication for v0.12.x scope
+
+The originally-planned Phase 2 was: SOLA tuning ± chunk_seconds=0.20,
+predicated on NSF-reset confirmation. With confirmation absent, the
+brief allows scope change. Two viable redirects:
+
+  * **chunk_seconds=0.20** (only one variable, clean A/B). Bigger
+    chunks → fewer boundaries / sec → if there IS a sub-detection
+    NSF reset, fewer of them per minute. Latency cost: +50 ms.
+  * **SOLA tuning** as defensive depth. Larger crossfade / search /
+    context / tighter corr_threshold. Bounded improvement on top
+    of v0.11.0; cost: ~zero (config knobs).
+
+Phase 2 proceeds with both as separate tests. Final verdict and
+ship/partial decision after measurement.
+
+### Methodology lessons
+
+  * **Synthetic harness is necessary but not sufficient.** When
+    the user perceives a real-world artifact, the harness can
+    falsify a hypothesis (no signal in synthetic = mechanism not
+    dominant on synthetic) but can't prove one (no signal could
+    mean below threshold or absent entirely).
+  * **Three independent detectors are worth more than one.**
+    Spectral flux, envelope autocorrelation, and Hilbert phase
+    spectrum each look at different physical properties (energy
+    transitions, envelope shape, phase coherence). All three
+    null-result is much stronger evidence than any single null.
+  * **Routing verification by spectral fingerprint** is cheap and
+    catches a class of bugs that visual inspection can't. If
+    synthetic input frequencies appear strongly in the recording,
+    the engine isn't actually processing — that single LTAS peak
+    check would have caught it in 30 seconds.
+
+## 37. v0.12.0 Phase 2 — chunk_seconds=0.20 helps; SOLA tuning is null
+
+Phase 1 refuted the NSF-reset-at-chunk-boundary hypothesis. Phase 2's
+original predicate (SOLA tuning + chunk_seconds=0.20 to mask NSF
+resets more aggressively) lost its theoretical basis but was still
+worth running as a 4-condition A/B because the parameters DO
+influence engine cadence regardless of click mechanism.
+
+Method: 4 × 5-min synthetic harness runs with `mode = "both"`
+constant. Same engine, same model, same RVC, same v0.11.0 baseline.
+Only knobs varied:
+
+  * baseline:    chunk=0.15, SOLA defaults (crossfade=50, search=6,
+                                            context=100, corr=0.10)
+  * chunk_020:   chunk=0.20, SOLA defaults
+  * sola_tuned:  chunk=0.15, SOLA: crossfade=80, search=12,
+                                   context=150, corr=0.30
+  * both:        chunk=0.20 + SOLA tuned
+
+Results (all conditions under `gpu_anti_jitter_mode = "both"`):
+
+| condition    | underrun /sec | writer_jitter_p99 | inf_avg | rvc.run p99 |
+|--------------|---------------|-------------------|---------|-------------|
+| baseline     |     8.53      |     51.3 ms       | 42.2    | 69.2        |
+| chunk_020    |     5.61      |     50.7 ms       | 80.1    | 69.2        |
+| sola_tuned   |     8.17      |     50.9 ms       | 44.7    | 68.2        |
+| both         |     5.36      |     50.0 ms       | 81.9    | 69.6        |
+
+Effect attribution (clean orthogonal A/B):
+
+  * **chunk_seconds 0.15 → 0.20: −34 % underrun rate**
+    (8.53 → 5.61 /sec). Other metrics flat or worse. Latency cost
+    +50 ms (200 ms chunk vs 150 ms).
+  * **SOLA tuning: no measurable effect** within sweep noise
+    (−4 % underrun rate at sola_tuned vs baseline; +1 ms inf_avg
+    cost). Combined with Phase 1's null on SOLA-rate periodicity
+    in the spectrogram, SOLA's current default values
+    (crossfade=50, search=6, context=100, corr=0.10) are
+    well-tuned for this pipeline.
+  * **chunk_seconds=0.20 + SOLA tuned: same as chunk_seconds=0.20
+    alone**. SOLA tuning adds nothing on top.
+
+### Why chunk_seconds=0.20 helps underrun rate but doesn't help writer_jitter p99
+
+writer_jitter p99 measures the producer-side cadence variance. With
+chunk=0.20 the engine writes every 200 ms instead of 150 ms; the
+relative variance is similar (50 ms p99 in both). The producer
+doesn't get cleaner; it just produces fewer events per second.
+
+Underrun rate is a count of helper-ring-empty events per second.
+Fewer chunk boundaries per second → fewer opportunities for the
+ring to empty between writes → lower /sec rate. The ratio matches:
+chunk=0.20 has 5 chunks/sec vs 6.67 chunks/sec at chunk=0.15;
+8.53 × (5/6.67) = 6.39 (predicted) vs 5.61 measured (slightly
+better than the linear scaling, possibly because the larger
+inference batch is more compute-efficient).
+
+### Why SOLA tuning is null
+
+Phase 1 found NO SOLA-rate periodic clicks to mask. SOLA's
+crossfade and search-window are sized for the dominant-correlation
+case (which the current defaults handle correctly). Larger
+crossfade / search range increases the SOLA inner-loop cost
+(slightly higher inf_avg) without a corresponding artifact
+reduction. Tighter corr_threshold rejects MORE alignment matches,
+falling back to centered (offset=0) more often — could in theory
+introduce MORE chunk-boundary clicks via fallback, though we
+didn't see that in this sweep either.
+
+### v0.12.0-partial decision
+
+Strict gates (writer_jitter p99 ≤ 30 ms, underrun rate ≤ 0.5 /sec)
+fail on every condition. Best condition (chunk_seconds=0.20)
+delivers a real but modest improvement at a non-trivial latency
+cost.
+
+Per the brief's "ship v0.12.0-partial honestly with what's
+measured": ship a documentation-and-tooling-only release. No
+default changes — the user has v0.11.0 daily-use-ready on
+chunk_seconds=0.15 and a default-change to 0.20 risks
+re-introducing the v0.9.1-class echo regression class without
+clear listener-side benefit on this hardware.
+
+  * Document chunk_seconds=0.20 as a user-tunable option with
+    the measured 34 % underrun reduction + 50 ms latency cost.
+    User can opt in via `~/.config/woys/config.toml`; A/B their
+    own listening test if they want.
+  * Document SOLA tuning as a tested-null result so future
+    sessions don't re-investigate.
+  * Ship the harness extensions (CLI flags for sola_*,
+    --chunk-seconds, --anti-jitter-mode) so any future investigation
+    has a 1-command-A/B kit.
+  * Ship the spectrogram analysis tooling
+    (scripts/v012_spectrogram_analysis.py,
+    scripts/v012_spectral_flux.py,
+    scripts/v012_run_and_record.sh,
+    scripts/v012_phase2_sweep.sh) — these are the tools that
+    would be re-built for the NEXT investigation; landing them
+    once amortizes the cost.
+
+### Generalizable lesson — the phase-1-refutation rule
+
+When a Phase 1 measurement refutes the predicated mechanism,
+Phase 2 should NOT proceed unchanged on the assumption "tune the
+knobs anyway." The knobs were chosen because of the mechanism
+hypothesis; without that hypothesis they're guesses. v0.12.0's
+SOLA tuning sweep produced exactly the predicted null because
+there was no underlying signal to optimize against.
+
+The right move when Phase 1 refutes is one of:
+  * Find a more sensitive measurement to test whether the
+    mechanism is sub-detection (we tried — three detectors all null)
+  * Switch to a different mechanism hypothesis (real-voice-only
+    artifact? network-side? subjective-pattern-imposition?)
+  * Concede the residual is below the threshold of objective
+    investigation on this stack and ship daily-use as-is
+
+v0.12.0-partial picks option 3 honestly. The user's v0.11.0
+audible result (36× underrun reduction, voice-intelligibility
+leap) is the load-bearing improvement; v0.12.0 polish on top of
+that is bounded by the residual and the residual is bounded
+below objective-detection threshold.

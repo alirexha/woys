@@ -4,6 +4,117 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.12.0-partial] — 2026-05-08 — Phase 1 spectrogram + Phase 2 sweep; no default changes (research release)
+
+The output of v0.12.x's two-phase investigation into the residual
+"train wagon on rails" periodic-on-sustained-vowels artifact the user
+reported on real Telegram VoIP after v0.11.0. **No default behavior
+changes.** This is a documentation + tooling release; v0.11.0 is
+still the daily-use shipped product.
+
+### Phase 1 — NSF-reset hypothesis NOT confirmed on synthetic
+
+Three independent detectors (spectral flux, envelope autocorrelation,
+Hilbert phase-jump spectrum) running on captured `WoysSink.monitor`
+recordings of a STATIONARY 220 Hz tone driven through the engine end-
+to-end found **no periodic chunk-rate (6.67 Hz / 150 ms) structure**.
+Routing was confirmed correct by spectral fingerprint (synthetic input
+frequencies suppressed, RVC formant structure visible in LTAS).
+
+If the NSF reset that produces the user's perceived periodic clicks
+exists, it's below objective-detection threshold on synthetic-tone
+input. Possibilities:
+
+  * Real-voice triggering qualitatively different NSF behavior
+  * Network-side artifacts (Opus packetization in Telegram VoIP)
+  * Subjective pattern-imposition on stochastic 0.2 /sec underrun events
+
+Full retrospective in `LESSONS.md` §36.
+
+### Phase 2 — chunk_seconds=0.20 helps; SOLA tuning is null
+
+5-min × 4-condition synthetic sweep with `mode = "both"` constant:
+
+| condition          | underrun /sec | writer_jitter p99 (ms) | inf_avg (ms) | latency cost |
+|--------------------|--------------:|-----------------------:|-------------:|-------------:|
+| baseline (chunk=0.15) | 8.53        | 51.3                   | 42.2         | 0            |
+| chunk_020 (chunk=0.20) | **5.61**   | 50.7                   | 80.1         | **+50 ms**   |
+| sola_tuned         | 8.17          | 50.9                   | 44.7         | 0            |
+| both               | 5.36          | 50.0                   | 81.9         | +50 ms       |
+
+  * **chunk_seconds=0.20 alone delivers −34 % synthetic underrun
+    rate** (8.53 → 5.61 /sec). Mechanism: fewer chunk boundaries per
+    second, not cleaner producer cadence. Latency cost: +50 ms e2e
+    (540 ms → 590 ms baseline).
+  * **SOLA tuning (crossfade 50→80, search 6→12, context 100→150,
+    corr 0.10→0.30) is within sweep noise** (−4 % underrun).
+    Combined with Phase 1's null on SOLA-rate periodicity, SOLA's
+    current defaults are well-tuned for this pipeline.
+  * **chunk_seconds=0.20 + SOLA tuned ≈ chunk_seconds=0.20 alone**.
+    SOLA tuning adds nothing on top.
+
+None of the conditions hits the strict v0.12.0 acceptance gates
+(writer_jitter p99 ≤ 30 ms, underrun rate ≤ 0.5 /sec). Ship as
+partial.
+
+### What ships
+
+  * **`scripts/v012_spectrogram_analysis.py`** — energy-derivative
+    click detector with chunk-rate hypothesis matching
+  * **`scripts/v012_spectral_flux.py`** — spectral-flux peak detector
+    + impulse-train autocorrelation (catches phase-discontinuity
+    artifacts that the energy detector misses)
+  * **`scripts/v012_run_and_record.sh`** — drive the harness with
+    concurrent `pw-record` from `WoysSink.monitor`
+  * **`scripts/v012_stationary_run.py`** — patch the harness signal
+    to a stationary tone for clean A/B
+  * **`scripts/v012_phase2_sweep.sh`** — 4-condition 5-min A/B
+    sweep with the SOLA + chunk_seconds knobs
+  * Harness CLI flags: `--anti-jitter-mode`, `--chunk-seconds`,
+    `--sola-crossfade-ms`, `--sola-search-ms`, `--sola-context-ms`,
+    `--sola-corr-threshold`. Single-command A/B for any future
+    investigation.
+
+### What does NOT ship
+
+  * No default changes. `chunk_seconds = 0.15`,
+    SOLA defaults, all v0.11.0 mode defaults intact.
+  * No new EngineConfig fields beyond what v0.11.0 has.
+  * No new feature flags.
+
+### How to A/B chunk_seconds=0.20 yourself
+
+If you want the −34 % synthetic underrun reduction at the +50 ms
+latency cost, edit `~/.config/woys/config.toml` top-level and
+change `chunk_seconds = 0.15` to `chunk_seconds = 0.20`. Restart
+the engine. Listen.
+
+If audibly better and the latency cost doesn't bother you, leave
+it. If echo is worse than the underrun improvement, revert.
+
+### v0.13.x candidates (future, NOT shipped)
+
+  * Real-voice spectrogram analysis (requires user-recorded audio
+    or a high-fidelity voice synthesizer for input)
+  * Network-side click investigation (Opus codec round-trip
+    analysis — out of woys's scope)
+  * RVC ONNX re-export to add explicit NSF state inputs/outputs
+    (large; requires upstream RVC export pipeline access)
+
+The v0.12.x investigation has hit the threshold of what objective
+synthetic measurement can resolve on this stack. Further
+improvements likely require either real-voice instrumentation or
+model-side surgery.
+
+### Verification
+
+  * 156 fast tests still pass (no regressions)
+  * Routing verified by spectral fingerprint on multiple recordings
+  * Spectral-flux + envelope-autocorrelation + Hilbert-phase
+    detectors documented + their null results recorded
+  * Honest CHANGELOG / LESSONS §36-§37 with measured numbers, not
+    "feels better" claims
+
 ## [0.11.0] — 2026-05-08 — GPU clock lock + torch separate-stream keepalive — daily-use release, 36× underrun reduction
 
 The output of `V0_11_0_GPU_JITTER.md`. Two opt-in anti-jitter features
