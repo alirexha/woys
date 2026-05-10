@@ -2680,12 +2680,37 @@ class RealtimeEngine:
         # var is unset. Useful for forensic post-mortems of "the helper
         # died at some point during a session" cases - we lose nothing
         # to the existing parse-and-overwrite pattern.
+        # v0.14.0 (Lens 6 / Lens 12 / C021): the env-driven path is
+        # security-sensitive. Pre-v0.14.0 it called `open(path, "ab")`
+        # with no symlink protection; an attacker who controls the path
+        # value could swap a symlink to a victim file (e.g. ~/.bashrc)
+        # between checks and corrupt it via "ab" append. Mitigations:
+        #   1. Require absolute path (relative paths are caller-confused).
+        #   2. Use os.open with O_NOFOLLOW so symlinks at the final
+        #      component are refused (we open the actual file, not its
+        #      symlink target).
+        #   3. Skip silently with a `last_error` warning if the open
+        #      fails for any reason -- the diagnostic is opt-in, not
+        #      load-bearing.
         debug_log_path = os.environ.get("WOYS_HELPER_STDERR_LOG")
         debug_fp = None
         if debug_log_path:
             try:
-                debug_fp = open(debug_log_path, "ab", buffering=0)  # noqa: SIM115
-            except OSError:
+                if not os.path.isabs(debug_log_path):
+                    raise ValueError(
+                        f"WOYS_HELPER_STDERR_LOG must be an absolute path, "
+                        f"got {debug_log_path!r}"
+                    )
+                fd = os.open(
+                    debug_log_path,
+                    os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,
+                    0o600,
+                )
+                debug_fp = os.fdopen(fd, "ab", buffering=0)
+            except (OSError, ValueError) as e:
+                self.stats.priority_warnings.append(
+                    f"WOYS_HELPER_STDERR_LOG disabled: {type(e).__name__}: {e}"
+                )
                 debug_fp = None
         try:
             for raw in proc.stderr:
