@@ -1,4 +1,4 @@
-"""v0.11.0 — unit tests for the GPU anti-jitter features.
+"""v0.11.0 - unit tests for the GPU anti-jitter features.
 
 Tests cover:
   * `_resolve_anti_jitter_flags`: mode knob → (clock_lock, torch_keepalive)
@@ -10,11 +10,11 @@ Tests cover:
     state transitions, idempotent revert
   * Torch keepalive falls back gracefully when torch / CUDA unavailable
 
-The engine isn't started in any of these tests — the methods are exercised
+The engine isn't started in any of these tests - the methods are exercised
 on a constructed-but-not-started `RealtimeEngine` instance with
 config.gpu_clock_lock_enabled toggled per test.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ if str(REPO / "src" / "server") not in sys.path:
 
 def _mk_engine(**cfg_kwargs: object):
     """Construct a `RealtimeEngine` with a barely-valid config. Heavy
-    session loads (`_ensure_sessions`) are NOT called — we only test the
+    session loads (`_ensure_sessions`) are NOT called - we only test the
     pure logic methods."""
     from audio.engine import EngineConfig, RealtimeEngine
 
@@ -171,9 +171,11 @@ def test_resolve_clock_lock_range_refuses_over_stock_ceiling() -> None:
         gpu_clock_lock_floor_mhz=1845,
         gpu_clock_lock_ceiling_mhz=2400,  # over stock max
     )
-    with patch.object(type(eng), "_query_max_graphics_clock_mhz", return_value=2100):
-        with pytest.raises(RuntimeError, match="exceeds.*max.graphics"):
-            eng._resolve_clock_lock_range()
+    with (
+        patch.object(type(eng), "_query_max_graphics_clock_mhz", return_value=2100),
+        pytest.raises(RuntimeError, match=r"exceeds.*max.graphics"),
+    ):
+        eng._resolve_clock_lock_range()
 
 
 def test_resolve_clock_lock_range_rejects_floor_above_ceiling() -> None:
@@ -181,9 +183,11 @@ def test_resolve_clock_lock_range_rejects_floor_above_ceiling() -> None:
         gpu_clock_lock_floor_mhz=2000,
         gpu_clock_lock_ceiling_mhz=1500,  # < floor
     )
-    with patch.object(type(eng), "_query_max_graphics_clock_mhz", return_value=2100):
-        with pytest.raises(RuntimeError, match="floor>ceiling"):
-            eng._resolve_clock_lock_range()
+    with (
+        patch.object(type(eng), "_query_max_graphics_clock_mhz", return_value=2100),
+        pytest.raises(RuntimeError, match="floor>ceiling"),
+    ):
+        eng._resolve_clock_lock_range()
 
 
 def test_resolve_clock_lock_range_fails_when_auto_detect_unavailable() -> None:
@@ -191,9 +195,11 @@ def test_resolve_clock_lock_range_fails_when_auto_detect_unavailable() -> None:
         gpu_clock_lock_floor_mhz=0,
         gpu_clock_lock_ceiling_mhz=0,
     )
-    with patch.object(type(eng), "_query_max_graphics_clock_mhz", return_value=0):
-        with pytest.raises(RuntimeError, match="auto-detect.*failed"):
-            eng._resolve_clock_lock_range()
+    with (
+        patch.object(type(eng), "_query_max_graphics_clock_mhz", return_value=0),
+        pytest.raises(RuntimeError, match=r"auto-detect.*failed"),
+    ):
+        eng._resolve_clock_lock_range()
 
 
 # ---- _run_nvidia_smi --------------------------------------------------------
@@ -295,13 +301,15 @@ def test_apply_gpu_clock_lock_hard_fails_on_subprocess_error() -> None:
         gpu_clock_lock_floor_mhz=1845,
         gpu_clock_lock_ceiling_mhz=1845,
     )
-    with patch.object(
-        type(eng),
-        "_run_nvidia_smi",
-        return_value=(False, "exit=1: sudo: a password is required"),
+    with (
+        patch.object(
+            type(eng),
+            "_run_nvidia_smi",
+            return_value=(False, "exit=1: sudo: a password is required"),
+        ),
+        pytest.raises(RuntimeError, match=r"nvidia-smi -lgc.*failed"),
     ):
-        with pytest.raises(RuntimeError, match="nvidia-smi -lgc.*failed"):
-            eng._apply_gpu_clock_lock()
+        eng._apply_gpu_clock_lock()
     assert eng.stats.gpu_clock_lock_active is False
 
 
@@ -352,7 +360,9 @@ def test_torch_keepalive_loop_logs_when_torch_unavailable(monkeypatch: pytest.Mo
     a `last_error` set. The engine continues running without keepalive."""
     eng = _mk_engine(gpu_anti_jitter_mode="keepalive")
     # Make `import torch` raise ImportError when the loop tries to import.
-    real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__  # type: ignore[attr-defined]
+    real_import = (
+        __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
+    )  # type: ignore[attr-defined]
 
     def _fake_import(name: str, *args: object, **kwargs: object) -> object:
         if name == "torch":

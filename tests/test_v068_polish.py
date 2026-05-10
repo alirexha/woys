@@ -5,7 +5,7 @@ Three discrete behaviours pinned here:
 1. **`AppConfig` defaults forward from `EngineConfig`.** Without this,
    shared fields drift over releases and fresh installs reproduce bugs we
    thought were fixed. v0.6.7 shipped with `AppConfig.output_latency_ms = 100`
-   while `EngineConfig.output_latency_ms = 300` — fresh users hit the
+   while `EngineConfig.output_latency_ms = 300` - fresh users hit the
    micro-cut bug v0.6.7 was meant to escape. See `LESSONS.md §17`.
 
 2. **Malformed `config.toml` no longer crashes the app.** TOML decode errors
@@ -48,7 +48,7 @@ def test_app_config_forwards_engine_config_defaults() -> None:
     # AppConfig stores it as `str` ("" sentinel = use engine default);
     # EngineConfig stores it as a `Path`. Excluding from the check.
     shared = (set(eng_defaults) & set(app_defaults)) - {"rvc_model"}
-    # Sanity — there ARE shared fields (otherwise the test would silently pass).
+    # Sanity - there ARE shared fields (otherwise the test would silently pass).
     assert {"chunk_seconds", "output_latency_ms", "sink_name"} <= shared
 
     mismatches = {
@@ -66,7 +66,7 @@ def test_app_config_output_latency_ms_is_engine_default() -> None:
     """Pin the current expected value explicitly so a future re-bump in
     EngineConfig is visible at this level too. v0.6.8 pinned 300; v0.7.0-rc1
     dropped to 80 (user-rejected); v0.7.0-rc2 bumped to 220 (also
-    user-rejected in real Telegram VoIP); v0.7.0-rc3 bumped to 280 — the
+    user-rejected in real Telegram VoIP); v0.7.0-rc3 bumped to 280 - the
     last rung before the structural floor. The test pins 280 so a future
     drift in either direction is caught."""
     assert AppConfig().output_latency_ms == 280
@@ -79,7 +79,7 @@ def test_load_config_handles_malformed_toml(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A user with a broken `config.toml` (typo, fat-fingered edit) used to
-    crash the app with `TOMLDecodeError`. v0.6.8 — print a clear message,
+    crash the app with `TOMLDecodeError`. v0.6.8 - print a clear message,
     fall back to defaults, leave the bad file in place."""
     bad = tmp_path / "config.toml"
     bad.write_text("this is not = valid TOML [[\n")
@@ -89,8 +89,8 @@ def test_load_config_handles_malformed_toml(
     # We got a working AppConfig back, not a crash.
     assert isinstance(cfg, AppConfig)
     # And the values are EngineConfig-forwarded defaults, not garbage.
-    # v0.7.0-rc3 — output_latency 220 → 280 (rc2's 220 was user-rejected
-    # in Telegram VoIP). v0.12.4 — chunk_seconds 0.15 → 0.25 (user
+    # v0.7.0-rc3 - output_latency 220 → 280 (rc2's 220 was user-rejected
+    # in Telegram VoIP). v0.12.4 - chunk_seconds 0.15 → 0.25 (user
     # picked the chunk_seconds=0.25 family in a perceptual A/B test;
     # see CHANGELOG v0.12.4 + LESSONS §42).
     assert cfg.output_latency_ms == 280
@@ -100,7 +100,7 @@ def test_load_config_handles_malformed_toml(
     assert "malformed TOML" in err
     assert str(bad) in err
 
-    # The bad file is left in place — user can fix and re-launch.
+    # The bad file is left in place - user can fix and re-launch.
     assert bad.exists()
     assert "this is not = valid TOML" in bad.read_text()
 
@@ -134,7 +134,7 @@ def test_load_config_handles_unreadable_file(
 def _make_engine_with_stub_inference(*, raise_exc: Exception | None) -> RealtimeEngine:
     """Build a RealtimeEngine without touching ORT, with
     `_process_streaming_16k` either raising the given exception or
-    passing the input through. We DON'T call `_ensure_sessions()` —
+    passing the input through. We DON'T call `_ensure_sessions()` -
     `_safe_process_streaming_16k` is fully testable without it because
     the real `_process_streaming_16k` is the only thing it dispatches to,
     and we replace that here."""
@@ -201,7 +201,7 @@ def test_safe_process_logs_first_three_then_circuit_breaker_fires() -> None:
 
 
 def test_safe_process_consecutive_drops_resets_on_success() -> None:
-    """The circuit breaker only fires on truly *consecutive* failures —
+    """The circuit breaker only fires on truly *consecutive* failures -
     a single successful chunk between failures resets the counter."""
     # Stub that fails for the first 3 calls, then succeeds.
     state = {"calls": 0}

@@ -1,4 +1,4 @@
-"""Phase B integration tests — end-to-end SOLA in the engine.
+"""Phase B integration tests - end-to-end SOLA in the engine.
 
 Two checks:
   1. Sustained sine sweep through the full mic→model→sink pipeline (with
@@ -18,7 +18,7 @@ import pytest
 
 
 def _voice_like(sr: int, duration_s: float) -> np.ndarray:
-    """Synthesize a voiced waveform — sum of harmonics with mild AM, the
+    """Synthesize a voiced waveform - sum of harmonics with mild AM, the
     kind of signal where SOLA matters most (constant pitch, sustained)."""
     t = np.arange(int(sr * duration_s)) / sr
     f0 = 220.0
@@ -54,13 +54,11 @@ def test_streaming_no_click_artifacts_with_sola() -> None:
     chunk_n = sr // 10  # 100 ms
 
     def run(sola_on: bool) -> np.ndarray:
-        # v0.8.0 — opt out of subprocess inference; this test calls
+        # v0.8.0 - opt out of subprocess inference; this test calls
         # `_ensure_sessions` + `_process_streaming_16k` directly,
         # which only works in the legacy in-process path.
         eng = RealtimeEngine(
-            EngineConfig(
-                chunk_seconds=0.1, sola_enabled=sola_on, inference_subprocess=False
-            )
+            EngineConfig(chunk_seconds=0.1, sola_enabled=sola_on, inference_subprocess=False)
         )
         eng._ensure_sessions()
         eng.reset_streaming_state()
@@ -83,7 +81,7 @@ def test_streaming_no_click_artifacts_with_sola() -> None:
     hf_on = _hf_energy_ratio(out_on, sr)
     hf_off = _hf_energy_ratio(out_off, sr)
     print(f"\n  hf-energy ratio: SOLA off={hf_off:.4f}  SOLA on={hf_on:.4f}")
-    # SOLA should reduce or match HF-energy — never increase it.
+    # SOLA should reduce or match HF-energy - never increase it.
     assert hf_on <= hf_off + 0.02, (
         f"SOLA should not increase HF artifact energy: off={hf_off:.4f} on={hf_on:.4f}"
     )
@@ -93,7 +91,7 @@ def test_streaming_no_click_artifacts_with_sola() -> None:
 @pytest.mark.pipewire
 @pytest.mark.slow
 def test_engine_warm_avg_total_under_120ms_at_chunk_100ms() -> None:
-    """Live engine measurement — the headline v0.2.0 latency target."""
+    """Live engine measurement - the headline v0.2.0 latency target."""
     from audio.engine import EngineConfig, RealtimeEngine
     from audio.pipewire import VirtualMic, get_state
 
@@ -102,13 +100,11 @@ def test_engine_warm_avg_total_under_120ms_at_chunk_100ms() -> None:
         pytest.skip("WoysSink + woys-mic not loaded")
 
     eng = RealtimeEngine(
-        EngineConfig(
-            chunk_seconds=0.1, sola_enabled=True, inference_subprocess=False
-        )
+        EngineConfig(chunk_seconds=0.1, sola_enabled=True, inference_subprocess=False)
     )
     eng.start()
     try:
-        time.sleep(2.5)  # warmup window — cudnn autotune settles here
+        time.sleep(2.5)  # warmup window - cudnn autotune settles here
         eng.stats._recent_inference.clear()
         eng.stats._recent_total.clear()
         time.sleep(6.0)

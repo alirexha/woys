@@ -1,4 +1,4 @@
-"""Phase C tests — `woys convert <pth>`.
+"""Phase C tests - `woys convert <pth>`.
 
 Heavy: actually exports a small RVC checkpoint to ONNX. Skipped when the
 fixture .pth is missing (no model download in CI / dry-runs).
@@ -21,7 +21,7 @@ def test_convert_amitaro_pth_to_onnx(tmp_path: Path) -> None:
     I/O names match what the engine consumes."""
     if not PTH_FIXTURE.exists():
         pytest.skip(
-            f"{PTH_FIXTURE} missing — fetch via "
+            f"{PTH_FIXTURE} missing - fetch via "
             "`curl -L -o $models/amitaro_v2.pth "
             "https://huggingface.co/wok000/vcclient_model/resolve/main/"
             "rvc_v2_alpha/amitaro/amitaro_v2_40k_e100.pth`"
@@ -52,7 +52,7 @@ def test_convert_amitaro_pth_to_onnx(tmp_path: Path) -> None:
 
 @pytest.mark.gpu
 def test_convert_metadata_probe_v2() -> None:
-    """The metadata probe alone (no torch.onnx.export) — fast unit check."""
+    """The metadata probe alone (no torch.onnx.export) - fast unit check."""
     if not PTH_FIXTURE.exists():
         pytest.skip(f"{PTH_FIXTURE} missing")
 
@@ -69,7 +69,7 @@ def test_convert_metadata_probe_v2() -> None:
 
 
 def test_cli_convert_handles_missing_input(tmp_path: Path) -> None:
-    """A clear error, exit code 1 — never silent failure."""
+    """A clear error, exit code 1 - never silent failure."""
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
     from woys.convert import cli_convert
 

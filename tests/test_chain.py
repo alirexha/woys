@@ -1,6 +1,6 @@
-"""v0.13.2 — guard rails for the RNNoise chain module.
+"""v0.13.2 - guard rails for the RNNoise chain module.
 
-These tests do NOT exercise pactl/pipewire-pulse — they would need a
+These tests do NOT exercise pactl/pipewire-pulse - they would need a
 real pipewire-pulse session and the LADSPA plugin installed, neither of
 which we want CI to depend on. They DO lock in the topology decisions
 that fix v0.13.0's leak so a future refactor can't quietly regress:
@@ -34,7 +34,7 @@ class _PactlRouter:
     """Mock for subprocess.run that routes by the command list it receives.
 
     subprocess.run is called positionally with a single list (the argv),
-    so the mock signature is `(cmd, **kwargs)` — NOT `*args`.
+    so the mock signature is `(cmd, **kwargs)` - NOT `*args`.
     """
 
     def __init__(
@@ -102,7 +102,7 @@ def test_setup_loads_audio_sink_class_and_mono_chain() -> None:
 
     null_sink, ladspa_sink, loopback, user_remap = loads
 
-    # 1. Null-sink: must be Audio/Sink (NOT Audio/Source/Virtual — that
+    # 1. Null-sink: must be Audio/Sink (NOT Audio/Source/Virtual - that
     #    was the v0.13.0 bug). Description is the _internal- marker so
     #    users see "this isn't the source you want" in the dropdown.
     assert "module-null-sink" in null_sink
@@ -137,7 +137,7 @@ def test_setup_loads_audio_sink_class_and_mono_chain() -> None:
     assert f"master={chain.SINK_FINAL}.monitor" in user_remap
     assert f"source_name={chain.SOURCE_USER_FACING}" in user_remap
     assert f"source_properties=device.description={chain.DESC_USER_FACING}" in user_remap
-    # A friendly name MUST NOT start with "_internal-" — otherwise users
+    # A friendly name MUST NOT start with "_internal-" - otherwise users
     # looking for the daily-driver source won't recognize it.
     assert not chain.DESC_USER_FACING.startswith("_internal-")
     assert not chain.SOURCE_USER_FACING.startswith("_internal-")
@@ -146,7 +146,7 @@ def test_setup_loads_audio_sink_class_and_mono_chain() -> None:
 def test_descriptions_have_no_spaces() -> None:
     """v0.13.3 lesson: pactl on pipewire-pulse splits sink/source-property
     values on whitespace before the proplist parser sees them. A description
-    containing a space is silently truncated at the first space — apps see
+    containing a space is silently truncated at the first space - apps see
     only the prefix. This test makes sure no future change reintroduces a
     space into any of the descriptions exposed to users."""
     for desc in (
@@ -155,10 +155,10 @@ def test_descriptions_have_no_spaces() -> None:
         chain.DESC_FINAL_SINK,
     ):
         assert " " not in desc, (
-            f"description {desc!r} contains a space — pactl will truncate it; use hyphens instead"
+            f"description {desc!r} contains a space - pactl will truncate it; use hyphens instead"
         )
         assert "\t" not in desc and "\n" not in desc, (
-            f"description {desc!r} contains whitespace — same caveat"
+            f"description {desc!r} contains whitespace - same caveat"
         )
 
 
@@ -211,7 +211,7 @@ def test_setup_unloads_stale_chain_before_loading() -> None:
 
 def test_setup_rolls_back_when_ladspa_load_fails() -> None:
     """If module-ladspa-sink fails (e.g. label mismatch), the null-sink
-    we already loaded must be cleaned up — otherwise the user is left
+    we already loaded must be cleaned up - otherwise the user is left
     with an orphan woys-mic-clean sink that LOOKS routable but isn't."""
     null_sink_listing = (
         f"77\tmodule-null-sink\tmedia.class=Audio/Sink sink_name={chain.SINK_FINAL}\n"

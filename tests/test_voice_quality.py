@@ -1,4 +1,4 @@
-"""v0.5.0 — real-audio QA harness.
+"""v0.5.0 - real-audio QA harness.
 
 Drives the *full* inference path with synthetic voiced input (multi-harmonic
 + vibrato so it has speech-like spectrum), captures per-voice output, and
@@ -18,7 +18,7 @@ is noisy (RVC remaps timbre, so output won't match the model's training
 clip), and (c) the engine test cares about audio-path correctness, not the
 input being recognizable English.
 
-Marked `@pytest.mark.real_audio` and `@pytest.mark.slow` — runs in CI
+Marked `@pytest.mark.real_audio` and `@pytest.mark.slow` - runs in CI
 separately. Skipped when fewer than 2 voice models are installed.
 """
 
@@ -262,7 +262,7 @@ def test_voices_produce_distinguishable_outputs() -> None:
     similarities: list[str] = []
     # Threshold 0.999: "literally identical samples" guard. RVC remaps voice
     # timbre but the gross spectrum can stay similar across voices when fed
-    # the same synthetic input — that's expected, not a bug. Real verdict
+    # the same synthetic input - that's expected, not a bug. Real verdict
     # comes from the user listening to the saved WAVs.
     for a, b in pairs:
         cs = _cos_sim(sigs[a], sigs[b])
@@ -272,7 +272,7 @@ def test_voices_produce_distinguishable_outputs() -> None:
     print("\n  cross-voice mel cosine similarities:")
     for s in similarities:
         print(f"    {s}")
-    assert not too_similar, "voices look byte-identical — swap may not be working: " + "; ".join(
+    assert not too_similar, "voices look byte-identical - swap may not be working: " + "; ".join(
         too_similar
     )
 
@@ -320,7 +320,7 @@ def test_warm_inference_under_60ms_per_voice() -> None:
 
 def _silence_then_speech(duration_s: float = 3.0, sr: int = SR_INPUT) -> np.ndarray:
     """Half a second of silence, two seconds of voiced, half a second silent.
-    Used by the noise-floor test — the silent regions are where input is
+    Used by the noise-floor test - the silent regions are where input is
     zero, so anything in the output there is engine-introduced noise.
     """
     n_total = int(sr * duration_s)
@@ -332,7 +332,7 @@ def _silence_then_speech(duration_s: float = 3.0, sr: int = SR_INPUT) -> np.ndar
 
 
 def _sustained_vowel(duration_s: float = 3.0, sr: int = SR_INPUT) -> np.ndarray:
-    """Steady 200 Hz harmonic stack — no AM, no pitch contour. Anything in
+    """Steady 200 Hz harmonic stack - no AM, no pitch contour. Anything in
     the output that *isn't* steady is an artifact."""
     t = np.arange(int(sr * duration_s)) / sr
     f0 = 200.0
@@ -363,7 +363,7 @@ def test_no_aliasing_above_nyquist_per_voice() -> None:
     be ≥ 30 dB below the speech-band energy.
 
     We compare energy in [200, 3000] Hz vs. [model_sr/2 + 200, sink_rate/2 - 200].
-    For a 16k voice resampled to 48k, that's [200, 3000] vs [8200, 23800] —
+    For a 16k voice resampled to 48k, that's [200, 3000] vs [8200, 23800] -
     the latter band must be quiet.
     """
     voices = _all_voice_paths()
@@ -384,7 +384,7 @@ def test_no_aliasing_above_nyquist_per_voice() -> None:
         out48 = _resample(out_native, model_sr, sink_rate)
         # Above-Nyquist band only exists when model_sr < sink_rate.
         if model_sr >= sink_rate:
-            detail.append(f"{vp.stem}: model_sr {model_sr} ≥ sink — no aliasing band to test")
+            detail.append(f"{vp.stem}: model_sr {model_sr} ≥ sink - no aliasing band to test")
             continue
         spec = np.abs(np.fft.rfft(out48))
         freqs = np.fft.rfftfreq(out48.size, 1.0 / sink_rate)

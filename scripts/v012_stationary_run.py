@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""v0.12.0 Phase 1 — drive the engine with a STATIONARY voiced tone
+"""v0.12.0 Phase 1 - drive the engine with a STATIONARY voiced tone
 (constant 220 Hz + tiny noise) for `--duration` seconds, while
 recording WoysSink.monitor concurrently. The constant input has no
 internal transitions, so any flux events in the recording must be
@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import math
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -26,10 +25,12 @@ if str(REPO / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO / "scripts"))
 
 
-def _build_stationary_signal(duration_s: float, sr: int, freq_hz: float = 220.0, rms: float = 0.10) -> np.ndarray:
+def _build_stationary_signal(
+    duration_s: float, sr: int, freq_hz: float = 220.0, rms: float = 0.10
+) -> np.ndarray:
     """Constant-pitch sine + low pink-ish noise. No transitions, no
     silences. Same RMS the harness uses for its voiced sections."""
-    n = int(round(duration_s * sr))
+    n = round(duration_s * sr)
     t = np.arange(n, dtype=np.float32) / sr
     sine = np.sin(2.0 * math.pi * freq_hz * t).astype(np.float32)
     rng = np.random.default_rng(0xC0FFEE)
@@ -46,7 +47,9 @@ def _build_stationary_signal(duration_s: float, sr: int, freq_hz: float = 220.0,
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--duration", type=float, default=30.0)
     parser.add_argument("--freq", type=float, default=220.0, help="stationary tone Hz")
     parser.add_argument("--out", type=Path, default=Path("/tmp/v012_stationary.json"))
@@ -62,8 +65,10 @@ def main() -> int:
         return _build_stationary_signal(duration_s, sample_rate, freq_hz=args.freq, rms=0.10)
 
     harness._build_signal = stationary_builder
-    print(f"[stationary] driving harness with constant {args.freq} Hz tone for {args.duration:.0f}s",
-          file=sys.stderr)
+    print(
+        f"[stationary] driving harness with constant {args.freq} Hz tone for {args.duration:.0f}s",
+        file=sys.stderr,
+    )
 
     out = harness._run_engine_synthetic(
         duration_s=args.duration,

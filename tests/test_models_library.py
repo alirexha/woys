@@ -43,7 +43,7 @@ def test_find_by_name_resolves_stem_and_filename(tmp_path: Path) -> None:
 def test_find_by_name_accepts_absolute_path(tmp_path: Path) -> None:
     f = tmp_path / "bar.onnx"
     _write_dummy_onnx(f)
-    # Absolute-path passthrough — useful when the user has a model outside the cache.
+    # Absolute-path passthrough - useful when the user has a model outside the cache.
     assert find_by_name(str(f), tmp_path) == f
 
 
@@ -71,13 +71,13 @@ def test_model_entry_dataclass_round_trip(tmp_path: Path) -> None:
     assert isinstance(e, ModelEntry)
     assert e.name == "small"
     assert e.size_mib > 0
-    # Probe will fail on garbage bytes — that's allowed (sr/is_v2/f0 = None).
+    # Probe will fail on garbage bytes - that's allowed (sr/is_v2/f0 = None).
     assert e.sample_rate is None
     assert e.is_v2 is None
     assert e.f0 is None
 
 
-def test_cleanup() -> None:  # pragma: no cover — keeps pytest happy if temp leaks
+def test_cleanup() -> None:  # pragma: no cover - keeps pytest happy if temp leaks
     leftover = Path("/tmp/woys_models_test")
     if leftover.exists():
         shutil.rmtree(leftover, ignore_errors=True)

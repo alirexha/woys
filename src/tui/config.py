@@ -3,10 +3,10 @@
 Round-trips (load → save → load) are stable: any unknown keys present in the
 on-disk file pass through untouched.
 
-v0.6.8 — `AppConfig` defaults forward from `EngineConfig`. EngineConfig is
+v0.6.8 - `AppConfig` defaults forward from `EngineConfig`. EngineConfig is
 the canonical source of truth for runtime parameters; AppConfig is the
 user-facing config-file shape. Without forwarding, the two drift over
-releases (LESSONS §17 — v0.6.7 shipped with `output_latency_ms = 100`
+releases (LESSONS §17 - v0.6.7 shipped with `output_latency_ms = 100`
 in `AppConfig` while `EngineConfig` had been bumped to 300, so fresh
 installs reproduced the v0.6.7 micro-cut bug we'd just fixed).
 """
@@ -28,7 +28,7 @@ from audio.engine import EngineConfig as _EngineConfig
 CONFIG_DIR = Path.home() / ".config" / "woys"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
-# Single shared instance — evaluated at module import. AppConfig's
+# Single shared instance - evaluated at module import. AppConfig's
 # field defaults reference attributes of this instance so a future
 # default-bump in `EngineConfig` propagates here automatically.
 _E = _EngineConfig()
@@ -37,7 +37,7 @@ _E = _EngineConfig()
 @dataclass
 class AppConfig:
     rvc_model: str = ""  # absolute path, "" = use engine default
-    # Runtime parameters — defaults forwarded from EngineConfig.
+    # Runtime parameters - defaults forwarded from EngineConfig.
     f0_up_key: int = _E.f0_up_key
     sid: int = _E.sid
     chunk_seconds: float = _E.chunk_seconds
@@ -53,22 +53,22 @@ class AppConfig:
     sola_search_ms: float = _E.sola_search_ms
     sola_context_ms: float = _E.sola_context_ms
     input_gain_db: float = _E.input_gain_db
-    # v0.7.0-rc4 — added to AppConfig's forwarded set. Pre-rc4 these
+    # v0.7.0-rc4 - added to AppConfig's forwarded set. Pre-rc4 these
     # lived only on EngineConfig, so user overrides in `config.toml`
     # were silently ignored (the audit `docs/16-audit/synthesis.md`
     # confirmed alireza's `input_gate_dbfs = -200.0` never made it
-    # to the engine — every prior rc ran the dataclass default).
+    # to the engine - every prior rc ran the dataclass default).
     # `prefer_pw_cat` had the same drift since rc1.
     input_gate_dbfs: float = _E.input_gate_dbfs
     input_gate_hysteresis_ms: float = _E.input_gate_hysteresis_ms
     prefer_pw_cat: bool = _E.prefer_pw_cat
     prefer_native_pw: bool = _E.prefer_native_pw
     prefer_native_pw_buffer_ms: int = _E.prefer_native_pw_buffer_ms
-    # v0.10.0-rc3 — GPU keep-alive. Default off (A/B test surface).
+    # v0.10.0-rc3 - GPU keep-alive. Default off (A/B test surface).
     gpu_keepalive_enabled: bool = _E.gpu_keepalive_enabled
     gpu_keepalive_interval_ms: int = _E.gpu_keepalive_interval_ms
     gpu_keepalive_input_len: int = _E.gpu_keepalive_input_len
-    # v0.11.0 — GPU clock lock + torch separate-stream keepalive.
+    # v0.11.0 - GPU clock lock + torch separate-stream keepalive.
     gpu_anti_jitter_mode: str = _E.gpu_anti_jitter_mode
     gpu_clock_lock_enabled: bool = _E.gpu_clock_lock_enabled
     gpu_clock_lock_floor_mhz: int = _E.gpu_clock_lock_floor_mhz
@@ -98,7 +98,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     options (sink_name, monitor, chunk_seconds, etc.) without having to read the
     source code first.
 
-    v0.6.8 — malformed TOML or unreadable file no longer crashes the app.
+    v0.6.8 - malformed TOML or unreadable file no longer crashes the app.
     A clear message is printed to stderr and an in-memory `AppConfig()`
     with EngineConfig-forwarded defaults is returned instead. The bad
     file is left in place for the user to inspect / fix.
@@ -114,7 +114,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
             raw = tomllib.load(f)
     except tomllib.TOMLDecodeError as e:
         print(
-            f"[woys] {path} is malformed TOML — using in-memory defaults instead.\n"
+            f"[woys] {path} is malformed TOML - using in-memory defaults instead.\n"
             f"       parse error: {e}\n"
             f"       (the file was NOT touched; fix the syntax and re-launch)",
             file=sys.stderr,
@@ -122,7 +122,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
         return AppConfig()
     except OSError as e:
         print(
-            f"[woys] cannot read {path} ({type(e).__name__}: {e}) — "
+            f"[woys] cannot read {path} ({type(e).__name__}: {e}) - "
             f"using in-memory defaults instead.",
             file=sys.stderr,
         )
@@ -130,14 +130,14 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     known = {f.name for f in AppConfig.__dataclass_fields__.values()} - {"_extras"}
     fields_in: dict[str, Any] = {k: raw[k] for k in known if k in raw}
     extras = {k: v for k, v in raw.items() if k not in known}
-    # v0.7.0 — bump stale v0.6.x defaults so existing users get the latency
+    # v0.7.0 - bump stale v0.6.x defaults so existing users get the latency
     # win. Keyed off `config_schema_version`: absent / < 7 means the file
     # was last written by v0.6.x or earlier. We only touch fields whose
-    # value matches the previous version's *default* — explicit user
+    # value matches the previous version's *default* - explicit user
     # overrides are preserved. The bumped fields are then written back.
     schema = int(extras.pop("config_schema_version", 0) or 0)
     migrated = False
-    # ---- schema 0 → 7 — the original v0.7.0-rc1 latency-defaults bump.
+    # ---- schema 0 → 7 - the original v0.7.0-rc1 latency-defaults bump.
     if schema < 7:
         # chunk_seconds 0.25 → engine default (mic-input wait, biggest lever).
         if fields_in.get("chunk_seconds") == 0.25:
@@ -170,7 +170,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
                 if pdata.get("sola_search_ms") == 4.0:
                     pdata["sola_search_ms"] = _E.sola_search_ms
                     migrated = True
-    # ---- schema 7 → 8 — v0.7.0-rc1's 80 ms output_latency was empirically
+    # ---- schema 7 → 8 - v0.7.0-rc1's 80 ms output_latency was empirically
     # too aggressive (user reported audible cut increase). rc2 bumped the
     # default to 220 ms; users who landed on 80 via the rc1 migration
     # get pulled forward. Note: the rc3 leg below cascades them on to 280.
@@ -186,8 +186,8 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
                 if pdata.get("output_latency_ms") == 80:
                     pdata["output_latency_ms"] = _E.output_latency_ms
                     migrated = True
-    # ---- schema 8 → 9 — v0.7.0-rc2's 220 ms was still audibly cutting in
-    # real-world Telegram VoIP testing. rc3 bumps to 280 ms (the last rung —
+    # ---- schema 8 → 9 - v0.7.0-rc2's 220 ms was still audibly cutting in
+    # real-world Telegram VoIP testing. rc3 bumps to 280 ms (the last rung -
     # 20 ms under the known-clean v0.6.x 300 ms default). Users who landed
     # on 220 via the rc2 default get pulled forward; explicit non-default
     # values (e.g. 250) are left alone.
@@ -203,7 +203,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
                 if pdata.get("output_latency_ms") == 220:
                     pdata["output_latency_ms"] = _E.output_latency_ms
                     migrated = True
-    # ---- schema 9 → 10 — v0.7.0-rc4 audit (`docs/16-audit/synthesis.md`)
+    # ---- schema 9 → 10 - v0.7.0-rc4 audit (`docs/16-audit/synthesis.md`)
     # found rc3's persistent cuts came from sources other than
     # `output_latency_ms`. Two defaults bump and two new fields land.
     #
@@ -253,7 +253,7 @@ def save_config(cfg: AppConfig, path: Path = CONFIG_FILE) -> None:
     data = {k: v for k, v in asdict(cfg).items() if not k.startswith("_")}
     data.update(cfg._extras)
     # Write atomically via .tmp + rename so a crash mid-write can't corrupt
-    # config. v0.6.8 — chmod 0600 (was inheriting umask 0644). Config can
+    # config. v0.6.8 - chmod 0600 (was inheriting umask 0644). Config can
     # contain user paths and tuning that other local users have no business
     # reading.
     tmp = path.with_suffix(path.suffix + ".tmp")

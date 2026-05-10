@@ -17,8 +17,8 @@ Run:
         --duration 60
 
 Outputs:
-- docs/sweep_latency_<timestamp>.json — full numeric results
-- docs/sweep_latency_<timestamp>.png — latency-vs-cuts/min plot
+- docs/sweep_latency_<timestamp>.json - full numeric results
+- docs/sweep_latency_<timestamp>.png - latency-vs-cuts/min plot
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ FIXTURE = REPO / "tests" / "fixtures" / "auto_sweep_input.wav"
 class _FixtureInputStream:
     """Drop-in for `sd.InputStream` that streams a WAV at realtime pace.
 
-    Critical detail — mimics how a real mic delivers audio CONCURRENTLY
+    Critical detail - mimics how a real mic delivers audio CONCURRENTLY
     with engine processing, not sequentially. Real mic: PortAudio fills
     an internal buffer at sample rate while the engine processes the
     previous chunk; when `read()` is called the buffer already has data
@@ -108,7 +108,7 @@ class _FixtureInputStream:
         # from stream start. We sleep only as much as needed to align
         # the next return with that wall-clock target. If the engine is
         # ahead (just finished a fast chunk), we wait. If the engine is
-        # behind (slow inference), we don't sleep — the buffer would
+        # behind (slow inference), we don't sleep - the buffer would
         # already have the data ready.
         if self._start_time is None:
             self._start_time = time.perf_counter()
@@ -122,9 +122,7 @@ class _FixtureInputStream:
             self._pos = end
         elif self._pos < self._data.size:
             tail = self._data[self._pos :]
-            chunk = np.concatenate(
-                [tail, np.zeros(frames - tail.size, dtype=np.float32)]
-            )
+            chunk = np.concatenate([tail, np.zeros(frames - tail.size, dtype=np.float32)])
             self._pos = self._data.size
         else:
             chunk = np.zeros(frames, dtype=np.float32)
@@ -167,7 +165,7 @@ def _run_engine(
     eng.start()
     try:
         # Wait for the harness to start its capture before snapshotting
-        # stats — queue_full_events otherwise accumulates during the
+        # stats - queue_full_events otherwise accumulates during the
         # pre-capture warmup window when pw-cat / pacat has no drain.
         capture_started.wait(timeout=20.0)
         # Reset the cumulative counters that we want to attribute to the
@@ -203,23 +201,24 @@ def _capture_monitor(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # parec writes raw PCM; we wrap as WAV ourselves so woys-diag can read it.
     raw = out_path.with_suffix(".raw")
-    proc = subprocess.Popen(
-        [
-            "parec",
-            f"--device={source}",
-            "--rate=48000",
-            "--channels=2",
-            "--format=s16le",
-            "--raw",
-        ],
-        stdout=open(raw, "wb"),
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        time.sleep(duration_s)
-    finally:
-        proc.terminate()
-        proc.wait(timeout=2.0)
+    with open(raw, "wb") as raw_fh:
+        proc = subprocess.Popen(
+            [
+                "parec",
+                f"--device={source}",
+                "--rate=48000",
+                "--channels=2",
+                "--format=s16le",
+                "--raw",
+            ],
+            stdout=raw_fh,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            time.sleep(duration_s)
+        finally:
+            proc.terminate()
+            proc.wait(timeout=2.0)
     # Convert raw → wav.
     raw_bytes = raw.read_bytes()
     raw.unlink()
@@ -317,7 +316,7 @@ def run_one(
     )
     eng_t.start()
 
-    # Let the engine warm up — start() blocks on warmup but we still want
+    # Let the engine warm up - start() blocks on warmup but we still want
     # a couple seconds for the run-loop to lock onto cadence + the
     # fixture's 3 s lead silence to flow through.
     time.sleep(4.0)
@@ -350,7 +349,7 @@ def run_one(
     out = diag.stdout + "\n" + diag.stderr
     report_path = capture_path.with_suffix(".md")
     cuts, gaps, clicks = _parse_diag(out, report_path)
-    if not (cuts == cuts):  # NaN check
+    if cuts != cuts:  # NaN check
         notes.append("woys-diag did not produce a per-minute number")
 
     return _Run(
@@ -400,7 +399,7 @@ def _plot(runs: list[_Run], png_path: Path, threshold: float) -> None:
     ax.axhline(threshold, color="#d95f0e", linestyle="--", label=f"acceptance ≤ {threshold:g}/min")
     ax.set_xlabel("output_latency_ms (pacat / pw-cat buffer)")
     ax.set_ylabel("cuts / min (woys-diag analyze)")
-    ax.set_title(f"v0.7.0 latency sweep — {runs_sorted[0].voice} on {runs_sorted[0].backend}")
+    ax.set_title(f"v0.7.0 latency sweep - {runs_sorted[0].voice} on {runs_sorted[0].backend}")
     ax.grid(True, alpha=0.3)
     ax.legend()
     fig.tight_layout()
@@ -423,7 +422,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if not FIXTURE.exists():
-        print(f"ERROR: fixture missing — run scripts/gen_sweep_fixture.py first", file=sys.stderr)
+        print("ERROR: fixture missing - run scripts/gen_sweep_fixture.py first", file=sys.stderr)
         sys.exit(2)
     if not DIAG.exists():
         print(f"ERROR: woys-diag not at {DIAG}", file=sys.stderr)
@@ -466,26 +465,25 @@ def main() -> None:
             f"avg_inf={run.avg_inference_ms:.1f}ms p99={run.p99_inference_ms:.1f}ms"
         )
         # Save partial results after each run so we keep them on crash.
-        json_path.write_text(
-            json.dumps([asdict(r) for r in runs], indent=2)
-        )
+        json_path.write_text(json.dumps([asdict(r) for r in runs], indent=2))
         # Settle PipeWire between runs.
         time.sleep(1.5)
 
     if not runs:
-        print("\nno runs completed — nothing to plot", file=sys.stderr)
+        print("\nno runs completed - nothing to plot", file=sys.stderr)
         sys.exit(3)
 
     _plot(runs, png_path, args.threshold)
 
     # Pick the recommendation.
     runs_sorted = sorted(runs, key=lambda r: r.output_latency_ms)
-    accepted = [r for r in runs_sorted if r.cuts_per_min == r.cuts_per_min and r.cuts_per_min < args.threshold]
+    accepted = [
+        r
+        for r in runs_sorted
+        if r.cuts_per_min == r.cuts_per_min and r.cuts_per_min < args.threshold
+    ]
     print("\n=== summary ===")
-    print(
-        f"{'lat':>5}  {'cuts/min':>8}  {'gaps':>5}  {'clicks':>7}  {'late':>5}  "
-        f"{'p99_inf':>8}"
-    )
+    print(f"{'lat':>5}  {'cuts/min':>8}  {'gaps':>5}  {'clicks':>7}  {'late':>5}  {'p99_inf':>8}")
     for r in runs_sorted:
         print(
             f"{r.output_latency_ms:>5}  {r.cuts_per_min:>8.1f}  {r.silent_gaps:>5}  "

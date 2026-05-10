@@ -7,7 +7,7 @@ worked because cli.py inserted the right path first. This test runs
 in a FRESH subprocess (no cli.main side effects) to confirm the path
 resolution stands on its own.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def test_tray_module_imports_in_fresh_python() -> None:
 
 
 def test_tray_engine_status_returns_safely_with_no_running_tui() -> None:
-    """`_engine_status` should return (False, error_string) — never raise —
+    """`_engine_status` should return (False, error_string) - never raise -
     when there is no TUI listening on the control socket."""
     # Run in a subprocess so we don't accidentally hit a TUI the dev started.
     env = os.environ.copy()

@@ -1,4 +1,4 @@
-"""v0.6.0 — migrate an existing vcclient-cachy install to woys.
+"""v0.6.0 - migrate an existing vcclient-cachy install to woys.
 
 Run by `install.sh` before installing the new code, so the user's models +
 config + systemd unit move to the new layout in one atomic step. Safe to
@@ -16,14 +16,14 @@ What gets rewritten:
 
 Systemd:
     Old unit `vcclient-cachy-mic.service` is stopped + disabled + removed.
-    Install of the new unit (`woys-mic.service`) is left to install.sh —
+    Install of the new unit (`woys-mic.service`) is left to install.sh -
     that's where the new file lives.
 
 PipeWire:
     v0.6.0 to v0.6.4: the user-facing SOURCE name (`vcclient-mic`) was
     deliberately preserved across the rename so Discord / CS2 / Telegram
     didn't need re-configuration.
-    v0.6.5: that compromise was retired — the source is now `woys-mic`
+    v0.6.5: that compromise was retired - the source is now `woys-mic`
     too. Apps need to re-select their input device once. The remap-source
     rename is handled by `pipewire.VirtualMic.ensure()` (it unloads any
     legacy `vcclient-mic` module before loading the new one), not by this
@@ -32,7 +32,7 @@ PipeWire:
     The internal SINK name changed in v0.6.0 (`VCClientCachySink` →
     `WoysSink`). This migrator rewrites the `sink_name` key in
     `config.toml` accordingly so the engine targets the sink that
-    v0.6.0+ actually loads. v0.6.4 fix — without this rewrite,
+    v0.6.0+ actually loads. v0.6.4 fix - without this rewrite,
     `pw-cat --target=VCClientCachySink` silently falls back to the
     default sink (laptop speakers) since the legacy sink no longer
     exists. See `docs/10-monitor-leak-diag.md`.
@@ -56,13 +56,13 @@ from typing import Any
 OLD_NAME = "vcclient-cachy"
 NEW_NAME = "woys"
 
-# v0.6.4 — the v0.6.0 rename also changed the internal PipeWire sink
+# v0.6.4 - the v0.6.0 rename also changed the internal PipeWire sink
 # name. Configs from v0.5.x carry the legacy string and must be rewritten
 # or the engine routes playback to the default sink (laptop speakers).
 LEGACY_SINK_NAME = "VCClientCachySink"
 NEW_SINK_NAME = "WoysSink"
 
-# Anchor points relative to $HOME — overridable for tests.
+# Anchor points relative to $HOME - overridable for tests.
 DEFAULT_HOME = Path.home()
 
 
@@ -98,7 +98,7 @@ def _rewrite_paths_in_value(value: Any, *, key: str | None = None) -> Any:
       • exact string LEGACY_SINK_NAME → NEW_SINK_NAME (sink rename, v0.6.4)
 
     Numeric bumps (only fire when `key` matches a known stale-default name):
-      • output_latency_ms < 300 → 300   (v0.6.7 — needed to absorb the
+      • output_latency_ms < 300 → 300   (v0.6.7 - needed to absorb the
         engine's 250 ms-chunk writer cadence without ring-buffer
         underruns at the playback backend. Original v0.5.2 bump was
         30 → 100; v0.6.7 bumps further to 300 because the playback
@@ -117,7 +117,7 @@ def _rewrite_paths_in_value(value: Any, *, key: str | None = None) -> Any:
             out = NEW_SINK_NAME
         return out
     if isinstance(value, bool):
-        # bool is a subclass of int — must short-circuit before the int branch.
+        # bool is a subclass of int - must short-circuit before the int branch.
         return value
     if isinstance(value, int) and key == "output_latency_ms" and value < 300:
         return 300
@@ -129,7 +129,7 @@ def _rewrite_paths_in_value(value: Any, *, key: str | None = None) -> Any:
 
 
 def _toml_dump(data: dict[str, Any], path: Path) -> None:
-    """Hand-rolled minimal TOML emitter — sufficient for config.toml's flat
+    """Hand-rolled minimal TOML emitter - sufficient for config.toml's flat
     [section]-based layout. We avoid pulling in `tomli_w` here so the
     migrator runs on a stock Python 3.11 (the install.sh runs us BEFORE
     creating the venv).
@@ -209,12 +209,12 @@ def _systemctl(args: list[str], *, dry_run: bool, log: list[str]) -> int:
 
 
 def _stop_old_systemd_unit(home: Path, *, dry_run: bool, log: list[str]) -> None:
-    """Stop, disable, remove the old unit if present. Always best-effort —
+    """Stop, disable, remove the old unit if present. Always best-effort -
     a failure shouldn't abort the migration."""
     unit_name = f"{OLD_NAME}-mic.service"
     unit_path = home / ".config" / "systemd" / "user" / unit_name
     if not unit_path.exists():
-        log.append(f"  no old systemd unit at {unit_path} — skip")
+        log.append(f"  no old systemd unit at {unit_path} - skip")
         return
     _systemctl(["stop", unit_name], dry_run=dry_run, log=log)
     _systemctl(["disable", unit_name], dry_run=dry_run, log=log)
@@ -243,7 +243,7 @@ def migrate(home: Path | None = None, *, dry_run: bool = False) -> tuple[bool, l
 
     fresh_install = not (old_share.exists() or old_config.exists() or old_cache.exists())
     if fresh_install:
-        log.append("  no old install detected — fresh install path, nothing to do")
+        log.append("  no old install detected - fresh install path, nothing to do")
         return False, log
 
     # 1) Stop the old systemd unit BEFORE moving anything (so the running
@@ -272,7 +272,7 @@ def main() -> int:
     changed, log = migrate(dry_run=args.dry_run)
     for line in log:
         print(line)
-    # No-op on a fresh install is success — a fresh box with no
+    # No-op on a fresh install is success - a fresh box with no
     # vcclient-cachy state is the expected case for new users.
     _ = changed
     return 0

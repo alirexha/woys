@@ -1,4 +1,4 @@
-"""Batch-import a starter voice library — see VOICE_LIBRARY_BRIEF.md.
+"""Batch-import a starter voice library - see VOICE_LIBRARY_BRIEF.md.
 
 Driver for the 9-model batch import. Runs each model through:
   download → verify zip → extract → find .pth → convert → validate inference
@@ -61,7 +61,7 @@ VOICES: list[Voice] = [
         "harley_quinn",
         "Harley Quinn V2 (Enemy Within, Titan Pretrain)",
         "https://huggingface.co/Cauthess/HarleyQuinnTitanPretrain/resolve/main/Harley%20Quinn%20Version%202%20-%20Enemy%20Within.zip",
-        note="Titan pretrain — may fail to convert. 30 min cap, then skip.",
+        note="Titan pretrain - may fail to convert. 30 min cap, then skip.",
     ),
     Voice(
         "catwoman",
@@ -72,7 +72,7 @@ VOICES: list[Voice] = [
         "megan_fox",
         "Megan Fox",
         "https://huggingface.co/dragoncrack/https___www_donationalerts_com_r_crack_dragon/resolve/main/MeganFox.zip",
-        note="Sketchy uploader repo name — verify quality, log if garbage.",
+        note="Sketchy uploader repo name - verify quality, log if garbage.",
     ),
     Voice(
         "batman_troy_baker",
@@ -131,7 +131,7 @@ def _verify_zip(path: Path) -> bool:
     r = subprocess.run(["unzip", "-tq", str(path)], capture_output=True, text=True)
     if r.returncode == 0:
         return True
-    # v0.6.6 — Info-ZIP `unzip` (the system default on most distros) doesn't
+    # v0.6.6 - Info-ZIP `unzip` (the system default on most distros) doesn't
     # support newer compression methods like zstd. The Jennie zip from
     # natanworkspace/Legacy_Core_Models hits this path. Fall back to `7z`,
     # which handles the broader format surface.
@@ -149,7 +149,7 @@ def _extract_zip(path: Path, dest: Path) -> bool:
     r = subprocess.run(["unzip", "-q", str(path), "-d", str(dest)], capture_output=True, text=True)
     if r.returncode == 0:
         return True
-    # Same fallback as `_verify_zip` — try `7z` for archives whose
+    # Same fallback as `_verify_zip` - try `7z` for archives whose
     # compression `unzip` rejected.
     p7z = shutil.which("7z")
     if p7z is None:
@@ -190,7 +190,7 @@ def _find_index(extracted: Path) -> Path | None:
 
 def _convert(pth: Path, output_onnx: Path) -> bool:
     """Run `woys convert` as a subprocess so we exercise the same
-    code path the user would. fp32 only — fp16 only auto-promoted by
+    code path the user would. fp32 only - fp16 only auto-promoted by
     `fp16-convert` for foundations, and contentvec fp16 quality concerns
     (LESSONS §8) make voice-model fp16 a per-user opt-in too."""
     venv_bin = REPO_ROOT / ".venv" / "bin" / "woys"
@@ -267,7 +267,7 @@ def _register_profile(slug: str, onnx_path: Path, display: str, source_url: str,
 def _write_sources_doc(outcomes: list[Outcome]) -> None:
     SOURCES_MD.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# Voice library — provenance",
+        "# Voice library - provenance",
         "",
         "Audit trail for the starter voice library imported via `scripts/voice_library_import.py`.",
         "",
@@ -304,29 +304,29 @@ def process(voice: Voice) -> Outcome:
 
     # 1. Download
     if not _download(voice.url, zip_path):
-        _log_blocker(f"voice-library: {voice.slug} — download failed after 2 attempts: {voice.url}")
+        _log_blocker(f"voice-library: {voice.slug} - download failed after 2 attempts: {voice.url}")
         return Outcome(voice, "skipped", "download failed")
 
     # 2. Verify
     if not _verify_zip(zip_path):
         zip_path.unlink(missing_ok=True)
         if not _download(voice.url, zip_path):
-            _log_blocker(f"voice-library: {voice.slug} — corrupt zip + redownload failed")
+            _log_blocker(f"voice-library: {voice.slug} - corrupt zip + redownload failed")
             return Outcome(voice, "skipped", "corrupt zip")
         if not _verify_zip(zip_path):
-            _log_blocker(f"voice-library: {voice.slug} — corrupt zip after retry")
+            _log_blocker(f"voice-library: {voice.slug} - corrupt zip after retry")
             return Outcome(voice, "skipped", "corrupt zip after retry")
 
     # 3. Extract
     extract_dir = stage / "extracted"
     if not _extract_zip(zip_path, extract_dir):
-        _log_blocker(f"voice-library: {voice.slug} — unzip failed")
+        _log_blocker(f"voice-library: {voice.slug} - unzip failed")
         return Outcome(voice, "skipped", "unzip failed")
 
     # 4. Find .pth
     pth = _find_pth(extract_dir)
     if pth is None:
-        _log_blocker(f"voice-library: {voice.slug} — no usable .pth in archive")
+        _log_blocker(f"voice-library: {voice.slug} - no usable .pth in archive")
         return Outcome(voice, "skipped", "no .pth")
     print(f"  pth: {pth.name} ({pth.stat().st_size / 1024 / 1024:.1f} MiB)")
 
@@ -339,7 +339,7 @@ def process(voice: Voice) -> Outcome:
     output_onnx = MODELS_DIR / f"{voice.slug}.onnx"
     print(f"  converting → {output_onnx.name}")
     if not _convert(pth, output_onnx):
-        _log_blocker(f"voice-library: {voice.slug} — convert failed (pth: {pth})")
+        _log_blocker(f"voice-library: {voice.slug} - convert failed (pth: {pth})")
         return Outcome(voice, "skipped", "convert failed")
     onnx_size_mib = output_onnx.stat().st_size / 1024 / 1024
     print(f"  wrote {onnx_size_mib:.1f} MiB onnx")
@@ -347,7 +347,7 @@ def process(voice: Voice) -> Outcome:
     # 7. Validate inference
     ok, reason = _validate_inference(output_onnx)
     if not ok:
-        _log_blocker(f"voice-library: {voice.slug} — inference validate failed: {reason}")
+        _log_blocker(f"voice-library: {voice.slug} - inference validate failed: {reason}")
         # Don't delete: the brief says keep the .onnx for diagnosis.
         return Outcome(voice, "skipped", f"validate failed: {reason}", output_onnx, onnx_size_mib)
 
@@ -381,10 +381,10 @@ def main() -> int:
 
     all_ok = all(o.status == "ok" for o in outcomes)
     if all_ok:
-        print(f"\nall green — cleaning {STAGE_DIR}")
+        print(f"\nall green - cleaning {STAGE_DIR}")
         shutil.rmtree(STAGE_DIR, ignore_errors=True)
     else:
-        print(f"\nfailures present — keeping {STAGE_DIR} for diagnosis")
+        print(f"\nfailures present - keeping {STAGE_DIR} for diagnosis")
 
     return 0
 

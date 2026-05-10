@@ -1,4 +1,4 @@
-"""v0.4.1 — model-switching regression tests.
+"""v0.4.1 - model-switching regression tests.
 
 Covers the three failures reported in `V0_4_1_BUGFIX_BRIEF.md`:
   1. TUI startup ignored `cfg.rvc_model` (used hardcoded Amitaro default).
@@ -38,7 +38,7 @@ def _have_two_models() -> tuple[Path, Path] | None:
             "rmvpe_wrapped.onnx",
             "rmvpe_wrapped-fp16.onnx",
             "hubert_base.onnx",
-            "amitaro_v2_16k.onnx",  # the engine's default — picking it as
+            "amitaro_v2_16k.onnx",  # the engine's default - picking it as
             # `target` would make the `target != DEFAULT` assertion meaningless.
         }
     )
@@ -66,7 +66,7 @@ def test_engine_honors_cfg_rvc_model_on_init() -> None:
 
 
 def test_engine_falls_back_to_default_when_cfg_path_invalid(tmp_path: Path) -> None:
-    """A stale config.toml pointing at a deleted .onnx must not brick the TUI —
+    """A stale config.toml pointing at a deleted .onnx must not brick the TUI -
     we fall back to the engine's hardcoded default and let the user re-pick."""
     from audio.engine import DEFAULT_RVC_MODEL
     from tui.app import VCClientApp
@@ -148,7 +148,7 @@ def test_model_command_unknown_slug_returns_error() -> None:
 def test_cli_models_use_falls_back_to_config_when_no_socket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When no engine is running, `models use` must still update config —
+    """When no engine is running, `models use` must still update config -
     just without the obnoxious 'restart the engine' message.
 
     Patches load_config / save_config inside the models module so they read
@@ -181,7 +181,7 @@ def test_cli_models_use_falls_back_to_config_when_no_socket(
     monkeypatch.setattr("woys.models.save_config", fake_save, raising=False)
     # Models module imports tui.config inside the function, so patch the
     # imported names there too (after the import happens once). The CLI
-    # path imports lazily — easier to patch the source modules.
+    # path imports lazily - easier to patch the source modules.
     monkeypatch.setattr("tui.config.load_config", fake_load)
     monkeypatch.setattr("tui.config.save_config", fake_save)
 

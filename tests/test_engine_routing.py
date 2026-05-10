@@ -29,12 +29,12 @@ def test_engine_writes_to_vcclientcachysink_within_3s() -> None:
     owned by `woys`. If not, audio is silently going to the
     system default sink (the v0.1.0 routing bug)."""
     if shutil.which("pacat") is None or shutil.which("pactl") is None:
-        pytest.skip("pacat/pactl missing — pipewire-pulse not installed")
+        pytest.skip("pacat/pactl missing - pipewire-pulse not installed")
 
     VirtualMic().ensure()
     state = get_state()
     if not state.fully_present:
-        pytest.skip("WoysSink + woys-mic not loaded — `woys pw setup`")
+        pytest.skip("WoysSink + woys-mic not loaded - `woys pw setup`")
 
     eng = RealtimeEngine(EngineConfig(chunk_seconds=0.5))
     eng.start()
@@ -75,7 +75,7 @@ def test_engine_writes_to_vcclientcachysink_within_3s() -> None:
                 break
             time.sleep(0.2)
         assert found, (
-            "engine did not connect to WoysSink within 3 s — audio is "
+            "engine did not connect to WoysSink within 3 s - audio is "
             "leaking to a different sink (the v0.1.0 routing bug)."
         )
     finally:

@@ -15,7 +15,6 @@ Keys
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 from typing import ClassVar
 
@@ -95,7 +94,7 @@ class LatencyPanel(Static):
         restarts: int = 0,
         jitter_ms: float = 0.0,
     ) -> str:
-        # v0.5.2: highlight any non-zero xrun count in red — the user
+        # v0.5.2: highlight any non-zero xrun count in red - the user
         # listens to the audio in another window, this is their visual
         # check that the session is clean.
         xrun_color = "red" if xruns or queue_full else "green"
@@ -112,7 +111,7 @@ class LatencyPanel(Static):
 
 
 class WoysApp(App[int]):
-    # v0.13.1 — explicit TITLE so Textual's header doesn't fall back to
+    # v0.13.1 - explicit TITLE so Textual's header doesn't fall back to
     # the class name. The class was named VCClientApp pre-v0.6.0 (when
     # the package was vcclient-cachy); rename followed the v0.6.0
     # rebrand to woys.
@@ -174,7 +173,7 @@ class WoysApp(App[int]):
                 sola_search_ms=self.cfg.sola_search_ms,
                 sola_context_ms=self.cfg.sola_context_ms,
                 input_gain_db=self.cfg.input_gain_db,
-                # v0.7.0-rc4 — these three were on EngineConfig from
+                # v0.7.0-rc4 - these three were on EngineConfig from
                 # v0.6.9 / rc1 but never plumbed through AppConfig, so
                 # user overrides in `config.toml` were silently
                 # ignored. See `docs/16-audit/synthesis.md`.
@@ -255,8 +254,8 @@ class WoysApp(App[int]):
                 f"avg_inf_ms={s.avg_inference_ms:.1f} "
                 f"max_total_ms={s.max_total_ms:.1f} "
                 f"late_chunks={s.late_chunks}/{s.chunks_processed} "
-                # v0.7.0-rc4/rc5 — silent-drop counters. rc5 dropped
-                # `sola_drain_ms` (zero-pad bookkeeping) — see
+                # v0.7.0-rc4/rc5 - silent-drop counters. rc5 dropped
+                # `sola_drain_ms` (zero-pad bookkeeping) - see
                 # `docs/16-audit/11-rc4-postmortem.md`. `sola_fallback`
                 # now means "alignment search gave up" only; it doesn't
                 # affect emit length under rc5's constant-output SOLA.
@@ -268,7 +267,7 @@ class WoysApp(App[int]):
                 f"dropped={s.dropped_chunks}"
             )
         if cmd == "SLOW":
-            # v0.6.9 round 5 — dump slow_chunk_log to a file the user can cat.
+            # v0.6.9 round 5 - dump slow_chunk_log to a file the user can cat.
             # Socket reply stays small; full breakdown lives on disk so multi-
             # line output isn't truncated by the recv buffer.
             # B13 / corr-012 / sec-002: write under XDG_RUNTIME_DIR (mode 0700
@@ -279,7 +278,7 @@ class WoysApp(App[int]):
             log = list(self.engine.stats.slow_chunk_log)
             out_path = runtime_path("slow-chunks.txt")
             lines = [
-                "# slow chunk log — chunks where total_ms > chunk_seconds * 1000",
+                "# slow chunk log - chunks where total_ms > chunk_seconds * 1000",
                 f"# session count: {len(log)} late, "
                 f"chunks_processed={self.engine.stats.chunks_processed}",
                 "# columns: chunk_idx total_ms inf_ms cv_ms rmvpe_ms rvc_ms input_rms",
@@ -323,7 +322,7 @@ class WoysApp(App[int]):
                 self.call_from_thread(apply_main)
 
                 # B5 / corr-003: wait on `_swap_done` Event (set AFTER the
-                # worker finishes the swap), not on `_pending_model_swap` —
+                # worker finishes the swap), not on `_pending_model_swap` -
                 # the latter is cleared at the START of the swap, so the
                 # JOB used to report "done" while the worker was still
                 # cuDNN-tuning for ~600 ms.
@@ -403,7 +402,7 @@ class WoysApp(App[int]):
         self.cfg.f0_up_key = 0
 
     def action_toggle_monitor(self) -> None:
-        """v0.13.1 — toggle the engine's self-monitor stream (writes a
+        """v0.13.1 - toggle the engine's self-monitor stream (writes a
         copy of the converted audio to the host's default output so the
         user can hear themselves). Live: the engine's run-loop checks
         `self.cfg.monitor` each iteration and opens / closes the
@@ -415,7 +414,7 @@ class WoysApp(App[int]):
         self.notify(f"monitor {'on' if new_state else 'off'}", timeout=2.0)
 
     def action_cycle_profile(self) -> None:
-        """Phase 4 — cycle to the next saved profile.
+        """Phase 4 - cycle to the next saved profile.
 
         v0.4.1 fix: this now actually swaps the loaded RVC model.
         v0.5.0 polish: pressing `p` rapidly queues swaps via JobRegistry so
@@ -482,7 +481,7 @@ class WoysApp(App[int]):
         # an engine restart.
         self.engine.cfg.input_gain_db = self.cfg.input_gain_db
         self.pitch = self.cfg.f0_up_key
-        # The actual model swap — this is the v0.4.1 fix.
+        # The actual model swap - this is the v0.4.1 fix.
         new_model = (
             Path(self.cfg.rvc_model)
             if self.cfg.rvc_model and Path(self.cfg.rvc_model).exists()
@@ -519,7 +518,7 @@ class WoysApp(App[int]):
         s = self.engine.stats
         try:
             # "Cold start" heuristic: engine is running but the rolling
-            # latency window hasn't stabilized yet — first ~10 chunks at
+            # latency window hasn't stabilized yet - first ~10 chunks at
             # chunk_seconds=0.1 = roughly 1 second of warmup.
             cold_start = bool(s.running and s.chunks_processed < 10)
             status = self.query_one("#status", StatusPanel)
@@ -573,7 +572,7 @@ def run_tui(
     return app.run() or 0
 
 
-# v0.13.1 — back-compat alias for the pre-v0.6.0 class name. Several
+# v0.13.1 - back-compat alias for the pre-v0.6.0 class name. Several
 # tests (and any user scripts) still import VCClientApp from tui.app
 # directly. Safe to remove in a future major.
 VCClientApp = WoysApp

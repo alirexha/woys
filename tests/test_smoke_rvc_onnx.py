@@ -65,7 +65,7 @@ def _make_session(path: Path) -> ort.InferenceSession:
 @pytest.mark.slow
 def test_rvc_onnx_end_to_end_under_80ms() -> None:
     if not _have_models():
-        pytest.skip(f"weights not in {MODELS} — run scripts/download_weights.py")
+        pytest.skip(f"weights not in {MODELS} - run scripts/download_weights.py")
 
     audio, sr = _read_wav(WAV)
     assert sr == 16_000

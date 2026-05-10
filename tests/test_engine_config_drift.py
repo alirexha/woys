@@ -16,11 +16,12 @@ source of truth. These tests pin the contract:
 If you add a user-visible EngineConfig field, add it to
 `USER_VISIBLE_ENGINE_FIELDS` and these tests pass automatically.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
 
+import ast
 import sys
 from dataclasses import fields
 from pathlib import Path
@@ -89,9 +90,7 @@ def test_profile_fields_cover_every_user_visible_engine_field() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "name", ["input_gate_dbfs", "prefer_pw_cat", "input_gate_hysteresis_ms"]
-)
+@pytest.mark.parametrize("name", ["input_gate_dbfs", "prefer_pw_cat", "input_gate_hysteresis_ms"])
 def test_rc4_drift_regression(name: str) -> None:
     """The rc4 audit (LESSONS-class) caught these specific fields drifting
     out of profile / AppConfig coverage. Pin them explicitly so a future
@@ -112,8 +111,6 @@ def test_rc4_drift_regression(name: str) -> None:
 # That's exactly how rc4's `prefer_pw_cat` drift (and v0.9.0-rc1's
 # `prefer_native_pw` drift, caught the same way) became real cuts. AST-walk
 # the source files and assert every site forwards every field.
-
-import ast
 
 
 def _engine_config_call_kwargs(source: str) -> list[set[str]]:
@@ -136,7 +133,7 @@ def _engine_config_call_kwargs(source: str) -> list[set[str]]:
 
 # Fields that are intentionally not forwarded by callers (they use the
 # EngineConfig default; the user can't tune them via config.toml).
-# Keep this list tight — anything here is a deliberate exception, not
+# Keep this list tight - anything here is a deliberate exception, not
 # a forgotten plumb.
 _NOT_FORWARDED_AT_CONSTRUCTION = {
     "mic_rate",
@@ -174,6 +171,6 @@ def test_engine_config_construction_forwards_user_visible_fields(
         assert not missing, (
             f"{source_path.name}: EngineConfig() call #{i + 1} is missing "
             f"forwarded fields: {sorted(missing)}\n"
-            f"This is the v0.9.0-rc1 prefer_native_pw drift class — every "
+            f"This is the v0.9.0-rc1 prefer_native_pw drift class - every "
             f"user-visible field must be plumbed at every construction site."
         )

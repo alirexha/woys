@@ -1,6 +1,6 @@
-"""v0.5.2 — pacat underrun + writer-jitter regression tests (Brief §4).
+"""v0.5.2 - pacat underrun + writer-jitter regression tests (Brief §4).
 
-The user reported "برفک" (TV-static crackle) in v0.5.1 — Hypothesis E from
+The user reported "برفک" (TV-static crackle) in v0.5.1 - Hypothesis E from
 the v0.5.1 retrospective: PulseAudio output buffer underruns. v0.5.2 fixes
 it with a higher --latency-msec, a writer-thread + bounded queue, a watchdog
 that respawns pacat, channel alignment with the null-sink, and an xrun
@@ -8,7 +8,7 @@ counter parsed from `pacat -v` stderr.
 
 These tests assert the new health counters stay quiet across short, medium,
 and long synthetic-input runs. We monkey-patch sounddevice.InputStream to
-inject a paced silent stream — the engine still runs the full ONNX
+inject a paced silent stream - the engine still runs the full ONNX
 inference path (so timing is realistic) but doesn't depend on the test
 host having a live mic.
 
@@ -87,11 +87,11 @@ def _ensure_test_prereqs() -> Path:
     from audio.pipewire import VirtualMic, get_state
 
     if shutil.which("pacat") is None:
-        pytest.skip("pacat missing — pipewire-pulse not installed")
+        pytest.skip("pacat missing - pipewire-pulse not installed")
     if not (MODELS_DIR / "contentvec-f.onnx").exists():
-        pytest.skip("contentvec-f.onnx missing — run scripts/download_weights.py")
+        pytest.skip("contentvec-f.onnx missing - run scripts/download_weights.py")
     if not (MODELS_DIR / "rmvpe_wrapped.onnx").exists():
-        pytest.skip("rmvpe_wrapped.onnx missing — run scripts/download_weights.py")
+        pytest.skip("rmvpe_wrapped.onnx missing - run scripts/download_weights.py")
     voices = sorted(
         p
         for p in MODELS_DIR.glob("*.onnx")
@@ -117,7 +117,7 @@ def _patch_sd_input(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.pipewire
 @pytest.mark.slow
 def test_no_pacat_underruns_in_30s(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Brief §4.1 — engine runs 30 s with paced synthetic input, asserts
+    """Brief §4.1 - engine runs 30 s with paced synthetic input, asserts
     `xruns + queue_full_events == 0`. Either non-zero means the v0.5.2 fixes
     regressed and the user's "برفک" comes back."""
     from audio.engine import EngineConfig, RealtimeEngine
@@ -133,7 +133,7 @@ def test_no_pacat_underruns_in_30s(monkeypatch: pytest.MonkeyPatch) -> None:
     eng = RealtimeEngine(cfg)
     eng.start()
     try:
-        # Wait through warmup before observing — first ~2 s include cudnn
+        # Wait through warmup before observing - first ~2 s include cudnn
         # autotune and an inevitable first-chunk write delay.
         time.sleep(3.0)
         # Reset the health counters: the warmup window can legitimately
@@ -146,7 +146,7 @@ def test_no_pacat_underruns_in_30s(monkeypatch: pytest.MonkeyPatch) -> None:
         assert s.chunks_processed > 60, f"engine processed only {s.chunks_processed} chunks"
         assert s.xruns == 0, f"pacat reported {s.xruns} underruns in 30 s"
         assert s.queue_full_events == 0, (
-            f"writer queue filled {s.queue_full_events} times — engine outpacing pacat"
+            f"writer queue filled {s.queue_full_events} times - engine outpacing pacat"
         )
         assert s.pacat_restarts == 0, f"watchdog respawned pacat {s.pacat_restarts} times"
     finally:
@@ -157,19 +157,19 @@ def test_no_pacat_underruns_in_30s(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.pipewire
 @pytest.mark.slow
 def test_writer_jitter_under_20pct_of_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Brief §4.2 — std dev of inter-write intervals.
+    """Brief §4.2 - std dev of inter-write intervals.
 
     The brief originally proposed a 5 % budget, on the assumption that
     pacat tuning would also smooth chunk-to-chunk timing. With the
     pw-cat backend (the actual fix) jitter no longer drives underruns,
     and the residual variance comes from structural inference cost
     (~30-100 ms per chunk depending on CUDA kernel selection), not from
-    the playback path. v0.7.0 — relaxed from 10 % to 20 % after measuring
-    that the realtime engine consistently produces 30–35 ms jitter at
+    the playback path. v0.7.0 - relaxed from 10 % to 20 % after measuring
+    that the realtime engine consistently produces 30-35 ms jitter at
     chunk=0.25 on this hardware (tracking GIL contention with audio
     threads, see LESSONS §19). Underrun absence is the primary check
     (`test_no_pacat_underruns_in_30s`); jitter is a secondary regression
-    canary — 20 % flags outright stalls without flagging the
+    canary - 20 % flags outright stalls without flagging the
     normal-but-bumpy CUDA + GIL cost.
     """
     from audio.engine import EngineConfig, RealtimeEngine
@@ -204,7 +204,7 @@ def test_writer_jitter_under_20pct_of_chunk(monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.mark.pipewire
 @pytest.mark.slow
 def test_long_run_no_drift_no_restart(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Brief §4.3 — 5-minute run. Engine + pacat both alive at the end,
+    """Brief §4.3 - 5-minute run. Engine + pacat both alive at the end,
     no watchdog restarts, `avg_total_ms` doesn't drift upward by >5 %.
     Catches the "engine slowly leaks scheduling budget over time" failure
     mode that wouldn't show up in 30 s."""
@@ -217,7 +217,7 @@ def test_long_run_no_drift_no_restart(monkeypatch: pytest.MonkeyPatch) -> None:
     eng = RealtimeEngine(cfg)
     eng.start()
     try:
-        # 30 s warmup — observe baseline avg_total_ms after this.
+        # 30 s warmup - observe baseline avg_total_ms after this.
         time.sleep(30.0)
         baseline = eng.stats.avg_total_ms
         baseline_chunks = eng.stats.chunks_processed
@@ -249,7 +249,7 @@ def test_long_run_no_drift_no_restart(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_to_sink_bytes_stereo_interleaves_mono() -> None:
-    """v0.5.2 — `_to_sink_bytes` with output_channels=2 must interleave
+    """v0.5.2 - `_to_sink_bytes` with output_channels=2 must interleave
     mono samples as L=R so the byte stream matches a true stereo float32le."""
     from audio.engine import EngineConfig, RealtimeEngine
 

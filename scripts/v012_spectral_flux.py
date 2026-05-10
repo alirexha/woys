@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""v0.12.0 Phase 1 — spectral-flux click detection.
+"""v0.12.0 Phase 1 - spectral-flux click detection.
 
 The simple energy-derivative detector over-fires on glottal pulses
 during voiced content (one peak per f0 cycle ≈ every ~8 ms at typical
@@ -8,7 +8,7 @@ male voice). Chunk-boundary clicks at chunk_seconds=0.15 → 6.67 Hz =
 
 Spectral flux is the right discriminator:
 
-  flux[i] = Σ_k max(0, |X[i, k]| − |X[i−1, k]|)
+  flux[i] = Σ_k max(0, |X[i, k]| - |X[i-1, k]|)
 
 It measures positive-going spectral change frame-to-frame. Glottal
 pulses on voiced content produce SMOOTH spectral evolution (low
@@ -23,7 +23,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -38,10 +37,12 @@ def _load_wav(path: Path) -> tuple[np.ndarray, int]:
     return samples.astype(np.float32, copy=False), int(sr)
 
 
-def _spectral_flux(audio: np.ndarray, sr: int, *, hop_ms: float = 5.0) -> tuple[np.ndarray, np.ndarray]:
+def _spectral_flux(
+    audio: np.ndarray, sr: int, *, hop_ms: float = 5.0
+) -> tuple[np.ndarray, np.ndarray]:
     """Return (flux_values, flux_times_seconds) for the audio."""
     n_fft = 1024
-    hop = max(8, int(round(sr * hop_ms / 1000.0)))
+    hop = max(8, round(sr * hop_ms / 1000.0))
     window = 0.5 - 0.5 * np.cos(2 * np.pi * np.arange(n_fft) / n_fft)
     n_frames = max(1, (len(audio) - n_fft) // hop + 1)
     if n_frames < 2:
@@ -59,7 +60,9 @@ def _spectral_flux(audio: np.ndarray, sr: int, *, hop_ms: float = 5.0) -> tuple[
     return flux, times
 
 
-def _peak_pick(flux: np.ndarray, times: np.ndarray, *, n_sigma: float = 4.0, min_gap_ms: float = 50.0) -> np.ndarray:
+def _peak_pick(
+    flux: np.ndarray, times: np.ndarray, *, n_sigma: float = 4.0, min_gap_ms: float = 50.0
+) -> np.ndarray:
     """Return time positions (seconds) of flux peaks above
     median + n_sigma * MAD, with a minimum gap suppressor so a
     single broad event doesn't count as multiple peaks."""
@@ -81,7 +84,9 @@ def _peak_pick(flux: np.ndarray, times: np.ndarray, *, n_sigma: float = 4.0, min
     return np.array(accepted)
 
 
-def _periodicity_test(intervals_ms: np.ndarray, target_ms: float, tolerance_ms: float = 8.0) -> dict[str, float]:
+def _periodicity_test(
+    intervals_ms: np.ndarray, target_ms: float, tolerance_ms: float = 8.0
+) -> dict[str, float]:
     """Quantitative test: what fraction of intervals fall within
     `tolerance_ms` of `target_ms` (or its harmonics 2x, 3x)?"""
     if len(intervals_ms) == 0:
@@ -94,7 +99,9 @@ def _periodicity_test(intervals_ms: np.ndarray, target_ms: float, tolerance_ms: 
     }
 
 
-def _autocorrelation_test(peak_times: np.ndarray, max_lag_ms: float = 1000.0, sr: int = 48000) -> tuple[np.ndarray, np.ndarray]:
+def _autocorrelation_test(
+    peak_times: np.ndarray, max_lag_ms: float = 1000.0, sr: int = 48000
+) -> tuple[np.ndarray, np.ndarray]:
     """Compute autocorrelation of the click-impulse train. If clicks
     are periodic at chunk_seconds, autocorrelation peaks at
     chunk_seconds, 2*chunk_seconds, ... A flat autocorrelation means
@@ -125,7 +132,9 @@ def _autocorrelation_test(peak_times: np.ndarray, max_lag_ms: float = 1000.0, sr
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("wav", type=Path)
     parser.add_argument("--chunk-seconds", type=float, default=0.15)
     parser.add_argument("--hop-ms", type=float, default=5.0)
@@ -137,17 +146,19 @@ def main() -> int:
     audio, sr = _load_wav(args.wav)
     duration_s = len(audio) / sr
     rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2)))
-    print(f"==== v0.12.0 Phase 1 — spectral-flux click detection ====")
+    print("==== v0.12.0 Phase 1 - spectral-flux click detection ====")
     print(f"  file        {args.wav}")
     print(f"  duration    {duration_s:.2f} s   sr={sr}   rms={rms:.4f}")
 
     flux, times = _spectral_flux(audio, sr, hop_ms=args.hop_ms)
     if len(flux) == 0:
-        print(f"  [error] flux empty, file too short")
+        print("  [error] flux empty, file too short")
         return 1
-    print(f"\n  ---- spectral flux ----")
+    print("\n  ---- spectral flux ----")
     print(f"  frames={len(flux)}  hop_ms={args.hop_ms}")
-    print(f"  flux median={np.median(flux):.4f}  p95={np.percentile(flux, 95):.4f}  max={flux.max():.4f}")
+    print(
+        f"  flux median={np.median(flux):.4f}  p95={np.percentile(flux, 95):.4f}  max={flux.max():.4f}"
+    )
 
     peaks = _peak_pick(flux, times, n_sigma=args.n_sigma, min_gap_ms=args.min_gap_ms)
     print(f"  detected peaks: {len(peaks)}  rate={len(peaks) / duration_s:.2f}/sec")
@@ -157,20 +168,22 @@ def main() -> int:
         print(f"  interval median={np.median(intervals):.2f} ms")
         print(f"  interval mean={np.mean(intervals):.2f} ms  std={np.std(intervals):.2f} ms")
         print(f"  interval CV={np.std(intervals) / max(np.mean(intervals), 1e-6):.3f}")
-        print(f"  interval p25/p50/p75={np.percentile(intervals, 25):.1f} / "
-              f"{np.percentile(intervals, 50):.1f} / "
-              f"{np.percentile(intervals, 75):.1f} ms")
+        print(
+            f"  interval p25/p50/p75={np.percentile(intervals, 25):.1f} / "
+            f"{np.percentile(intervals, 50):.1f} / "
+            f"{np.percentile(intervals, 75):.1f} ms"
+        )
 
         chunk_ms = args.chunk_seconds * 1000.0
         per_test = _periodicity_test(intervals, chunk_ms)
         print(f"\n  ---- periodicity test (chunk={chunk_ms:.0f}ms ± 8ms tolerance) ----")
         print(f"  fraction of intervals at chunk_seconds:    {per_test['frac_at_target']:.1%}")
-        print(f"  fraction of intervals at 2× chunk_seconds: {per_test['frac_at_2x']:.1%}")
-        print(f"  fraction of intervals at 3× chunk_seconds: {per_test['frac_at_3x']:.1%}")
+        print(f"  fraction of intervals at 2x chunk_seconds: {per_test['frac_at_2x']:.1%}")
+        print(f"  fraction of intervals at 3x chunk_seconds: {per_test['frac_at_3x']:.1%}")
 
     if len(peaks) >= 4:
         lags, ac = _autocorrelation_test(peaks, max_lag_ms=1500.0, sr=sr)
-        print(f"\n  ---- autocorrelation peaks (top 10 lags excluding 0) ----")
+        print("\n  ---- autocorrelation peaks (top 10 lags excluding 0) ----")
         # Find peaks in autocorrelation (exclude small lags <= 30ms which
         # can be self-similar from broad peak detection).
         searchable = ac.copy()
@@ -199,7 +212,9 @@ def main() -> int:
                 ax.axvline(p, color="lime", alpha=0.5, linewidth=0.7, linestyle="--")
             ax.set_xlabel("time (s)")
             ax.set_ylabel("spectral flux")
-            ax.set_title(f"spectral flux (n={len(peaks)} peaks; chunk_seconds={args.chunk_seconds}s = cyan grid)")
+            ax.set_title(
+                f"spectral flux (n={len(peaks)} peaks; chunk_seconds={args.chunk_seconds}s = cyan grid)"
+            )
             p = args.wav.parent / f"{args.wav.stem}_flux.png"
             fig.savefig(p, dpi=120, bbox_inches="tight")
             plt.close(fig)
@@ -214,10 +229,18 @@ def main() -> int:
                 for k in range(1, 6):
                     t = k * args.chunk_seconds * 1000.0
                     if t < lags[-1]:
-                        ax.axvline(t, color="cyan", alpha=0.5, linestyle="--", label=f"{k}×chunk={t:.0f}ms" if k <= 3 else None)
+                        ax.axvline(
+                            t,
+                            color="cyan",
+                            alpha=0.5,
+                            linestyle="--",
+                            label=f"{k}xchunk={t:.0f}ms" if k <= 3 else None,
+                        )
                 ax.set_xlabel("lag (ms)")
                 ax.set_ylabel("normalized autocorrelation")
-                ax.set_title(f"impulse-train autocorrelation (peak at chunk_seconds = positive periodicity test)")
+                ax.set_title(
+                    "impulse-train autocorrelation (peak at chunk_seconds = positive periodicity test)"
+                )
                 ax.legend()
                 p = args.wav.parent / f"{args.wav.stem}_autocorr.png"
                 fig.savefig(p, dpi=120, bbox_inches="tight")

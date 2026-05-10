@@ -11,7 +11,7 @@ both call `try_set_realtime_priority`. Engine reports failures via
 `stats.priority_warnings` (B28); child reports via the child→parent
 RESP_ERROR channel.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -23,13 +23,13 @@ def try_set_realtime_priority(label: str, *, priority: int = 60) -> str | None:
     """Request SCHED_FIFO at the given priority for the calling thread.
 
     Returns None on success. Returns a human-readable error string if
-    the request was denied — the caller decides how to surface it
+    the request was denied - the caller decides how to surface it
     (stats append, log, RESP_ERROR, etc.).
 
     Falls back through:
-      1. SCHED_FIFO @ priority — preempts SCHED_OTHER, but needs
+      1. SCHED_FIFO @ priority - preempts SCHED_OTHER, but needs
          CAP_SYS_NICE or RLIMIT_RTPRIO >= priority.
-      2. nice(-10) — same scheduler class as before, just higher
+      2. nice(-10) - same scheduler class as before, just higher
          relative priority. Doesn't prevent same-class preemption
          (which is what we wanted), but at least doesn't crash.
       3. Returns a warning string if both fail.

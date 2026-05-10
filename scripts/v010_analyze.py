@@ -21,10 +21,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import statistics
 from pathlib import Path
 from typing import Any
-
 
 GATE_WRITER_JITTER_P99 = 30.0  # ms
 GATE_INFERENCE_AVG = 52.0  # ms (v0.9.0 baseline; brief target)
@@ -145,7 +143,9 @@ def _load_run(path: Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("runs", nargs="+", type=Path, help="harness JSON paths")
     parser.add_argument("--gpu-csv", type=Path, default=None)
     parser.add_argument(
@@ -199,7 +199,7 @@ def main() -> int:
     _row("writer_interval p95", "writer_interval_p95_ms")
     _row("writer_interval p99", "writer_interval_p99_ms")
     _row("writer_interval max", "writer_interval_max_ms")
-    _row("writer_jitter σ", "writer_jitter_ms_stddev")
+    _row("writer_jitter σ", "writer_jitter_ms_stddev")  # noqa: RUF001  # sigma symbol (statistics)
     _row("**writer_jitter p99**", "writer_jitter_p99_ms")
     print()
     print("---- inference (ms) ----")

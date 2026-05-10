@@ -7,12 +7,12 @@ introduces phase discontinuities at chunk boundaries (audible clicks /
 
 SOLA splits the work in two:
 
-  1. **Sliding context** — each model call sees the new mic chunk *plus* a
+  1. **Sliding context** - each model call sees the new mic chunk *plus* a
      fixed history window. Model output gets trimmed back to just the new
      content. This keeps the embedder + vocoder seeing enough context to
      produce stable features.
 
-  2. **Cross-correlated crossfade** — the *start* of the new output is
+  2. **Cross-correlated crossfade** - the *start* of the new output is
      correlated against the *tail* of the previous output across a small
      search window (≈2-3 ms). Pick the offset where the two waveforms align
      in phase, then linearly crossfade over the overlap region. If the peak
@@ -24,20 +24,20 @@ mono buffers at the engine's chosen rate (typically 16 kHz model output).
 
 Parameters
 ----------
-``crossfade_samples``  — overlap region width in samples.
-``search_samples``     — how far we shift the new chunk to look for an
+``crossfade_samples``  - overlap region width in samples.
+``search_samples``     - how far we shift the new chunk to look for an
                          alignment that beats centered overlap. Half a pitch
                          period at the lowest typical voice f0 (~80 Hz =
                          200 samples @ 16 kHz) is plenty; we use ~32 by
                          default which covers ~250 Hz pitches well.
-``corr_threshold``     — minimum normalized correlation peak to trust.
+``corr_threshold``     - minimum normalized correlation peak to trust.
                          Below this, fall back to offset=0.
 
 Why these defaults: 50 ms crossfade @ 16 kHz = 800 samples. That's 5 pitch
-periods at 100 Hz (low male voice) — enough to mask seams without smearing
+periods at 100 Hz (low male voice) - enough to mask seams without smearing
 phonemes.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -136,7 +136,7 @@ class SOLAStream:
     """Stateful SOLA crossfader.
 
     Feed `process(new_audio)` one chunk at a time. Each call returns
-    exactly `chunk_n` samples — the constant emit length. The
+    exactly `chunk_n` samples - the constant emit length. The
     algorithm's alignment search slides the emit window inside the
     leading `crossfade + search` samples of the input, so picking a
     non-zero offset never shrinks the emit; the search slack lives
@@ -217,7 +217,7 @@ class SOLAStream:
             # samples as the next `_prev_tail` if available; otherwise
             # reset state so the next normal chunk takes the first-chunk
             # path (no crossfade) instead of trying to crossfade against
-            # an under-sized tail. (B22 / audio-002 — see review.)
+            # an under-sized tail. (B22 / audio-002 - see review.)
             if new_audio.shape[0] >= cf:
                 self._prev_tail = new_audio[-cf:].copy()
             else:
@@ -250,7 +250,7 @@ class SOLAStream:
         if emit.shape[0] >= cf:
             emit[:cf] = self._prev_tail * self._fade_out + emit[:cf] * self._fade_in
 
-        # Save new prev_tail from the END of new_audio — a fixed
+        # Save new prev_tail from the END of new_audio - a fixed
         # temporal position regardless of which offset won. The next
         # chunk's input will overlap this region, so the next search
         # correlates against a known location in the audio stream.
@@ -262,7 +262,7 @@ class SOLAStream:
         """Emit and clear any held-back tail. Call once on engine shutdown.
 
         B22 / audio-009: apply a linear fade-out so the tail doesn't end
-        with a hard cutoff at a non-zero amplitude — the click at session
+        with a hard cutoff at a non-zero amplitude - the click at session
         end was a small but audible UX nit on every shutdown.
         """
         if self._prev_tail is None:

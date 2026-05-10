@@ -4,7 +4,7 @@ These guard the corr-001 class of bug: the engine defaults to a foundation
 file the installer doesn't fetch. The test asserts every model the engine
 loads at startup is also produced by `download_weights.WEIGHTS`.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def test_weights_urls_resolve_to_huggingface(download_weights) -> None:
     """All foundation weights live on HuggingFace; sanity-check the URL
     shape so a bad copy-paste fails the test, not the user's fresh install.
     The local filename and the upstream filename can differ (we rename on
-    save) — only require that the URL is on HF and the URL contains a
+    save) - only require that the URL is on HF and the URL contains a
     distinguishing keyword from the local name."""
     for name, url in download_weights.WEIGHTS.items():
         assert url.startswith("https://huggingface.co/"), (

@@ -1,6 +1,6 @@
 """Phase 1 smoke test: run RVC ONNX inference end-to-end on a 1-second clip.
 
-Bypasses upstream's pipeline classes — uses onnxruntime directly to verify:
+Bypasses upstream's pipeline classes - uses onnxruntime directly to verify:
   - ORT CUDA EP loads on this driver/CUDA combo
   - contentvec-f.onnx produces (1, T', 768) feats
   - rmvpe.onnx produces (T'',) pitch
@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 # ORT-GPU 1.20+ on driver 595 needs explicit preload of the pip-shipped
-# CUDA libs (nvidia-cublas-cu12, nvidia-cudnn-cu12) — they aren't on
+# CUDA libs (nvidia-cublas-cu12, nvidia-cudnn-cu12) - they aren't on
 # LD_LIBRARY_PATH by default.
 import onnxruntime as ort
 
@@ -151,7 +151,7 @@ def main() -> int:
     is_half = rvc_input_dtype != "tensor(float)"
     print(f"  rvc fp16:    {is_half}")
 
-    # Warm-up — first GPU launch is always slow.
+    # Warm-up - first GPU launch is always slow.
     for _ in range(2):
         feats = run_contentvec(cv, audio16k)
         pitchf = run_rmvpe(rmvpe, audio16k)

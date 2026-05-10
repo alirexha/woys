@@ -31,7 +31,7 @@ def test_unknown_keys_pass_through(tmp_path: Path) -> None:
     out.write_text('f0_up_key = 5\nautostart_engine = false\nfuture_user_field = "abc"\n')
     cfg = load_config(out)
     assert cfg.f0_up_key == 5
-    # v0.7.0 — load() stamps `config_schema_version` for migration tracking,
+    # v0.7.0 - load() stamps `config_schema_version` for migration tracking,
     # so it appears alongside genuine extras. The user's unknown key still
     # passes through.
     assert cfg._extras.get("future_user_field") == "abc"

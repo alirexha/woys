@@ -1,4 +1,4 @@
-"""Model-library management — list, download, and set the active RVC voice model.
+"""Model-library management - list, download, and set the active RVC voice model.
 
 Backing store
 -------------
@@ -12,7 +12,7 @@ Hugging Face download
 API to fetch all `.onnx` (and any `.index`) files from a repo into the
 cache. Re-runs are free thanks to HF's content-addressable cache.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from pathlib import Path
 
 MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 
-# Foundation files — these are infrastructure, not user voices. Hide from `list`
+# Foundation files - these are infrastructure, not user voices. Hide from `list`
 # and skip when picking a default `use` target.
 FOUNDATION_NAMES = frozenset(
     {
@@ -132,7 +132,7 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
     try:
         from huggingface_hub import HfApi, hf_hub_download
     except ImportError as e:
-        raise RuntimeError("huggingface_hub missing — `uv pip install huggingface_hub`") from e
+        raise RuntimeError("huggingface_hub missing - `uv pip install huggingface_hub`") from e
 
     api = HfApi()
     info = api.repo_info(repo)
@@ -244,14 +244,14 @@ def cli_models_download(repo: str, models_dir: Path = MODELS_DIR) -> int:
     except Exception as e:
         print(f"[models] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
-    print(f"  done — {len(files)} file(s) in {models_dir}")
+    print(f"  done - {len(files)} file(s) in {models_dir}")
     return 0
 
 
 def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
     """Set the active RVC model.
 
-    v0.5.0: uses the async JOB protocol — `MODEL` returns a job id, we
+    v0.5.0: uses the async JOB protocol - `MODEL` returns a job id, we
     poll `JOB <id>` until the engine worker actually picked up the swap.
     Default overall timeout 30 s (covers cold-cache cudnn-tune of any
     voice; cached swaps complete in < 200 ms).
@@ -282,20 +282,20 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
         print(f"[models] swap failed: {reply}", file=sys.stderr)
         return 1
     if reply.startswith("OK") and "job=" not in reply:
-        # Old synchronous handler — shouldn't happen post-v0.5.0 but keep
+        # Old synchronous handler - shouldn't happen post-v0.5.0 but keep
         # backward compat for the rare mixed-version scenario.
         print(f"[models] hot-swapped → {path.name}")
         return 0
     if reply.startswith("ERR control socket not found"):
-        # Engine not running — write config so the next `woys run`
+        # Engine not running - write config so the next `woys run`
         # picks it up.
         # B35 / corr-024: flock the config file across the read+modify+write
         # window. Two concurrent `woys models use X` calls (e.g. from a
         # script) both read the same baseline config and one's save can
         # clobber the other. flock(LOCK_EX) serializes them.
         import fcntl
+        from collections.abc import Iterator
         from contextlib import contextmanager
-        from typing import Iterator
 
         from tui.config import CONFIG_FILE
 

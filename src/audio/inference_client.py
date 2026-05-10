@@ -1,4 +1,4 @@
-"""v0.8.0 — parent-side client for the inference subprocess.
+"""v0.8.0 - parent-side client for the inference subprocess.
 
 Wraps the spawn / IPC / shutdown / restart machinery so the engine
 can call `client.infer(audio16k)` and get back `(result, timings)`
@@ -23,13 +23,13 @@ Wire protocol (see `audio.inference_worker`):
 
 Shared memory layout:
   input_shm:  raw bytes for the audio16k float32 array. Sized to
-              hold the largest plausible model_input length —
+              hold the largest plausible model_input length -
               `chunk_seconds * mic_rate * 4 + history(~10K) +
               search(~400)` rounded up to 64 KiB.
   output_shm: raw bytes for the inference result. Sized to hold
-              the largest plausible vocoder output — same upper
+              the largest plausible vocoder output - same upper
               bound as input plus headroom for RVC v2 40 kHz
-              models that emit ~6–8K samples per chunk → 64 KiB
+              models that emit ~6-8K samples per chunk → 64 KiB
               is comfortable.
 
 Failure modes handled:
@@ -48,6 +48,7 @@ import multiprocessing as mp
 import time
 from dataclasses import dataclass, field
 from multiprocessing import shared_memory
+from multiprocessing.context import SpawnProcess
 from pathlib import Path
 from typing import Any
 
@@ -70,7 +71,7 @@ NDArrayF32 = npt.NDArray[np.float32]
 
 # Default shared memory sizes. Must hold the largest plausible
 # model_input / model_output. For chunk_seconds=0.15 + RVC v2 40k
-# vocoder, the worst output is ~10 K samples × 4 bytes = 40 KB.
+# vocoder, the worst output is ~10 K samples x 4 bytes = 40 KB.
 # 64 KB is comfortable for both directions and matches the OS pipe
 # default. Bumped to 128 KB for output to handle 48k vocoder voices.
 _INPUT_SHM_SIZE = 64 * 1024
@@ -91,7 +92,7 @@ class InferenceTimings:
     nan_chunks_total: int = 0
     # Round-trip time including pipe send + child wake + inference +
     # response. The engine's existing `inference` percentile tracks
-    # this — the difference between this and (cv+rmvpe+rvc) is the
+    # this - the difference between this and (cv+rmvpe+rvc) is the
     # IPC overhead.
     roundtrip_ms: float = 0.0
 
@@ -108,13 +109,13 @@ class _ChildHandles:
     let typo'd attribute accesses slip through mypy --strict.
     """
 
-    proc: mp.Process
-    parent_send: "mp.connection.Connection"
-    parent_recv: "mp.connection.Connection"
+    proc: mp.Process | SpawnProcess
+    parent_send: mp.connection.Connection
+    parent_recv: mp.connection.Connection
     # The child-side ends; parent holds them open until spawn completes,
     # then closes its references so they live only inside the child.
-    child_send_remote: "mp.connection.Connection"
-    child_recv_remote: "mp.connection.Connection"
+    child_send_remote: mp.connection.Connection
+    child_recv_remote: mp.connection.Connection
     input_shm: shared_memory.SharedMemory
     output_shm: shared_memory.SharedMemory
     rvc_output_sr: int = 16_000
@@ -130,7 +131,7 @@ class InferenceError(RuntimeError):
 class InferenceClient:
     """Parent-side handle to the inference subprocess.
 
-    Single-instance per engine. Not thread-safe — the engine main
+    Single-instance per engine. Not thread-safe - the engine main
     loop is single-threaded so concurrent calls aren't an issue.
     """
 
@@ -156,11 +157,11 @@ class InferenceClient:
         input_shm = shared_memory.SharedMemory(create=True, size=_INPUT_SHM_SIZE)
         output_shm = shared_memory.SharedMemory(create=True, size=_OUTPUT_SHM_SIZE)
 
-        # Two simplex pipes — one each direction. Cleaner than duplex.
+        # Two simplex pipes - one each direction. Cleaner than duplex.
         parent_recv, child_send_remote = mp.Pipe(duplex=False)
         child_recv_remote, parent_send = mp.Pipe(duplex=False)
 
-        # Spawn (NOT fork — CUDA contexts don't survive fork).
+        # Spawn (NOT fork - CUDA contexts don't survive fork).
         ctx = mp.get_context("spawn")
         proc = ctx.Process(
             target=child_main,
@@ -172,7 +173,7 @@ class InferenceClient:
                 dict(self._cfg_dict),
                 # Parent's PID at spawn time. Child watchdogs PPID and
                 # exits if it becomes 1 (parent reparented to init).
-                # Note: this isn't quite right for nested processes —
+                # Note: this isn't quite right for nested processes -
                 # the child's parent is THIS process, which has pid =
                 # mp.current_process().pid. But mp's process model
                 # ensures the child's direct parent is us, and our PID
@@ -259,7 +260,7 @@ class InferenceClient:
         # B15 / corr-027: confirm the child actually exited before unlinking
         # the shared-memory regions. mp's `proc.kill(); proc.join()` should
         # reap the PID via the shared resource_tracker, but defensively we
-        # also poll `/proc/<pid>` to guarantee it's gone — without this,
+        # also poll `/proc/<pid>` to guarantee it's gone - without this,
         # an unlink while the child still maps the shm produces a
         # ResourceWarning (and on some kernels an OSError) that the
         # contextlib.suppress below would swallow, leaking the segment.
@@ -368,7 +369,7 @@ class InferenceClient:
         out_buf = h.output_shm.buf
         assert out_buf is not None
         # Copy out of shared memory before returning so the parent
-        # owns the array — child may overwrite shm on the next infer.
+        # owns the array - child may overwrite shm on the next infer.
         result = np.frombuffer(out_buf, dtype=np.float32, count=out_size).copy()
         result = result.reshape(out_shape)
 

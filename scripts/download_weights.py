@@ -3,11 +3,11 @@
 Run: `python scripts/download_weights.py [--force]`
 
 Pulls (idempotent unless --force):
-  - rmvpe_wrapped.onnx   — f0 detector (waveform-input variant; matches
+  - rmvpe_wrapped.onnx   - f0 detector (waveform-input variant; matches
                            upstream's RMVPEOnnxPitchExtractor contract:
                            inputs `waveform`, `threshold`; output `pitchf`)
-  - contentvec-f.onnx    — ONNX content encoder
-  - amitaro_v2_16k.onnx  — small public RVC voice model for the smoke test
+  - contentvec-f.onnx    - ONNX content encoder
+  - amitaro_v2_16k.onnx  - small public RVC voice model for the smoke test
 
 Destination: ~/.local/share/woys/models/
 
@@ -65,7 +65,7 @@ def _sha256(path: Path) -> str:
 def fetch(url: str, dest: Path, force: bool, *, skip_verify: bool = False) -> None:
     if dest.exists() and not force:
         size_mb = dest.stat().st_size / (1024 * 1024)
-        print(f"  [skip] {dest.name}  ({size_mb:.1f} MiB) — already cached")
+        print(f"  [skip] {dest.name}  ({size_mb:.1f} MiB) - already cached")
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
