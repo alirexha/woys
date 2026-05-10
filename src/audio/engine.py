@@ -2698,8 +2698,7 @@ class RealtimeEngine:
             try:
                 if not os.path.isabs(debug_log_path):
                     raise ValueError(
-                        f"WOYS_HELPER_STDERR_LOG must be an absolute path, "
-                        f"got {debug_log_path!r}"
+                        f"WOYS_HELPER_STDERR_LOG must be an absolute path, got {debug_log_path!r}"
                     )
                 fd = os.open(
                     debug_log_path,
