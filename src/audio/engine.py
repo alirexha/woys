@@ -1747,12 +1747,21 @@ class RealtimeEngine:
         # model's output rate, not necessarily 16 kHz. v0.5.2: route through
         # the writer queue so we don't bypass the BrokenPipe / xrun-counter
         # plumbing.
+        # v0.14.0 (Lens 4 / C002): track whether the output resampler was
+        # finalized via flush(). soxr's ResampleStream rejects further
+        # `resample_chunk()` calls after `last=True`. The post-swap path
+        # below MUST rebuild `_resampler_out` if this flag is set, even
+        # when the new model's output rate equals the old (the pre-fix
+        # `if new_sr != self._rvc_output_sr` check skipped the rebuild
+        # for same-rate swaps and the next chunk crashed the engine).
+        resampler_out_was_flushed = False
         if self._sola is not None:
             with contextlib.suppress(Exception):
                 tail = self._sola.flush()
                 if tail.size > 0 and self._resampler_out is not None:
                     tail48 = self._resampler_out.process(tail)
                     flush48 = self._resampler_out.flush()
+                    resampler_out_was_flushed = True
                     full = np.concatenate([tail48, flush48]) if flush48.size else tail48
                     if full.size > 0:
                         self._enqueue_chunk(self._to_sink_bytes(full))
@@ -1782,8 +1791,13 @@ class RealtimeEngine:
                 new_sr, new_is_half = self._inf_client.swap_model(target)
                 self.cfg.rvc_model = target
                 self._is_half = new_is_half
-                if new_sr != self._rvc_output_sr:
+                # v0.14.0 (C002): rebuild the resampler if rate changed OR
+                # if the SOLA flush above finalized the existing soxr stream.
+                # Same-rate swap with a non-identity stream pre-v0.14.0
+                # crashed the engine on the next chunk.
+                if new_sr != self._rvc_output_sr or resampler_out_was_flushed:
                     self._resampler_out = _StreamResampler(new_sr, self.cfg.sink_rate)
+                if new_sr != self._rvc_output_sr:
                     self._rebuild_sola_for_rate(new_sr)
                 self._rvc_output_sr = new_sr
                 self.reset_streaming_state()
@@ -1811,10 +1825,14 @@ class RealtimeEngine:
         self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
         new_sr = self._cached_rvc_sr(target)
         # v0.6.7 - rebuild the output resampler if the new model has a
-        # different native rate. Identity ratios (e.g. 16k → 16k → 48k stays
-        # the same) won't reset state, so swaps between same-rate voices
-        # don't introduce a chunk-boundary artifact.
-        if new_sr != self._rvc_output_sr:
+        # different native rate. Identity ratios (e.g. 16k -> 16k -> 48k
+        # stays the same) won't reset state, so swaps between same-rate
+        # voices used to skip the rebuild.
+        # v0.14.0 (C002): also rebuild when the SOLA flush above finalized
+        # the existing soxr stream (`last=True`). Without this, a same-rate
+        # swap left a finalized stream in place and the next chunk raised
+        # `RuntimeError: Input after last input` from soxr, killing engine.
+        if new_sr != self._rvc_output_sr or resampler_out_was_flushed:
             self._resampler_out = _StreamResampler(new_sr, self.cfg.sink_rate)
         self._rvc_output_sr = new_sr
         self.reset_streaming_state()

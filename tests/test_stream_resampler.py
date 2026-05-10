@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 # Local import - `audio` lives under src/.
 SRC = Path(__file__).resolve().parent.parent / "src"
@@ -106,3 +107,38 @@ def test_zero_size_chunk_is_safe() -> None:
     rs.process(real)
     flush = rs.flush()
     assert flush.size > 0  # filter buffer holds samples after the real chunk
+
+
+def test_process_after_flush_raises_proves_rebuild_required() -> None:
+    """v0.14.0 (Lens 4 / C002): after `flush()` finalizes the soxr stream
+    with `last=True`, subsequent `process()` calls raise. The engine's
+    model-swap path used to rely on `if new_sr != old_sr` to rebuild the
+    output resampler; same-rate swaps left a finalized stream in place
+    and the next chunk crashed the engine.
+
+    This test pins the underlying soxr behavior so the engine-side fix
+    in `_maybe_swap_model` (always rebuild if `resampler_out_was_flushed`)
+    has a corresponding unit test for the contract it defends.
+    """
+    rs = _StreamResampler(40_000, 48_000)
+    rs.process(np.full(800, 0.3, dtype=np.float32))
+    rs.flush()  # finalizes the stream with last=True
+    with pytest.raises(RuntimeError, match="last input"):
+        rs.process(np.full(800, 0.3, dtype=np.float32))
+
+
+def test_rebuild_after_flush_resumes_processing() -> None:
+    """v0.14.0 (Lens 4 / C002): the documented recovery path after
+    finalizing a stream is to construct a fresh `_StreamResampler`. This
+    test confirms it works without state leak from the previous instance.
+    """
+    old = _StreamResampler(40_000, 48_000)
+    old.process(np.full(800, 0.3, dtype=np.float32))
+    old.flush()
+    # Build a fresh resampler at the same rates - what the engine swap path
+    # now does unconditionally when a flush has happened. Push enough
+    # samples to clear soxr's filter buffer, then flush.
+    new = _StreamResampler(40_000, 48_000)
+    new.process(np.full(8000, 0.3, dtype=np.float32))
+    flushed = new.flush()
+    assert flushed.size > 0  # filter buffer drains
