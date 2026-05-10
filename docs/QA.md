@@ -72,8 +72,8 @@ woys pitch 0
    second device.
 
 - [ ] Latency between speaking and remote-side hearing feels usable
-      (around 350 ms typical with default `chunk_seconds=0.25` and
-      `output_latency_ms=300` — see `docs/11-microcuts-bug.md`)
+      (around 640 ms typical with the v0.12.4 defaults — `chunk_seconds=0.25`
+      and `output_latency_ms=280`, the latter shipping since v0.7.0-rc3)
 - [ ] No audible chunk-boundary clicks or dropouts during continuous speech
 
 ## Test 3 — CS2 receives transformed voice (DoD #3)
@@ -107,7 +107,7 @@ Leave the TUI running with the engine on for 10+ minutes.
 - [ ] No `last_error` ever populates the status panel
 - [ ] `chunks_processed` keeps climbing
 - [ ] `avg_total_ms` stays roughly constant — no slow degradation
-- [ ] `nvidia-smi` shows VCClient-cachy's process around 1.3-1.4 GiB stable
+- [ ] `nvidia-smi` shows the woys process around 1.3-1.4 GiB stable
 
 If you see `last_error: OSError ... woys-mic`, the systemd unit may have
 restarted; check `journalctl --user -u woys-mic.service`.

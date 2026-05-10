@@ -1,5 +1,10 @@
 # v0.5.1 — Audio quality bug investigation
 
+> **NOTE: Historical investigation snapshot, captured at v0.5.1 (2026-05-04).**
+> Behavior described here may have shifted significantly since v0.5.x. The
+> current canonical reference is `docs/05-perf.md` and `LESSONS.md` for
+> chronology. Don't act on this doc as if it reflects current state.
+
 > Pre-fix root-cause trace. The user reported "noisy, with micro noises and
 > scratches throughout the playback" on every voice except Amitaro after
 > v0.5.0. This file documents the diagnostic measurements before a single

@@ -4,7 +4,6 @@
 # Lays down:
 #   $HOME/.local/share/woys/{venv,models}
 #   $HOME/.local/bin/woys                     (symlink into the venv)
-#   $HOME/.local/bin/vcclient-cachy           (deprecated shim — prints warning, delegates to woys)
 #   $HOME/.config/systemd/user/woys-mic.service
 #
 # v0.6.0: detects an existing vcclient-cachy install and migrates it
@@ -12,6 +11,9 @@
 # unit all move).
 # v0.6.5: PipeWire mic name renamed `vcclient-mic` → `woys-mic`. Apps
 # (Discord / CS2 / Telegram) need to re-select their input device once.
+# v0.8.0: the deprecated `vcclient-cachy` shim was removed entirely (kept
+# through v0.6.x as a transition tool). The script still cleans up any
+# stale shim a previous install left behind.
 #
 # Pre-reqs (the script checks):
 #   - PipeWire + pipewire-pulse running

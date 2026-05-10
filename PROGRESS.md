@@ -2,6 +2,54 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
+## Current status — v0.13.3 shipped; v0.14.0 review cycle in progress (2026-05-10)
+
+`v0.13.3` is the latest tag. The v0.14.0 release candidate cycle is currently
+running an external "review" audit (`docs/24-review/`) and
+backfilling the remaining doc-drift fixes.
+
+Release-by-release summary since the v0.6.0 rename. CHANGELOG.md is the
+authoritative chronology — this section is just the headline-per-release
+view.
+
+| Version | Date       | Headline |
+|---------|------------|----------|
+| v0.13.3 | 2026-05-09 | Friendly source descriptions in app dropdowns (`woys-by-alirexha` + `woys-no-cleanup`) |
+| v0.13.2 | 2026-05-09 | Fix v0.13.0 RNNoise chain ALSA leak (`media.class` mismatch); systemd unit lifecycle |
+| v0.13.1 | 2026-05-09 | TUI `m` monitor toggle; leftover vcclient/VCClient strings cleaned |
+| v0.13.0 | 2026-05-09 | Opt-in RNNoise chain (`woys-mic-clean`) — 13% residual cut reduction |
+| v0.12.4 | 2026-05-08 | User listener A/B picked chunk_seconds=0.25 family as new default |
+| v0.12.3 | 2026-05-08 | Comprehensive parameter sweep + intelligent grid search |
+| v0.12.2 | 2026-05-08 | Methodology correction (pw-record name-fallback tainted v0.12.0/v0.12.1 results) |
+| v0.12.1 | 2026-05-07 | TTS-driven natural-speech detection; chunk-period mechanism not detectable |
+| v0.12.0 | 2026-05-07 | NSF-reset hypothesis NOT confirmed on synthetic; Phase 2 chunk_seconds tweaks |
+| v0.11.0 | 2026-05-06 | GPU clock_lock + torch.cuda.Stream keepalive synergy → ~45 ms inference |
+| v0.10.x | 2026-05-06 | Synthetic harness + per-stage attribution; keepalive bimodal investigation |
+| v0.9.x  | 2026-05-06 | Native PipeWire client (`woys-pw-out`); ring-capacity ≠ jitter; rolled back |
+| v0.8.0  | 2026-05-06 | Subprocess inference worker; fairseq embedder removed; `vcclient-cachy` shim removed |
+| v0.7.0  | 2026-05-06 | Latency-floor push: chunk_seconds 0.25 → 0.15; output_latency_ms 300 → 280 |
+| v0.6.x  | 2026-05-05 | Defaults canonicalization; micro-cut investigation rounds 1–4 |
+| v0.6.0  | 2026-05-05 | Project renamed `vcclient-cachy` → `woys` |
+
+Dev-environment snapshot, defaults, and DoD status as of v0.13.3:
+
+- 176 fast tests + 15 slow tests; ruff + mypy --strict clean over `src/{woys,audio,tui}/` and `tests/`.
+- Total e2e latency: ~640 ms (v0.12.4 listener-test optimum). Inference ~45 ms warm with `gpu_anti_jitter_mode='both'`.
+- VRAM: ~1.35 GiB stable for foundation + a single RVC voice loaded.
+- The PipeWire SOURCE name `woys-mic` is unchanged since v0.6.5; v0.13.x adds `woys-by-alirexha` (RNNoise-cleaned) and `woys-no-cleanup` (raw fallback) as friendly aliases when the chain is enabled.
+
+Items requiring live human QA (DoD #2 and #3 — Discord and CS2 with `woys-mic`)
+remain user-verified per release; see `docs/QA.md`.
+
+---
+
+## Pre-v0.7.0 phase history (archived)
+
+The sections below preserve the original phase-by-phase tracking from
+v0.1.0 through v0.6.0. They are kept for archaeological value; the
+authoritative chronology going forward is `CHANGELOG.md` plus the table
+above.
+
 ## v0.6.0 — Renamed to woys (2026-05-05)
 
 Project renamed `vcclient-cachy` → `woys`. Mechanical change with

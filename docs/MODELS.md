@@ -17,9 +17,13 @@ All weights cache under:
 |---------------------------|-----------------------------------------------------|-------|
 | `contentvec-f.onnx`       | Content encoder (extracts speaker-agnostic feats)   | 360 MB |
 | `rmvpe_wrapped.onnx`      | Pitch (f0) detector — RVC's preferred              | 345 MB |
-| `hubert_base.pt`          | Fallback PyTorch embedder (used if contentvec stub fails) | 180 MB |
 | `amitaro_v2_16k.onnx`     | Sample RVC voice (publicly licensed)               | 64 MB |
 | `<your-voice>.onnx`       | Whatever voice models you drop in here              | varies |
+
+> Old versions of woys also kept `hubert_base.pt` (~180 MB) for the
+> fairseq embedder fallback. Since v0.8.0 the embedder is always ONNX
+> contentvec; `hubert_base.pt` is no longer needed and is no longer
+> downloaded.
 
 ## Finding RVC models
 

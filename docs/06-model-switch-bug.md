@@ -1,5 +1,12 @@
 # v0.4.1 — Model-switch bug — root cause trace
 
+> **NOTE: Historical investigation snapshot, captured at v0.4.1 (2026-05-04).**
+> Recommendations and `engine.py:NNN` line numbers may be stale — the engine
+> has grown by ~1500 lines since this was written. The current canonical
+> reference for engine internals is `docs/05-perf.md` and `LESSONS.md`
+> chronology. Don't act on this doc as if it reflects current state; treat
+> the line numbers as approximate anchors and re-grep by symbol name.
+
 > Pre-fix investigation per `V0_4_1_BUGFIX_BRIEF.md` §2. Filled before any
 > code changed.
 
@@ -24,7 +31,7 @@ sola_crossfade_ms, sola_search_ms, sola_context_ms
 ```
 
 **`rvc_model` is NOT passed.** Therefore `EngineConfig`'s default kicks in
-(`audio/engine.py:65`: `DEFAULT_RVC_MODEL = MODELS_DIR / "amitaro_v2_16k.onnx"`).
+(`audio/engine.py` — search for `DEFAULT_RVC_MODEL`: `DEFAULT_RVC_MODEL = MODELS_DIR / "amitaro_v2_16k.onnx"`).
 Whatever the user has in `~/.config/woys/config.toml`'s
 `rvc_model` field is **silently ignored** at TUI startup.
 
@@ -86,7 +93,7 @@ No `model=` field. Failure #3.
 
 ### F. The engine *does* have a hot-swap method
 
-`audio/engine.py:319-323` (`reload_rvc`):
+`audio/engine.py` — search for `def reload_rvc`:
 
 ```python
 def reload_rvc(self, path: Path) -> None:
@@ -112,8 +119,9 @@ Two issues:
 via `grep -rn reload_rvc src/`:
 
 ```
-src/audio/engine.py:319:    def reload_rvc(self, path: Path) -> None:
+src/audio/engine.py:    def reload_rvc(self, path: Path) -> None:
 ```
+(search `engine.py` for `def reload_rvc`)
 
 Sole reference is the definition. No callers.
 

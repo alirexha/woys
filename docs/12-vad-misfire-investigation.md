@@ -1,5 +1,13 @@
 # 12 — VAD misfire investigation (v0.6.9)
 
+> **NOTE: Historical investigation snapshot, captured at v0.6.9 (2026-05-06).**
+> The `engine.py:NNN` line refs throughout this doc were correct at v0.6.9
+> but have drifted by ~1500 lines after v0.7.0+ rewrites. Where you see a
+> bare line number, treat it as an approximate anchor — the symbol name
+> next to it (e.g. `_run_loop`, `_infer`, `last_input_rms = rms`) is the
+> reliable target; grep `engine.py` for the symbol. Cross-check
+> `docs/05-perf.md` and `LESSONS.md` chronology for current behavior.
+
 **Date:** 2026-05-06
 **Status:** root cause identified; fix applied; awaiting live re-verification.
 
@@ -26,7 +34,7 @@ Three parallel investigations of the woys + vendored RVC code path:
 
 ### Hypothesis 1 — VAD / silence-gate in the woys engine — **REJECTED**
 
-Searched `src/audio/engine.py`, `src/audio/`, `src/woys/`, `src/server/voice_changer/`. The only RMS measurement is `engine.py:1332` (`self.stats.last_input_rms = rms`) — recorded for telemetry, never used to gate output. There is no input-side mute, no `silence_threshold`, no `gate_db`. `VolumeExtractor.get_mask_from_volume` exists in `src/server/voice_changer/common/` but is dead code (no caller).
+Searched `src/audio/engine.py`, `src/audio/`, `src/woys/`, `src/server/voice_changer/`. The only RMS measurement is in `engine.py` (search for `last_input_rms = rms`) — recorded for telemetry, never used to gate output. There is no input-side mute, no `silence_threshold`, no `gate_db`. `VolumeExtractor.get_mask_from_volume` exists in `src/server/voice_changer/common/` but is dead code (no caller).
 
 Conclusion: the engine itself does not gate. This rules out a misconfigured threshold in our code as the cause of the 22 mid-utterance gaps.
 
@@ -56,7 +64,7 @@ The 22-82 ms observed gap durations are 1-8 frames at 10 ms/frame — exactly th
 
 ### Hypothesis 3 — engine emits hallucination during silence — **CONFIRMED, secondary issue**
 
-`engine._run_loop` (`engine.py:1316-1378`) reads every mic chunk and unconditionally passes it through `_safe_process_streaming_16k` → `_infer`. The vocoder, given near-silent input, doesn't emit zero — it reconstructs a baseline "voicing floor" from its embedding + pitch path. Result: −24.7 dBFS phantom output during the user-silent block. Audible as constant low-level hum / breathing-like artifacts during pauses.
+`engine._run_loop` (search `engine.py` for `def _run_loop`) reads every mic chunk and unconditionally passes it through `_safe_process_streaming_16k` → `_infer`. The vocoder, given near-silent input, doesn't emit zero — it reconstructs a baseline "voicing floor" from its embedding + pitch path. Result: −24.7 dBFS phantom output during the user-silent block. Audible as constant low-level hum / breathing-like artifacts during pauses.
 
 Not the cause of the mid-utterance gaps, but a real pause-quality issue worth fixing in the same release.
 
@@ -125,7 +133,7 @@ Same as before: pytest stays green, woys-diag re-run shows cuts/min < 5. Stack t
 
 Re-running after round 2: 16 → 11 cuts/min. Vowel block dropped 8 → 4 (passed the round-2 falsification threshold), but a 5-cut cluster appeared in the `normal` block (46–50 s).
 
-**Critical discovery while investigating the residual:** the woys realtime engine **does not call `Pipeline.exec()` from upstream**. `engine._infer()` (`src/audio/engine.py:840`) implements its own ONNX dispatch directly: `self._cv.run(...)` for the embedder, `self._rmvpe.run(...)` for pitch, `self._rvc.run(...)` for the vocoder. The upstream `Pipeline` class is unreachable from the realtime path — it's only used by upstream's offline conversion utilities, which woys doesn't ship.
+**Critical discovery while investigating the residual:** the woys realtime engine **does not call `Pipeline.exec()` from upstream**. `engine._infer()` (search `src/audio/engine.py` for `def _infer`) implements its own ONNX dispatch directly: `self._cv.run(...)` for the embedder, `self._rmvpe.run(...)` for pitch, `self._rvc.run(...)` for the vocoder. The upstream `Pipeline` class is unreachable from the realtime path — it's only used by upstream's offline conversion utilities, which woys doesn't ship.
 
 This means **the round-1 pitchf interpolation and round-2 NaN-cast / partial-NaN feats fixes never executed in the production engine**. The 23 → 16 → 11 trajectory was almost entirely the **input-gate fix** (which lives in the right place, `engine._run_loop`) plus run-to-run variance.
 
@@ -133,7 +141,7 @@ The Pipeline.py edits remain as defensive guards in case some other path ever in
 
 ### Round-3 fix — port the same sanitization to the engine inline path
 
-In `src/audio/engine.py:_infer()`:
+In `src/audio/engine.py` `_infer()` (search for `def _infer`):
 
 1. After `feats = self._extract_feats(audio16k)` — `if np.isnan(feats).any(): feats = np.nan_to_num(feats, nan=0.0)`. Catches partial-NaN bursts from the embedder before they propagate.
 2. After `pitchf = pitchf_raw.astype(np.float32).squeeze()` — call a new module-level helper `_interpolate_voiced_gaps_np(pitchf)` that does the same as the (dead) torch helper in `Pipeline.py`: replace NaN with 0, then linearly interpolate runs ≤ `_VOICED_GAP_MAX_FRAMES` between two voiced frames.

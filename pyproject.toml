@@ -84,9 +84,10 @@ evdev = ["evdev>=1.7"]
 tray = ["pystray>=0.19", "pillow>=10"]
 
 [project.scripts]
-# v0.6.0 — primary binary is `woys`. The deprecated `woys` shim
-# is installed as a separate symlink by install.sh (not by hatch) so it can
-# print a deprecation warning before delegating to the same entry point.
+# v0.6.0 introduced the `woys` binary (renamed from `vcclient-cachy`). The
+# deprecated `vcclient-cachy` shim was kept through v0.6.x as a transition
+# tool and removed entirely in v0.8.0 — see install.sh for the leftover
+# shim cleanup logic.
 woys = "woys.cli:main"
 
 [build-system]

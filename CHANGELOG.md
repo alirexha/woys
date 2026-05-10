@@ -2,6 +2,13 @@
 
 All notable changes to this project. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+> **Note on "last release" claims.** Several earlier release notes
+> (v0.7.0, v0.11.0, v0.12.3, v0.12.4, v0.13.0) declared the project
+> "feature-complete on this stack" or "the last release." Each was
+> followed by another release. Treat such claims as meta-stable: the
+> project is iterative, and a "this is genuinely the last release"
+> line in a changelog entry is not a binding commitment.
+
 ## [Unreleased]
 
 ## [0.13.3] — 2026-05-09 — friendly source descriptions; apps see `woys-by-alirexha` and `woys-no-cleanup`, internals tagged `_internal-...`

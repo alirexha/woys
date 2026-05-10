@@ -1,5 +1,13 @@
 # v0.7.0 — pre-state latency baseline (v0.6.10)
 
+> **NOTE: Historical investigation snapshot, captured at v0.7.0 (2026-05-06).**
+> Recommendations like "drop chunk_seconds 0.25 → 0.10" and
+> "drop output_latency_ms 300 → 80" are stale: chunk_seconds re-stabilized
+> at 0.25 in v0.12.4 (listener A/B), and output_latency_ms shipped at 280
+> since v0.7.0-rc3. The current canonical reference is `docs/05-perf.md`
+> and `LESSONS.md` for chronology. Don't act on this doc as if it reflects
+> current state.
+
 Captured 2026-05-06 against the just-shipped v0.6.10 build (which is
 v0.6.9 minus the jennie voice — no engine changes between those tags).
 All numbers are from `scripts/bench_inference.py` on this machine

@@ -85,19 +85,25 @@ you, hop back to the TUI to confirm:
 
 - `status: RUNNING` (engine is on)
 - input level meter responds when you speak
-- avg latency < 300 ms
+- avg total e2e ~640 ms (per the v0.12.4 listener-test optimum); CS2's own
+  input pipeline contributes ~80 ms, leaving ~560 ms for the woys path
 
 If everything looks right but they still can't hear you, see
 `docs/TROUBLESHOOTING.md`.
 
 ## What if CS2 sounds delayed?
 
-The pipeline introduces ~150-300 ms of latency by default (chunk size +
-inference + audio I/O). For competitive play this can feel slow. Two knobs
-in `~/.config/woys/config.toml`:
+The pipeline introduces ~640 ms total e2e latency by default (per the
+v0.12.4 listener-test optimum: chunk size + inference + audio I/O + SOLA
+crossfade). CS2's voice chat is generally tolerant of this; for
+competitive play it can still feel slow. Two knobs in
+`~/.config/woys/config.toml`:
 
-- `chunk_seconds = 0.25` is the comfort default. Drop to `0.15` for less
-  latency at slightly worse pitch quality.
+- `chunk_seconds = 0.25` is the listener-test optimum. Lower values reduce
+  tail latency at the cost of more chunks dropped during cuDNN warmup;
+  0.25 was picked by user A/B over 0.15 because the chunk-period rhythm
+  artifact at 0.15 was more perceptible than the +100 ms latency win.
+  See LESSONS §42 for the full A/B writeup.
 - `mic_rate = 48000` matches CS2's expected rate; don't change it.
 
 ## Optional — separate woys-mic for game vs. Discord

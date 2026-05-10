@@ -1,5 +1,11 @@
 # v0.5.2 — Pacat underrun ("برفک") investigation
 
+> **NOTE: Historical investigation snapshot, captured at v0.5.2 (2026-05-05).**
+> The pacat → pw-cat switch shipped here was further superseded by the
+> native PipeWire output client (`woys-pw-out`) introduced in v0.9.0-rc1.
+> The current canonical reference is `docs/05-perf.md` and `LESSONS.md`
+> for chronology. Don't act on this doc as if it reflects current state.
+
 > Pre-fix root-cause trace. After v0.5.1's soxr resampler removed the
 > aliasing scratches, the user reported a different artifact in
 > Telegram — Persian word **"برفک"** (TV-static crackle): rapid
