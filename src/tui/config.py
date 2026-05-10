@@ -256,8 +256,28 @@ def save_config(cfg: AppConfig, path: Path = CONFIG_FILE) -> None:
     # config. v0.6.8 - chmod 0600 (was inheriting umask 0644). Config can
     # contain user paths and tuning that other local users have no business
     # reading.
+    # v0.14.0 (Lens 6 / Lens 17 / C123 + C268): create file with mode 0600
+    # atomically via os.open(O_WRONLY|O_CREAT|O_EXCL, 0o600). Pre-v0.14.0
+    # `open(tmp, "wb")` created the file with default umask (typically
+    # 0644) and then `os.chmod(0o600)` ran AFTER -- a race window where
+    # another local user could read tunings + model paths before the
+    # restrictive mode landed. O_EXCL also rejects pre-existing tmp files
+    # (a stale .tmp from a crashed write would be an attack vector for
+    # symlink-replace; O_EXCL refuses to follow). Plus fsync before
+    # replace per C268 so power-loss-during-write doesn't corrupt config.
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "wb") as f:
-        tomli_w.dump(data, f)
-    os.chmod(tmp, 0o600)
+    # Clean up any stale tmp file from a crashed prior write (own UID
+    # only, since the parent dir is XDG_CONFIG_HOME).
+    if tmp.exists():
+        tmp.unlink()
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            tomli_w.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
     os.replace(tmp, path)
