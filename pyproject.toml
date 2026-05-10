@@ -5,15 +5,26 @@ description = "Linux-native real-time voice changer. RVC-only on ONNX Runtime CU
 authors = [{ name = "Alireza Hamayeli", email = "alireza.hmyl@gmail.com" }]
 license = { file = "LICENSE" }
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+# v0.14.0 (Lens 14 / C230): bumped <3.12 -> <3.13. fairseq was the
+# constraint that pinned to 3.11; it was removed in v0.8.0. ONNX
+# Runtime 1.22 ships cp311/cp312/cp313 wheels, so 3.12 is supported.
+# Held below 3.13 because torch 2.5.x doesn't ship 3.13 wheels yet.
+requires-python = ">=3.11,<3.13"
 keywords = ["voice-changer", "rvc", "onnx", "pipewire", "linux", "woys"]
 classifiers = [
     "License :: Other/Proprietary License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
     "Private :: Do Not Upload",
 ]
+# v0.14.0 (Lens 14 / C229): runtime deps audited. Many web-server-only
+# deps (fastapi/uvicorn/python-socketio/python-multipart/websockets/
+# pyOpenSSL) are imported by `src/server/` (vendored upstream) and
+# kept because the wheel ships that subtree for the convert path.
+# `dasbus` was removed -- D-Bus integration was replaced by Unix-domain
+# sockets (src/tui/control.py) in v0.5.x, dasbus had zero imports.
 dependencies = [
     # ML / inference
     "numpy>=1.26,<2.2",
@@ -30,7 +41,10 @@ dependencies = [
     "faiss-cpu>=1.8",
     "einops>=0.8",
     "soundfile>=0.12",
-    # Server framework
+    # Server framework -- imported by src/server (vendored upstream); the
+    # wheel ships src/server for the convert path, so these stay runtime
+    # rather than moving to an extra. v0.15+ may extract convert into a
+    # separate subtree and drop these.
     "fastapi>=0.110,<0.116",
     "uvicorn[standard]>=0.30",
     "python-socketio>=5.11",
@@ -42,13 +56,12 @@ dependencies = [
     "dataclasses-json>=0.6",
     "tqdm>=4.66",
     "psutil>=6",
-    "onnx>=1.17",  # Phase C convert subcommand (.pth → .onnx) + fp16 conversion
+    "onnx>=1.17",  # Phase C convert subcommand (.pth -> .onnx) + fp16 conversion
     "onnxconverter-common>=1.16",
     # TUI + config + IPC
     "textual>=0.85",
     "rich>=13.9",
     "tomli-w>=1.0",
-    "dasbus>=1.7",
     # Audio I/O
     "sounddevice>=0.5",
 ]
