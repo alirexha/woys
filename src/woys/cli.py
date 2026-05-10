@@ -576,23 +576,42 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
 def cmd_engine(seconds: float, quiet: bool) -> int:
     """v0.8.0-rc2 - headless engine entry. Same engine + InferenceClient
     spawn path the TUI uses, minus Textual's terminal hijacking. SIGINT
-    triggers a clean stop+teardown."""
+    triggers a clean stop+teardown.
+
+    v0.14.0 (Lens 17 / C009): wrapped in an instance lock. Two concurrent
+    `woys engine` invocations used to unlink each other's control socket
+    and write into WoysSink simultaneously, producing out-of-phase
+    double-converted audio.
+    """
     import signal as _signal
     import time as _time
 
     from audio.engine import EngineConfig, RealtimeEngine
     from audio.pipewire import PipeWireError, VirtualMic, get_state
     from tui.config import load_config
+    from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
 
     print(f"woys engine - {__version__}")
+    try:
+        instance_lock_cm = acquire_instance_lock()
+        instance_lock_cm.__enter__()
+    except InstanceLockBusy as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
     try:
         VirtualMic().ensure()
         st = get_state()
         if not (st.sink_present and st.source_present):
-            print("error: WoysSink + woys-mic not loaded; run `woys pw setup`", file=sys.stderr)
+            print(
+                "error: WoysSink + woys-mic not loaded; run `woys pw setup`",
+                file=sys.stderr,
+            )
+            instance_lock_cm.__exit__(None, None, None)
             return 2
     except PipeWireError as e:
         print(f"error: {e}", file=sys.stderr)
+        instance_lock_cm.__exit__(None, None, None)
         return 2
 
     cfg = load_config()
@@ -749,12 +768,15 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
         if s.player_underruns > 0 and s.chunks_processed > 0:
             # Approximate per-second underrun rate. Rough; assumes the
             # session ran the full --seconds duration.
-            session_secs = max(1.0, s.chunks_processed * 0.15)
+            # v0.14.0 (C092): use cfg.chunk_seconds, not hardcoded 0.15.
+            session_secs = max(1.0, s.chunks_processed * eng.cfg.chunk_seconds)
             rate = s.player_underruns / session_secs
             print(
                 f"  player_underruns rate: ~{rate:.1f}/sec "
                 f"({'engine writer jitter likely cause' if rate > 1.0 else 'within normal slack'})"
             )
+        # v0.14.0 (C009): release the instance lock taken at function entry.
+        instance_lock_cm.__exit__(None, None, None)
     return 0
 
 
