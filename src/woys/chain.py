@@ -34,10 +34,13 @@ routed to the default ALSA sink (= laptop speakers). v0.13.2 fixed the
 routing (Architecture B with `media.class=Audio/Sink` and the `.monitor`
 consumption pattern); v0.13.3 polishes the naming on top of that.
 
-Mirrored functionality is also in `scripts/v013_2_rnnoise_chain.sh`
-for users who don't have `woys` on PATH; this module is the source of
-truth used by `woys chain`. Keep the two in sync if you change the
-chain topology.
+v0.14.0 (Lens 1 / Lens 19 / C034 + C043): the parallel
+`scripts/v013_*_rnnoise_chain.sh` shell implementations were deleted.
+They duplicated this module's topology without `set -euo pipefail` or
+return-code checks on `pactl load-module`, so partial chain failures
+silently reported "active". This module is the single source of truth;
+external scripts that want to reproduce the chain should `import
+audio.woys.chain` rather than re-implement it in shell.
 """
 
 from __future__ import annotations
