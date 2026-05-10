@@ -81,8 +81,12 @@ woys chain teardown # unloads
 visible to apps, and runs an automatic ALSA-hardware-leak check (so
 a future regression of the v0.13.0 bug shows up loud, not silent).
 
-If you don't have `woys` on PATH, the same logic lives in
-`scripts/v013_2_rnnoise_chain.sh` with the same actions.
+v0.14.0: the parallel shell-script implementation
+(`scripts/v013_2_rnnoise_chain.sh`) was retired -- it duplicated the
+chain topology without `set -euo pipefail` or pactl rc checks, so a
+partial load reported "active" silently. Use `woys chain enable`
+(installed by `pip install -e .` / AUR / `install.sh`); if `woys`
+isn't on PATH, install it.
 
 ## Selecting the cleaned mic in apps (v0.13.3)
 
