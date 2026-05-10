@@ -28,37 +28,105 @@ the (B) portions must be either (1) replaced with original implementations,
 ORIGINAL WORK — Copyright 2026 Alireza Hamayeli, All Rights Reserved
 ----------------------------------------------------------------------
 
-Source code (Python):
+Policy: every file under the directories below — except where explicitly
+noted as upstream-derived in the next section — is original work and
+covered by ./LICENSE (All Rights Reserved). The explicit enumeration is
+maintained for legal-audit purposes.
+
+Source code (Python) — all *.py under src/{woys,audio,tui}/:
   src/woys/__init__.py
+  src/woys/chain.py
   src/woys/cli.py
+  src/woys/convert.py
+  src/woys/fp16_convert.py
+  src/woys/instance_lock.py
+  src/woys/models.py
+  src/woys/profiles.py
+  src/woys/tray.py
+  src/woys/vcprofile.py
   src/audio/__init__.py
   src/audio/engine.py
+  src/audio/inference_client.py
+  src/audio/inference_worker.py
   src/audio/pipewire.py
+  src/audio/priority.py
+  src/audio/sola.py
   src/tui/__init__.py
   src/tui/app.py
   src/tui/config.py
   src/tui/control.py
   src/tui/hotkey.py
 
-Tests:
+Tests — all tests/test_*.py and tests/conftest.py:
   tests/conftest.py
   tests/test_audio_pipewire.py
+  tests/test_chain.py
+  tests/test_convert.py
+  tests/test_download_weights.py
+  tests/test_embedder.py
+  tests/test_engine_config_drift.py
+  tests/test_engine_inference.py
+  tests/test_engine_routing.py
+  tests/test_engine_sola_integration.py
   tests/test_environment.py
+  tests/test_gpu_anti_jitter.py
+  tests/test_instance_lock.py
+  tests/test_migrate_to_woys.py
+  tests/test_models_library.py
+  tests/test_model_swap.py
+  tests/test_pacat_health.py
+  tests/test_profiles.py
   tests/test_smoke_rvc_onnx.py
+  tests/test_sola.py
+  tests/test_stream_resampler.py
+  tests/test_tray_imports.py
   tests/test_tui_config.py
   tests/test_tui_control.py
+  tests/test_v068_polish.py
+  tests/test_v070_migration.py
+  tests/test_vcprofile.py
+  tests/test_voice_quality.py
   tests/fixtures/                     (test inputs synthesized by scripts/)
 
-Scripts:
+Scripts — all *.py and *.sh under scripts/:
+  scripts/bench_engine_runtime.py
+  scripts/bench_inference.py
+  scripts/bench_iobinding.py
   scripts/bench_loopback.py
+  scripts/bench_streaming.py
+  scripts/cuts_per_min_check.py
   scripts/download_weights.py
+  scripts/gen_sweep_fixture.py
   scripts/make_test_wav.py
+  scripts/migrate_to_woys.py
+  scripts/probe_writer_jitter.py
+  scripts/profile_engine.py
   scripts/smoke_rvc_onnx.py
+  scripts/sweep_latency.py
+  scripts/v010_alloc_probe.py
+  scripts/v010_analyze.py
+  scripts/v010_harness.py
+  scripts/v012_1_tts_run.py
+  scripts/v012_2_proper_sweep.sh
+  scripts/v012_3_grid_sweep.py
+  scripts/v012_3_writeup.py
+  scripts/v012_phase2_sweep.sh
+  scripts/v012_run_and_record.sh
+  scripts/v012_spectral_flux.py
+  scripts/v012_spectrogram_analysis.py
+  scripts/v012_stationary_run.py
+  scripts/voice_library_import.py
+
+Native helpers (C):
+  bin/woys-pw-out.c                   (native PipeWire output client; v0.9.0+)
+  bin/Makefile
 
 Packaging:
   install.sh
   uninstall.sh
   pkg/PKGBUILD
+  pkg/.SRCINFO
+  pkg/README-AUR.md
   pkg/woys-mic.service
 
 Configuration & metadata:
@@ -67,7 +135,7 @@ Configuration & metadata:
   .python-version
   .gitignore
 
-Documentation (original):
+Documentation (original) — all *.md under docs/, plus top-level prose:
   README.md
   CHANGELOG.md
   the project notes
@@ -79,12 +147,31 @@ Documentation (original):
   LICENSE                             (the All Rights Reserved license)
   docs/00-recon.md
   docs/05-perf.md
+  docs/06-model-switch-bug.md
+  docs/07-audio-quality-bug.md
+  docs/08-pacat-underrun-bug.md
+  docs/10-monitor-leak-diag.md
+  docs/11-microcuts-bug.md
+  docs/12-vad-misfire-investigation.md
+  docs/13-detector-calibration.md
+  docs/14-v070-baseline.md
+  docs/15-auto-sweep-methodology.md
+  docs/16-audit/                      (v0.8.0 external review materials)
+  docs/17-review/                     (further external review notes)
+  docs/19-pw-investigation.md
+  docs/19-v09x-plan.md
+  docs/20-mitigations-tuning.md
+  docs/21-v09x-final-summary.md
+  docs/22-gpu-clock-lock.md
+  docs/23-rnnoise-chain.md
+  docs/24-review/                (v0.14.0 review audit materials)
   docs/CS2-SETUP.md
   docs/DISCORD-SETUP.md
   docs/INSTALL.md
   docs/MODELS.md
   docs/QA.md
   docs/TROUBLESHOOTING.md
+  docs/v0_5_0_quality_report.md
 
 
 ----------------------------------------------------------------------
@@ -125,7 +212,6 @@ Each carries its own license. Notable:
 
   torch, torchaudio                   BSD-3
   onnxruntime-gpu                     MIT
-  fairseq (optional extra)            MIT
   faiss-cpu                           MIT
   textual                             MIT
   fastapi, uvicorn                    MIT
@@ -152,10 +238,12 @@ weights downloaded by scripts/download_weights.py at install time:
                                        repos for the upstream license terms
   contentvec-f.onnx                    huggingface.co/wok000/weights_gpl —
                                        upstream-licensed; see that repo
-  hubert_base.pt                       huggingface.co/ddPn08 — original
-                                       authors' license applies
   amitaro_v2_16k.onnx                  huggingface.co/wok000/vcclient_model
                                        (sample voice for smoke testing)
+
+(Older versions also downloaded `hubert_base.pt` for the fairseq embedder
+fallback. The fairseq path was removed in v0.8.0; the embedder is now
+ONNX contentvec exclusively, and `hubert_base.pt` is no longer fetched.)
 
 End-users who add their own RVC voice models are responsible for the
 licensing of those weights. This repository's license does not grant any

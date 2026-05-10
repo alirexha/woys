@@ -1,5 +1,13 @@
 # v0.6.7 — micro-cut investigation
 
+> **NOTE: Historical investigation snapshot, captured at v0.6.7 (2026-05-06).**
+> The micro-cut chase continued through v0.6.8/v0.6.9 (LESSONS §16-§18) and
+> resurfaced as the GPU clock-jitter investigation in v0.10.x → v0.11.0
+> (LESSONS §29-§31). The 0.25 chunk_seconds pin recommended here was lifted
+> in v0.7.0 and re-pinned in v0.12.4. The current canonical reference is
+> `docs/05-perf.md`, `docs/22-gpu-clock-lock.md`, and `LESSONS.md` for
+> chronology. Don't act on this doc as if it reflects current state.
+
 User report (verbatim):
 
 > "my voice is changed ok but its noisy and theres many tiny cuts

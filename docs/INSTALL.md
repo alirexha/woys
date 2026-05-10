@@ -58,8 +58,12 @@ What this does, in order:
 6. Downloads the foundation ONNX weights into `~/.local/share/woys/models/`:
    - `contentvec-f.onnx` (~360 MB — content encoder)
    - `rmvpe_wrapped.onnx` (~345 MB — pitch detector)
-   - `hubert_base.pt` (~180 MB — fallback embedder)
    - `amitaro_v2_16k.onnx` (~64 MB — sample voice for testing)
+
+   Older versions of woys also downloaded `hubert_base.pt` (~180 MB) for the
+   fairseq embedder fallback. Since v0.8.0 the embedder is always ONNX
+   contentvec; `hubert_base.pt` is no longer needed and is no longer
+   downloaded.
 7. Registers `woys-mic.service` as a systemd user unit, then enables and starts it.
 
 If `~/.local/bin` isn't on your `$PATH`, the installer prints how to add it.
@@ -84,7 +88,7 @@ woys info
 You should see something like:
 
 ```
-woys 0.1.0
+woys 0.13.3
   python: 3.11.15
   Server Name: PulseAudio (on PipeWire 1.6.4)
   gpu: NVIDIA GeForce RTX 2070, 595.71.05, 8192 MiB
@@ -105,6 +109,15 @@ source_present: True  (module 536870917)
 
 `pactl list short sources` should now include a line containing `woys-mic`.
 
+Since v0.13.3, when the optional RNNoise chain is enabled (`woys chain
+setup`), apps will additionally see two friendlier-named sources in their
+input device dropdown:
+
+- **`woys-by-alirexha`** — RNNoise-cleaned source (the recommended daily
+  driver; ~13 % cuts/min reduction at the cost of ~+40 ms latency).
+- **`woys-no-cleanup`** — raw v0.12.4 engine output, no RNNoise (the
+  low-latency fallback). This is the same node `woys-mic` points at.
+
 ## Step 4 — run the TUI
 
 ```
@@ -119,6 +132,8 @@ Hotkeys inside the TUI:
 | `+`  | Pitch shift +1 semitone                  |
 | `-`  | Pitch shift -1 semitone                  |
 | `0`  | Reset pitch                              |
+| `p`  | Cycle through saved profiles             |
+| `m`  | Toggle self-monitor (host-output copy)   |
 | `s`  | Save current settings to `config.toml`   |
 | `q`  | Quit                                     |
 

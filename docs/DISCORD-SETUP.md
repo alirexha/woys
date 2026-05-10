@@ -68,7 +68,7 @@ with low latency.
 |--------------------------------------------|----------------------------------------------------------------------------|
 | Discord says "no input"                    | Check `woys status` — is the engine RUNNING?                     |
 | Voice sounds robotic / clipped             | Lower input gain in your mic; the engine handles up to ~0.7 RMS cleanly    |
-| Heavy delay (>500 ms)                      | Reduce `chunk_seconds` in `~/.config/woys/config.toml` to 0.25   |
+| Discord cuts off RVC output (Krisp false-positive on transformed voice) | Disable Krisp in **User Settings → Voice & Video → Voice Processing** (covered above). `chunk_seconds` stays at the default 0.25 since v0.12.4 — lowering it does not help with this symptom. |
 | Mic level meter is dead in Discord         | Try `pavucontrol` → **Recording** tab → confirm Discord is reading woys-mic |
 | Pitch shift sounds wrong                   | Hit `0` in the TUI to reset, then `+`/`-` one semitone at a time           |
 | Engine errors out after model load         | Check `~/.local/share/woys/models/` — re-run `scripts/download_weights.py` |

@@ -35,7 +35,7 @@ makepkg --printsrcinfo > .SRCINFO   # regenerate just in case
 
 # 4. Stage + commit + push
 git add PKGBUILD .SRCINFO
-git commit -m "woys 0.2.0: initial AUR upload"
+git commit -m "woys 0.13.3: initial AUR upload"
 git push origin master
 ```
 
@@ -47,28 +47,28 @@ When you cut a new version:
 
 ```
 # In the main repo
-sed -i 's/^pkgver=.*/pkgver=0.3.0/' pkg/PKGBUILD
+sed -i 's/^pkgver=.*/pkgver=0.13.3/' pkg/PKGBUILD
 cd pkg && makepkg --printsrcinfo > .SRCINFO
 
 # In the AUR clone
 cp ~/ai/woys/pkg/PKGBUILD .
 cp ~/ai/woys/pkg/.SRCINFO .
-git commit -am "woys 0.3.0"
+git commit -am "woys 0.13.3"
 git push origin master
 ```
 
 ## Local install test (without publishing)
 
 `makepkg -s` from `pkg/` will fail today because:
-- the `source=` line points at a `git+https://github.com/alirexha/woys.git#tag=v0.2.0`
+- the `source=` line points at a `git+https://github.com/alirexha/woys.git#tag=v0.13.3`
 - the repo is private, so the unauthenticated git clone bombs
 
 To smoke-test the PKGBUILD logic locally without the network roundtrip:
 
 ```
-mkdir -p /tmp/woys-test/woys-0.2.0
+mkdir -p /tmp/woys-test/woys-0.13.3
 cp -a ~/ai/woys/{src,pkg,pyproject.toml,README.md,LICENSE,upstream,docs} \
-      /tmp/woys-test/woys-0.2.0/
+      /tmp/woys-test/woys-0.13.3/
 cp ~/ai/woys/pkg/PKGBUILD /tmp/woys-test/
 cd /tmp/woys-test
 # Override the source array via env so makepkg uses our local copy:

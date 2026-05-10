@@ -1391,6 +1391,15 @@ Rule for future audits: ship the instrumentation BEFORE or
 ALONGSIDE the fix. Never afterwards. The fix may be wrong; the
 counter that proves it wrong is the load-bearing artifact.
 
+> **Footnote on numbering — §21 and §22 are intentionally absent.**
+> §21 / §22 were reserved during the v0.7.0 → v0.9.0 transition for
+> in-progress investigations that didn't ship as standalone retro
+> sections (see `V0_9_X_AUTONOMOUS.md` and the v0.10.x harness notes for
+> the work that landed there). Renumbering existing sections to close the
+> gap would break every cross-reference in `docs/` and the changelog, so
+> the gap is preserved. If you searched for `LESSONS §21` or `§22` and
+> got zero hits — that's why.
+
 ## 23. v0.9.0 — Fix 1 (ORT IO binding) deferred as a null result on this stack
 
 The v0.9.x brief (`V0_9_X_AUTONOMOUS.md`) listed three fixes; Fix 1

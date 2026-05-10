@@ -1,5 +1,11 @@
 # v0.6.4 — monitor-leak diagnostic
 
+> **NOTE: Historical investigation snapshot, captured at v0.6.4 (2026-05-05).**
+> Behavior described here may have shifted (the TUI `m` toggle in v0.13.1
+> changed how monitor is exposed). The current canonical reference is
+> `docs/05-perf.md` and `LESSONS.md` for chronology. Don't act on this doc
+> as if it reflects current state.
+
 User reported: with `monitor = false` (the default), engine output was
 audibly playing through laptop speakers. Setting `monitor = true` was
 not the cause — and explicit monitor-stream code paths were never
