@@ -3373,3 +3373,106 @@ Apps now see two clean options (`woys-no-cleanup` and
     pavucontrol or screenshot it — the text dump is authoritative.
     Build a test that asserts the dropdown contents once you ship a
     clean topology so you don't drift back to chaos.
+
+## 46. v0.14.2 — PipeWire-native `module-filter-chain` via conf file broke real-world system audio; rolled back to v0.14.1 module-pactl chain as v0.14.3
+
+After v0.14.1 cleaned up app-dropdown labels, the remaining UX
+complaint was row count: apps still saw five woys entries (the
+daily-driver source, the raw bypass, two `_internal-...` auto-
+monitors, and a remap-source). v0.14.2 attempted to collapse all of
+that into a single PipeWire-native `libpipewire-module-filter-chain`
+with internal `Stream/Input/Audio` + `Stream/Output/Audio` nodes that
+libpulse does not enumerate. On paper, this would drop the dropdown
+from five rows to two (`woys-by-alirexha` + `woys-mic`).
+
+The mechanism worked in isolation. The CI gates were green (23 chain
+tests, 189 fast tests, ruff, format, mypy --strict). `pw-dump` on the
+dev box confirmed the expected node topology: capture pinned to
+`woys-mic` via `target.object`, internal LADSPA RNNoise stage,
+playback `Audio/Source` named `woys-by-alirexha`, and the
+`Stream/*/Audio` middle nodes invisible to pulse-side apps as
+predicted. Empirically (verified on the dev box on PipeWire 1.6.4)
+`media.class` was the determining factor for pulse visibility, not
+`node.passive` / `node.virtual` / `object.register=false`.
+
+### What broke in real-world use
+
+The user installed v0.14.2, ran `woys chain setup`, and within
+seconds noticed system audio enumeration was broken: YouTube playback
+failed and the laptop speakers stopped producing sound. **A full
+reboot was required to recover.** The user could not run `pactl` or
+`pw-dump` mid-outage because graphical-session audio plumbing was
+itself in the failure state, so we have no captured evidence of the
+exact failure mode beyond "system audio dies, reboot fixes it."
+
+### Why the dev evidence was insufficient
+
+The conf file (`~/.config/pipewire/pipewire.conf.d/99-woys-chain.conf`)
+loaded at PipeWire daemon startup, and `chain setup` / `chain
+teardown` triggered a full pipewire-stack restart (we documented this
+as a "1-2s desktop audio glitch, accepted tradeoff" in the v0.14.2
+notes). That restart was clean on the dev environment. On the user's
+daily-driver desktop something in the conf — most plausibly some
+combination of the daemon-restart racing live audio clients,
+wireplumber session-policy reapplication, or a property the user's
+PipeWire 1.6.4 build interpreted differently than the dev box —
+broke pulse source/sink enumeration for non-woys streams.
+
+We don't have a precise root cause because we can't reproduce
+without recreating the user's exact session state, and the recovery
+path (reboot) destroyed the evidence. The actionable fact is: **the
+filter-chain-via-conf approach is not safe to ship**, regardless of
+whether the dev environment passes every gate.
+
+### What v0.14.3 ships
+
+Pure revert of b07c00b. The v0.14.1 module-based pactl chain is
+restored as the canonical and final architecture. v0.14.3's
+`chain teardown` does not touch
+`~/.config/pipewire/pipewire.conf.d/99-woys-chain.conf`; users on
+v0.14.2 must delete that file manually before downgrade. The five-row
+dropdown footprint is accepted as the achievable ceiling on
+`module-*` + pipewire-pulse without C-level libpipewire bindings.
+
+### Generalizable lessons
+
+  * **A test suite that doesn't use system audio cannot certify a
+    PipeWire change that touches the daemon-startup path.** Our 23
+    chain tests + `pw-dump` snapshots verified module loading,
+    topology, and pulse-side visibility. None of them touched
+    "play YouTube and confirm speakers still produce sound" because
+    that test requires a real audio session the harness can't create.
+    For PipeWire conf changes, the verification gap is structural,
+    not test-coverage shaped — adding more pytest assertions would
+    not have caught this.
+  * **Daemon restarts are not a "1-2s glitch" on an arbitrary
+    desktop.** On the dev box the restart looked clean; on the
+    user's box it broke audio enumeration globally. Any change that
+    restarts pipewire as a side effect of installation/setup carries
+    real-world risk that the dev box can't certify.
+  * **Conf-file modifications must be reversible without losing
+    evidence.** When a conf-file change breaks audio, the user
+    cannot run diagnostic commands to capture the failure mode
+    because graphical audio is itself in the failure state. Any
+    future attempt at PipeWire-native modifications must either
+    (a) be testable in a way that doesn't require system audio to
+    work, or (b) carry an out-of-band evidence-capture mechanism
+    that fires before the user's only recovery path (reboot)
+    destroys diagnostic state.
+  * **`module-filter-chain` cannot be loaded at runtime via pactl
+    or pw-cli.** This is a hard PipeWire constraint — the module
+    only loads from a conf file at daemon start. That constraint
+    forced v0.14.2 into the daemon-restart path, which is exactly
+    the path that broke real-world audio. So as long as PipeWire
+    keeps that restriction, "swap the four-module chain for a
+    filter-chain" is structurally not a safe path on
+    `module-*`-API-only access.
+  * **Don't re-litigate the row-count ceiling.** v0.14.1's five-row
+    layout (one user-facing daily driver + four `_internal-...`
+    tagged supporting nodes) is accepted as final on the
+    `module-*` + pipewire-pulse stack. Going lower requires either
+    filter-chain-via-conf (rejected on real-world breakage in
+    v0.14.2) or C-level libpipewire bindings (out of scope per
+    the project notes). The next person tempted to reduce row count past
+    five should first re-read this section, then decide whether the
+    user-visible benefit justifies revisiting either rejected path.
