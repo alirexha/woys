@@ -1154,8 +1154,24 @@ def to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, ND
     fully zeroes audio during sub-hysteresis transitions (engine.py:2184)
     and the resulting RMVPE output is all-zero. Skipping the four numpy
     passes (log, mask multiply, clip, rint) saves ~8 µs per such chunk.
+
+    v0.14.0 (Lens 7 / C093): clamp negative pitchf at entry. RMVPE in
+    practice emits non-negative Hz, but transients / NaN-replaced regions
+    can leak negatives. log(1 + pitch/700) at pitch < -700 produces NaN;
+    NaN survives the `mask > 0` filter (NaN > 0 is False so the cell is
+    untouched), then `clip(NaN, 1, 255)` returns NaN, then
+    `rint().astype(int64)` becomes INT64_MIN, which RVC's harmonic-source
+    table reads as out-of-bounds garbage. Clamping at entry makes the
+    contract explicit and prevents the silent failure mode.
     """
-    if pitchf.size == 0 or float(pitchf.max()) == 0.0:
+    if pitchf.size == 0:
+        return (
+            np.zeros(target_len, dtype=np.int64),
+            np.zeros(target_len, dtype=np.float32),
+        )
+    if pitchf.min() < 0.0:
+        pitchf = np.clip(pitchf, 0.0, None)
+    if float(pitchf.max()) == 0.0:
         return (
             np.zeros(target_len, dtype=np.int64),
             np.zeros(target_len, dtype=np.float32),
@@ -1917,11 +1933,20 @@ class RealtimeEngine:
         # v0.10.0-rc2 - split RVC stage into pre / run / post so the
         # tail-attribution data tells us GPU work vs Python overhead.
         feats_2x = np.repeat(feats, 2, axis=1)
+        # v0.14.0 (Lens 4 / Lens 7 / C001): apply pitch shift in semitones
+        # BEFORE deriving pitch_coarse. Upstream's RMVPEOnnxPitchExtractor
+        # (src/server/voice_changer/RVC/embedder/RMVPEOnnxPitchExtractor.py)
+        # shifts f0 first, then derives BOTH pitch_coarse (mel-bin index)
+        # and pitchf (Hz vector) from the shifted result. The pre-v0.14.0
+        # engine path multiplied pitchf_aligned AFTER coarse was derived,
+        # so RVC saw mismatched harmonic-source vs pitch-class-embedding
+        # pairs for any non-zero f0_up_key. Hard to detect aurally because
+        # RVC blends the embedding into the residual; cleanest test is
+        # A/B'ing pitch shifts against the upstream reference path.
+        if self.cfg.f0_up_key != 0:
+            pitchf = pitchf * (2.0 ** (self.cfg.f0_up_key / 12.0))
         pitch_coarse, pitchf_aligned = _to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
         pitch_coarse = pitch_coarse[: feats_2x.shape[1]].reshape(1, -1)
-        # Apply pitch shift in semitones.
-        if self.cfg.f0_up_key != 0:
-            pitchf_aligned = pitchf_aligned * (2.0 ** (self.cfg.f0_up_key / 12.0))
         pitchf_aligned = pitchf_aligned[: feats_2x.shape[1]].reshape(1, -1).astype(np.float32)
 
         feats_dtype = np.float16 if self._is_half else np.float32
@@ -3290,7 +3315,10 @@ class RealtimeEngine:
                         if self.cfg.input_gain_db > 0.0:
                             np.clip(audio, -1.0, 1.0, out=audio)
 
-                    rms = float(np.sqrt(np.mean(audio**2)))
+                    # v0.14.0 (Lens 3 / C081): np.dot(a,a)/n is ~5x faster
+                    # than sqrt(mean(a**2)) and avoids allocating an N-element
+                    # squared-intermediate per chunk on the hot path.
+                    rms = float(np.sqrt(np.dot(audio, audio) / audio.size))
                     self.stats.last_input_rms = rms
 
                     # v0.7.0-rc4 - gate with hysteresis. Below threshold
