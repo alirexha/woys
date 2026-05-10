@@ -60,3 +60,4 @@ upstream/
 
 # v0.9.0 — compiled native helper, built by bin/Makefile
 bin/woys-pw-out
+.coverage

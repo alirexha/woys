@@ -11,6 +11,196 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-05-10 — review cycle: 20-lens adversarial audit, 309 canonical findings, 14 rc-bundles shipped
+
+The v0.14.0 review was a whole-codebase adversarial audit: 20
+specialist reviewer agents produced independent findings reports, CC
+synthesized + cross-examined them, and the v0.14.0-rc.0..rc.21 commits
+shipped fixes for the highest-impact P0 / P1 / security clusters. The
+review artifacts (lens reports, dedup index, synthesis, verdicts,
+listener-gate notes) are preserved under `docs/24-review/`.
+
+### Headline numbers
+
+- **20 lens reports** under `docs/24-review/phase1-findings/`
+- **459 raw findings** -> **309 canonical findings** after dedup
+- **51 P0**, **207 P1**, **201 P2** raw -> **30 unique P0** post-dedup
+- **14 rc bundles shipped in v0.14.0**, ~24 distinct findings closed
+- **30+ findings honestly deferred** to v0.14.x (documented in
+  `docs/24-review/phase4-verdicts.md` "Tier 2 / Tier 3" sections)
+
+### Audio-quality fixes (P0, listener-test recommended after pulling)
+
+- **rc.1 (C001)**: `f0_up_key` shift was applied AFTER `_to_pitch_coarse`
+  derived the pitch-class embedding. Upstream applies the shift FIRST,
+  so the engine had been sending RVC mismatched harmonic-source vs
+  pitch-class-embedding pairs for any non-zero pitch shift since the
+  feature shipped. Now matches upstream order. **The "correct" output
+  may sound noticeably different to users who were listening to the
+  miscoupled output.** A/B listening test recommended; the fix can be
+  reverted as a single commit if the user prefers the prior sound.
+- **rc.1 (C093)**: `to_pitch_coarse` propagated NaN through
+  log->mask->clip->int64 -> INT64_MIN bin index when pitchf had any
+  cell <= -700 (RMVPE transient / NaN-replaced regions). RVC's
+  harmonic-source table read out-of-bounds garbage. Now clamps
+  negatives at function entry.
+- **rc.1 (C081)**: RMS was computed via `np.sqrt(np.mean(audio**2))`
+  on the engine hot path -- allocates an N-element squared
+  intermediate per chunk. Replaced with `np.dot(a,a) / a.size`:
+  same answer, ~5x faster, no allocation.
+- **rc.2 (C002)**: same-rate model hot-swap (e.g. 40k voice ->
+  40k voice) crashed the engine on the next chunk with
+  `RuntimeError: Input after last input` from soxr. The SOLA
+  flush finalized the resampler stream; the rebuild was guarded
+  by `if new_sr != old_sr` and skipped on same-rate swap. Now
+  rebuilds whenever the flush happened.
+
+### Engine shutdown safety (P0)
+
+- **rc.3 (C005)**: signal handler clobbered the just-restored prior
+  handler with SIG_DFL, bypassing Textual's clean-shutdown chain on
+  Ctrl-C. Removed the SIG_DFL clobber.
+- **rc.3 (C010)**: SIGTERM/SIGINT handlers were installed only when
+  `gpu_anti_jitter_mode != "off"`. Default config saw signals through
+  Python's default handler -- immediate exit, orphan inference
+  subprocess, undrained writer queue. Now installed unconditionally
+  at engine.start().
+- **rc.3 (C019)**: `gpu_clock_lock_active` was flipped to False before
+  checking `nvidia-smi -rgc` success. A sudo-revoked failure left the
+  GPU clock-locked while the engine reported it released. Added a
+  separate `gpu_clock_lock_revert_failed` flag; next start detects the
+  stale lock and runs a recovery -rgc.
+- **rc.3 (C217)**: `cli.cmd_engine` installed its SIGINT handler AFTER
+  `eng.start()` returned. A Ctrl-C during the multi-second warmup hit
+  Python's default handler. Moved before start.
+- **rc.5 (C009)**: no instance lock; two concurrent `woys engine`
+  invocations corrupted the control socket and double-mixed audio
+  into WoysSink. Added `src/woys/instance_lock.py` (fcntl flock on
+  `$XDG_RUNTIME_DIR/woys/instance.lock`).
+
+### Security (P0)
+
+- **rc.6 (C015)**: pickle gate bypassed in `woys convert`. The
+  consent gate (`_safe_torch_load` / `WOYS_YES_I_TRUST_THE_PICKLE`)
+  guarded the metadata probe but not `_export2onnx`, which called
+  `torch.load(weights_only=False)` unconditionally. Wrapped
+  `torch.load` for the duration of `_export2onnx` with the same
+  consent semantics.
+- **rc.8 (C211)**: control socket created with default umask
+  before `os.chmod(0o600)`. Added `umask(0o077)` around the bind so
+  the socket file is created at 0o600 atomically.
+- **rc.10 (C123, C268)**: config save replaced `open(tmp, "wb")` +
+  chmod-after with `os.open(O_EXCL, 0o600)` atomic create. Added
+  fsync before replace so power-loss-during-write doesn't leave
+  the new content unreadable.
+- **rc.11 (C125)**: `huggingface_hub.hf_hub_download` ran without
+  `revision=`, so a coordinated push between repo_info() and
+  hf_hub_download() could ship a tampered file with a freshly-
+  rebuilt SHA. Now pinned to `info.sha` (commit at fetch time).
+- **rc.12 (C021)**: `WOYS_HELPER_STDERR_LOG` opened path with
+  `open("ab")` -- no symlink check. An attacker controlling the
+  env value could swap a symlink to ~/.bashrc and corrupt it via
+  appended stderr. Added absolute-path requirement, O_NOFOLLOW,
+  warning surfacing on failure.
+
+### Silent fallback (P0/P1)
+
+- **rc.4 (C034 + C043)**: deleted parallel shell-script chain
+  implementations (`scripts/v013_*_rnnoise_chain.sh`). They ran
+  four `pactl load-module` calls without `set -euo pipefail` or rc
+  checks; partial chain reported "active" silently. The Python
+  `audio.woys.chain` module is now the single source of truth.
+- **rc.9 (C014)**: `_assert_sink_loaded` silently skipped on three
+  pactl error paths (FileNotFoundError, TimeoutExpired, nonzero rc).
+  Re-opened the v0.6.4 routing-to-laptop-speakers bug exactly when
+  the environment is most likely to be misconfigured. Now hard-fails
+  with a clear actionable error on each.
+
+### Packaging / build hygiene (P1)
+
+- **rc.7 (C229)**: `dasbus>=1.7` was a hard runtime dep with zero
+  imports. D-Bus was replaced by Unix-domain sockets in v0.5.x.
+  Removed.
+- **rc.7 (C230)**: `requires-python = "<3.12"` was pinned for
+  fairseq compatibility (removed v0.8.0). Bumped to `<3.13`. Added
+  3.12 classifier.
+- **rc.7 (C228)**: `uv lock --check` was failing on main with stale
+  references to `vcclient-cachy`, `fairseq`, `regex`, `sacrebleu`,
+  `tabulate` (transitive of fairseq). Regenerated; lockfile shrank
+  by ~245 lines net.
+
+### Lint / type baseline (rc.0)
+
+- **rc.0**: 67 lint errors + 4 mypy --strict errors + 17 format
+  drifts cleaned up across `src/`, `scripts/`, `tests/`. Ambiguous
+  Unicode (en-dash, em-dash, multiplication sign) replaced with
+  ASCII equivalents. mypy errors fixed: `inference_subprocess_pid`
+  Any return, `torch.cuda.Stream` no-untyped-call, SpawnProcess type
+  widening, `_safe_torch_load` annotation. **No semantic changes.**
+
+### Documentation refresh (rc.20 — Lens 13, 29 drifts)
+
+- `the project notes` corrected: convert is shipped (was "stub"), fairseq
+  removed v0.8.0, 176 fast tests (was "70+"), ~9000 LOC (was
+  "~1,400"), ~640 ms total e2e (was "~280 ms"), chunk_seconds full
+  trajectory.
+- 21 documentation files refreshed: PROGRESS, PROJECT_BRIEF, INSTALL,
+  CS2-SETUP, DISCORD-SETUP, QA, MODELS, LESSONS (§21/§22 footnote),
+  six historical-investigation docs (snapshot headers), CHANGELOG
+  (meta-stable note), NOTICE (regenerated from current source tree),
+  install.sh / pyproject.toml / pkg/README-AUR.md (vcclient-cachy
+  cleanup, version bumps).
+
+### Decision corpus (rc.21 — Lens 18 + Lens 20)
+
+- New `docs/decisions/` corpus: 13 numbered decision docs (0001-0013)
+  + template + index README. Each captures Decision / Status /
+  Context / Alternatives / Rationale / Trade-offs / Re-litigation
+  triggers. 10 accepted, 1 deferred (NSF state passing), 2
+  provisional with explicit test plans (fp16 ContentVec, FP16 TRT
+  RVC).
+
+### Listener gate (Phase 6 — DEFERRED)
+
+The brief mandated a TTS-driven harness run with all post-review
+changes vs the v0.13.3 baseline before tagging. The Phase 5
+implementation cycle ran in a coordinator session without GPU /
+PipeWire / TTS infrastructure, and running the harness in that
+environment would have hit the C003 / Lens 15 silent-fallback class
+(CPU EP, synthetic pacing). The user is expected to run the harness
+themselves with the published v0.14.0 tag and bisect any regression
+back to a specific rc commit. See
+`docs/24-review/phase6-listener-gate.md` for the protocol.
+
+### What v0.14.0 does NOT include (deferred to v0.14.x)
+
+Per `docs/24-review/phase4-verdicts.md` Tier 2 / Tier 3:
+
+- BUNDLE-shm-leak-cleanup (C018, C020) -- needs systemd integration design.
+- BUNDLE-pipewire-silent-fallback (C012, C013) -- pw-out / pw-cat
+  serial-pinning touches the native helper.
+- BUNDLE-engine-stats-thread-safety (C083, C149, C152, C206).
+- BUNDLE-circuit-breakers (C153 with corrected fix per Phase 3
+  cross-exam).
+- BUNDLE-control-socket-protocol (C051) -- bigger API change.
+- BUNDLE-engine-architecture-decompose (C035 god-module split) --
+  flagged DEFER-v0.15+ as a substantial refactor.
+- 18 INVESTIGATE findings -- experiments needed (cuts/min detector
+  calibration, sola-off arm, adaptive chunking, CS2 contention
+  regime A/B, etc.).
+
+### Migration notes for existing users
+
+No user-facing breaking changes. Config files written by v0.13.3
+load cleanly into v0.14.0; the new `gpu_clock_lock_revert_failed`
+field is internal-only (EngineStats); the `enable_dbus` field stays
+in AppConfig as a passthrough no-op so users with `enable_dbus =
+true` in their config.toml don't see migration warnings.
+
+The v0.13.0 RNNoise chain (`woys chain enable`) is unchanged. The
+`woys-by-alirexha` daily-driver source name is unchanged. Hotkeys,
+TUI bindings, socket protocol unchanged.
+
 ## [0.13.3] — 2026-05-09 — friendly source descriptions; apps see `woys-by-alirexha` and `woys-no-cleanup`, internals tagged `_internal-...`
 
 Polish release on top of v0.13.2's chain. No audio path changes — same
