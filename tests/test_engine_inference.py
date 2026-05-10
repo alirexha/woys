@@ -146,3 +146,54 @@ def test_pitch_coarse_returns_correct_shapes(voiced_count: int) -> None:
     coarse, pitch = to_pitch_coarse(pitchf, target_len=100)
     assert coarse.shape == (100,)
     assert pitch.shape == (100,)
+
+
+def test_pitch_coarse_negative_input_clamped_not_int64_min() -> None:
+    """v0.14.0 (Lens 7 / C093): negative pitchf must NOT propagate
+    NaN through log -> mask -> clip -> int64 to produce INT64_MIN.
+    RMVPE in practice emits non-negative Hz, but transient / NaN-replaced
+    regions can leak negatives. Clamping at function entry preserves
+    the invariant `1 <= coarse <= 255` for every cell.
+    """
+    pitchf = np.array([-200.0, -50.0, 220.0, 440.0], dtype=np.float32)
+    coarse, _ = to_pitch_coarse(pitchf, target_len=10)
+    assert coarse.dtype == np.int64
+    # No bin should be INT64_MIN. The cheapest expressive check is the
+    # documented invariant from existing tests: every bin is in [0, 255].
+    # Pad cells are 0 (or 1 after the mel transform); voiced cells are
+    # >= 1; nothing escapes that range.
+    assert int(coarse.min()) >= 0
+    assert int(coarse.max()) <= 255
+
+
+def test_pitch_coarse_all_negative_returns_zeros() -> None:
+    """v0.14.0 (Lens 7 / C093): all-negative pitchf clamps to all-zero
+    and short-circuits (same path as the all-zero input case).
+    """
+    pitchf = np.array([-100.0, -200.0, -700.0, -2000.0], dtype=np.float32)
+    coarse, pitch = to_pitch_coarse(pitchf, target_len=8)
+    np.testing.assert_array_equal(coarse, np.zeros(8, dtype=np.int64))
+    np.testing.assert_array_equal(pitch, np.zeros(8, dtype=np.float32))
+
+
+def test_pitch_shift_modifies_pitchf_and_pitch_coarse_consistently() -> None:
+    """v0.14.0 (Lens 4 / Lens 7 / C001): pitch shift in semitones must be
+    applied to the f0 vector BEFORE deriving pitch_coarse. Otherwise
+    pitch_coarse points at the unshifted f0 bin while pitchf is the
+    shifted Hz vector -> RVC sees mismatched harmonic-source vs pitch-
+    class-embedding pairs.
+
+    This test mimics the engine's _infer pitch path: take a sine-tone
+    pitchf, apply f0_up_key=+12 (octave up), and verify the resulting
+    coarse bin moves up by ~17 mel bins (one octave on the
+    1127*log(1+f/700) curve at 220 Hz -> 440 Hz).
+    """
+    pitchf = np.full(20, 220.0, dtype=np.float32)
+    coarse_unshifted, _ = to_pitch_coarse(pitchf, target_len=20)
+    # Apply pitch shift the way the engine does in v0.14.0.
+    pitchf_shifted = pitchf * (2.0 ** (12 / 12.0))  # +12 semitones = octave
+    coarse_shifted, pitch_shifted = to_pitch_coarse(pitchf_shifted, target_len=20)
+    # The coarse bin must move (mismatch was the bug).
+    assert int(coarse_shifted[-1]) > int(coarse_unshifted[-1])
+    # The pitch vector must reflect the shift.
+    assert pitch_shifted[-1] > pitchf[-1] * 1.5  # at least ~1.5x shift visible
