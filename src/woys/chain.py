@@ -1,11 +1,20 @@
-"""v0.13.3 - RNNoise post-engine chain with friendly device descriptions.
+"""v0.14.1 - RNNoise post-engine chain with single-default visibility.
 
-Loads four pipewire-pulse modules. The only one apps should pick is the
-last; the other three are internal plumbing labelled `_internal-...` in
-their device descriptions:
+Loads four pipewire-pulse modules and re-labels woys-mic so apps that
+show device descriptions render exactly ONE non-internal option. State
+when chain is active:
 
-    woys-mic                       (description: woys-no-cleanup)
-                                   ← raw v0.12.4 engine output, low latency
+    woys-mic                       (description: _internal-raw-bypass)
+                                   ← raw v0.12.4 engine output. v0.13.3
+                                     and earlier showed `woys-no-cleanup`
+                                     here as a "second daily driver"; v0.14.1
+                                     marks it internal so users with the
+                                     chain see only one option in app
+                                     pickers. Apps that pin by exact name
+                                     (`woys-mic`) still resolve - only the
+                                     description changed. node.passive=true
+                                     is also set as a hint to PipeWire-
+                                     native consumers (libpulse ignores it).
     woys-mic-rnnoise-bridge        (description: _internal-rnnoise-stage)
                                    ← LADSPA filter; not a useful endpoint
     woys-mic-clean                 (description: _internal-clean-sink)
@@ -18,6 +27,21 @@ their device descriptions:
                                    ← module-remap-source that exposes the
                                      cleaned audio under a friendly name
                                      with no "Monitor of" prefix
+
+When the chain is torn down, woys-mic's description is restored to
+`woys-no-cleanup` (the v0.13.3 daily-driver name) so users without the
+chain still see a sensible label.
+
+Hard limit on hiding: pulseaudio compat (libpulse, used by pavucontrol /
+Telegram / Discord / KDE Volume Mixer) enumerates ALL sources
+regardless of node.passive / node.virtual / object.register=false. We
+verified empirically: the rnnoise-bridge monitor already has
+`object.register=false` and still shows up in `pactl list short
+sources`. There is no PipeWire property that hides a source from
+libpulse-based apps. v0.14.1 therefore relies on the `_internal-`
+description prefix as the only signal those apps render to a user, and
+documents the limitation honestly. Apps still see four `woys*` sources;
+they just see one with a non-`_internal-` description.
 
 Why the extra remap-source: pipewire-pulse's pactl cannot pass a
 description containing spaces (the value is split on whitespace before
@@ -147,6 +171,47 @@ def _unload_chain_modules() -> int:
     return len(targets)
 
 
+def _is_user_facing_description(description: str) -> bool:
+    """A source description is user-facing if it does NOT contain the
+    `_internal-` marker. We check `contains` rather than `startswith`
+    so the auto-derived "Monitor of _internal-..." description
+    (pipewire-pulse adds the `Monitor of ` prefix to a sink's auto-
+    monitor and offers no API to override it) is also filtered out.
+    """
+    return "_internal-" not in description
+
+
+def _user_facing_sources(pactl_list_sources_output: str) -> list[tuple[str, str]]:
+    """v0.14.1 - parse `pactl list sources` (long form) and return
+    [(name, description), ...] for sources whose description is
+    user-facing per `_is_user_facing_description`.
+
+    Used by `status()` to show what apps showing device descriptions
+    will render as user-facing options. Pure function so the test
+    suite can feed it canned output.
+    """
+    results: list[tuple[str, str]] = []
+    cur_name: str | None = None
+    cur_desc: str | None = None
+    for raw in pactl_list_sources_output.splitlines():
+        # New "Source #N" block resets state.
+        if raw.startswith("Source #"):
+            if cur_name and cur_desc and _is_user_facing_description(cur_desc):
+                results.append((cur_name, cur_desc))
+            cur_name = None
+            cur_desc = None
+            continue
+        line = raw.strip()
+        if line.startswith("Name: "):
+            cur_name = line[len("Name: ") :].strip()
+        elif line.startswith("Description: "):
+            cur_desc = line[len("Description: ") :].strip()
+    # Last block.
+    if cur_name and cur_desc and _is_user_facing_description(cur_desc):
+        results.append((cur_name, cur_desc))
+    return results
+
+
 def _alsa_leak_links() -> list[str]:
     """Return any pw-link rows that bridge the chain to a hardware ALSA sink.
 
@@ -199,12 +264,21 @@ def setup() -> int:
     #    output. The `_internal-` description prefix tells users "do
     #    not pick this in your dropdown" - apps should pick the
     #    user-facing remap-source loaded as step 4.
+    #
+    #    v0.14.1 - sink_properties also carries node.passive=true and
+    #    session.suspend-timeout-seconds=0. Pulseaudio compat ignores
+    #    these (we tested), but PipeWire-native consumers respect
+    #    node.passive as a "this is plumbing, not a user endpoint"
+    #    hint, and the suspend override keeps the sink scheduled while
+    #    the chain is running so the rnnoise filter doesn't go to
+    #    sleep mid-conversation.
     r1 = _pactl(
         "load-module",
         "module-null-sink",
         "media.class=Audio/Sink",
         f"sink_name={SINK_FINAL}",
-        f"sink_properties=device.description={DESC_FINAL_SINK}",
+        f"sink_properties=device.description={DESC_FINAL_SINK} node.passive=true"
+        " session.suspend-timeout-seconds=0",
         "rate=48000",
         "channels=1",
     )
@@ -223,7 +297,8 @@ def setup() -> int:
         f"sink_master={SINK_FINAL}",
         f"plugin={PLUGIN_PATH}",
         f"label={PLUGIN_LABEL}",
-        f"sink_properties=device.description={DESC_BRIDGE}",
+        f"sink_properties=device.description={DESC_BRIDGE} node.passive=true"
+        " session.suspend-timeout-seconds=0",
         "rate=48000",
         "channels=1",
     )
@@ -253,7 +328,7 @@ def setup() -> int:
     #    pulse offers no API to override that. A remap-source gives us
     #    a brand-new node we name `woys-by-alirexha` with matching
     #    `device.description`, so apps see one obvious daily-driver
-    #    option in their dropdown alongside `woys-no-cleanup`.
+    #    option in their dropdown.
     r4 = _pactl(
         "load-module",
         "module-remap-source",
@@ -271,19 +346,70 @@ def setup() -> int:
         )
         return 2
 
+    # 5. v0.14.1 - relabel woys-mic as `_internal-raw-bypass` so apps
+    #    that show descriptions render `woys-by-alirexha` as the only
+    #    non-internal option. The source NAME stays `woys-mic` for
+    #    back-compat with apps that pin by exact name. node.passive=
+    #    true is also set on the relabel.
+    #
+    #    Done last so that if it fails, the rest of the chain (which
+    #    actually carries audio) is already running. We log a warning
+    #    and return success, because the chain is functionally fine
+    #    even if the cosmetic relabel didn't take.
+    try:
+        from audio.pipewire import SOURCE_DESC_CHAIN_ACTIVE, relabel_source
+    except ImportError as exc:
+        print(
+            f"[woys chain] internal: cannot import relabel_source ({exc}); "
+            "skipping woys-mic relabel.",
+            file=sys.stderr,
+        )
+    else:
+        try:
+            relabel_source(SOURCE_DESC_CHAIN_ACTIVE, passive=True)
+        except Exception as exc:
+            print(
+                f"[woys chain] warning: woys-mic relabel failed ({exc}). Chain "
+                "still works; apps will show `woys-no-cleanup` as a second "
+                "daily-driver option until next reload.",
+                file=sys.stderr,
+            )
+
     print(
-        "[woys chain] active. Apps see two woys options in their input picker:\n"
-        f"  {SOURCE_USER_FACING}      - RNNoise-cleaned (+40 ms, ~ -27% cuts/min) "
-        "[daily driver]\n"
-        f"  {SOURCE_RAW}             - raw engine output, low latency, "
-        "no RNNoise [fallback]\n"
-        "Anything else marked `_internal-...` is plumbing - don't pick it."
+        "[woys chain] active. Apps that show device descriptions will display\n"
+        "             one non-internal woys option:\n"
+        f"             {SOURCE_USER_FACING}      [daily driver]\n"
+        "             Other woys* sources are still listed (libpulse limitation)\n"
+        f"             but their `_internal-` descriptions mark them as plumbing.\n"
+        f"             Use 'woys chain status' to see what apps will show."
     )
     return 0
 
 
 def teardown() -> int:
     n = _unload_chain_modules()
+
+    # v0.14.1 - restore woys-mic's daily-driver description so users
+    # without the chain (or after teardown) see a sensible label.
+    try:
+        from audio.pipewire import SOURCE_DESC, relabel_source
+    except ImportError as exc:
+        print(
+            f"[woys chain] internal: cannot import relabel_source ({exc}); "
+            "skipping woys-mic restore.",
+            file=sys.stderr,
+        )
+    else:
+        try:
+            relabel_source(SOURCE_DESC, passive=False)
+        except Exception as exc:
+            print(
+                f"[woys chain] warning: woys-mic relabel failed ({exc}). "
+                "Run `woys pw teardown && woys pw setup` to restore the "
+                "default description manually.",
+                file=sys.stderr,
+            )
+
     if n == 0:
         print("[woys chain] not loaded (nothing to tear down)")
     else:
@@ -309,11 +435,34 @@ def status() -> int:
     if not matched:
         print("  (chain not loaded - use 'woys chain setup' to load it)")
 
-    print("\n[woys chain] sources visible to apps:")
+    print("\n[woys chain] sources libpulse exposes to apps (full list):")
     out = _pactl("list", "short", "sources").stdout
+    woys_sources: list[str] = []
     for line in out.splitlines():
         if "woys" in line or "rnnoise" in line:
             print(f"  {line}")
+            woys_sources.append(line)
+
+    # v0.14.1 - "user sees" section: which of those sources have a
+    # non-`_internal-` description, i.e. which ones an app showing
+    # device descriptions will render as a sensible daily-driver pick.
+    # Read descriptions via `pactl list sources` (long form) since
+    # `list short` only has the name.
+    print("\n[woys chain] user-facing input devices apps will display")
+    print("             (sources whose description does NOT contain `_internal-`):")
+    long_out = _pactl("list", "sources").stdout
+    user_facing = _user_facing_sources(long_out)
+    woys_user_facing = [(name, desc) for name, desc in user_facing if "woys" in name]
+    if woys_user_facing:
+        for name, desc in woys_user_facing:
+            print(f"  {name}    (description: {desc})")
+    else:
+        print("  (none - chain not loaded or all sources are marked internal)")
+    if len(woys_user_facing) > 1:
+        print(
+            "  WARNING: more than one user-facing woys source. The chain expects\n"
+            "  exactly one (`woys-by-alirexha`) when active. Check your chain state."
+        )
 
     leaks = _alsa_leak_links()
     if leaks:

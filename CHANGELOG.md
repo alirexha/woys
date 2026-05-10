@@ -11,6 +11,110 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-05-10 — single-default chain visibility: relabel woys-mic and intermediates so apps show one daily-driver option
+
+When the RNNoise chain is active (`woys chain setup`), apps that show
+device descriptions now render `woys-by-alirexha` as the only
+non-internal woys input source. The raw `woys-mic`, the LADSPA bridge
+monitor, and the clean-sink monitor are all marked `_internal-...` in
+their descriptions; users with chain enabled see one obvious daily-
+driver pick instead of two ("woys-no-cleanup" vs "woys-by-alirexha",
+which v0.13.3 had as parallel options).
+
+### Added
+
+- `audio.pipewire.relabel_source(description, *, passive)` reloads the
+  woys-mic remap-source with a different description and optional
+  `node.passive=true` flag. The source NAME stays `woys-mic` so apps
+  that pin by exact name keep working.
+- `audio.pipewire.SOURCE_DESC_CHAIN_ACTIVE = "_internal-raw-bypass"` is
+  the description applied to woys-mic while the chain is loaded.
+- `chain.setup()` calls `relabel_source(SOURCE_DESC_CHAIN_ACTIVE,
+  passive=True)` after loading the four chain modules; failure is
+  logged as a warning and the chain stays up (the relabel is cosmetic,
+  the audio path doesn't depend on it).
+- `chain.teardown()` calls `relabel_source(SOURCE_DESC, passive=False)`
+  to restore `woys-no-cleanup` for users without the chain.
+- `chain.status()` now has a "user-facing input devices apps will
+  display" section that filters sources whose description contains
+  `_internal-` (catches both direct `_internal-...` descriptions and
+  `Monitor of _internal-...` auto-derived names).
+- `chain._user_facing_sources()` and
+  `chain._is_user_facing_description()` pure helpers (test-friendly,
+  no pactl side effects).
+- Intermediate sinks (`woys-mic-clean`, `woys-mic-rnnoise-bridge`) now
+  load with `node.passive=true` and
+  `session.suspend-timeout-seconds=0` in their `sink_properties`. The
+  null-sink propagates these to the actual node (verified via
+  `pw-dump`); the ladspa-sink doesn't, but its auto-set
+  `node.virtual=true` + `object.register=false` already mark it as
+  plumbing.
+
+### Limitations (documented honestly, not silently)
+
+- **PipeWire offers no property that hides a source from libpulse
+  enumeration.** Verified: the rnnoise-bridge already has
+  `object.register=false` and still appears in `pactl list short
+  sources`. There is no `node.exposed=false` or equivalent that
+  pulseaudio compat respects. Apps that only enumerate names (without
+  descriptions) will still see four `woys*` sources.
+- The mechanism that DOES work is the description-rename fallback the
+  user pre-approved: the `_internal-` description prefix is what
+  pavucontrol / Telegram / Discord / KDE Volume Mixer render to the
+  user. They see one obvious daily-driver entry plus several
+  `_internal-*` plumbing entries.
+- `pw-metadata <id> node.description ...` writes to the metadata store
+  but pulse-protocol ignores it - we tested. Live runtime override of
+  the description as rendered by pactl requires unloading and
+  reloading the module, which is what `relabel_source` does.
+- Reloading woys-mic via `relabel_source` causes a sub-second source
+  disappearance/reappearance window. Apps that have woys-mic open
+  during a `chain setup` / `chain teardown` may briefly lose audio.
+  The relabel happens once per chain-state transition, which is rare
+  in practice.
+
+### Changed
+
+- `chain.py` module docstring rewritten to v0.14.1 - documents the
+  relabel behaviour, the libpulse limitation, and what the four chain
+  nodes look like to apps when active.
+
+### Tests
+
+- 6 new `test_chain.py` tests:
+  - `test_setup_relabels_woys_mic_to_internal_raw_bypass` - verifies
+    the v0.14.1 relabel call goes out with the right description and
+    `passive=True`.
+  - `test_setup_succeeds_even_when_relabel_fails` - cosmetic failure
+    must not roll back the chain.
+  - `test_teardown_restores_woys_mic_default_description` - the
+    inverse: teardown puts woys-no-cleanup back.
+  - `test_user_facing_sources_filters_internal_descriptions` - parsing
+    canned `pactl list sources` output.
+  - `test_user_facing_sources_filters_monitor_of_internal` - catches
+    `Monitor of _internal-...` (the contains-not-startswith rule).
+  - `test_is_user_facing_description` - the predicate's truth table.
+- Existing `test_setup_loads_audio_sink_class_and_mono_chain` extended
+  to assert `node.passive=true` and
+  `session.suspend-timeout-seconds=0` on both intermediate sinks'
+  `sink_properties`.
+- Existing tests that call `chain.setup` / `chain.teardown` /
+  `chain.disable` patched to stub `audio.pipewire.relabel_source`.
+
+### Verified
+
+Live test on author's machine (CachyOS, PipeWire 1.x): chain teardown
+then setup, then `pactl list short sources` and `pw-dump`:
+
+- `woys-mic` description = `_internal-raw-bypass` ✓
+- `woys-mic-clean.monitor` description = `Monitor of _internal-clean-sink` ✓
+- `woys-mic-rnnoise-bridge.monitor` description = `Monitor of _internal-rnnoise-stage` ✓
+- `woys-by-alirexha` description = `woys-by-alirexha` (only non-internal) ✓
+- `node.passive=True` and `session.suspend-timeout-seconds=0` confirmed
+  on `woys-mic-clean` via pw-dump ✓
+- Audio chain end-to-end intact (pw-link shows all expected hops) ✓
+- 183 fast tests pass, ruff + format clean, mypy --strict clean ✓
+
 ## [0.14.0] — 2026-05-10 — review cycle: 20-lens adversarial audit, 309 canonical findings, 14 rc-bundles shipped
 
 The v0.14.0 review was a whole-codebase adversarial audit: 20
