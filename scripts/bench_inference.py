@@ -1,7 +1,7 @@
 """Benchmark the realtime inference path at engine-realistic chunk sizes.
 
 Uses the actual `audio.engine.RVCEngine` so per-stage timings (cv / rmvpe /
-rvc) match what the realtime loop produces. Synthetic input — no audio I/O,
+rvc) match what the realtime loop produces. Synthetic input - no audio I/O,
 no pacat, no SOLA. The number we care about is `_infer()` cost as a
 function of chunk_seconds + sola_context_ms.
 
@@ -28,7 +28,7 @@ import onnxruntime as ort
 if hasattr(ort, "preload_dlls"):
     ort.preload_dlls()
 
-from audio.engine import MODELS_DIR, EngineConfig, RealtimeEngine  # noqa: E402
+from audio.engine import MODELS_DIR, EngineConfig, RealtimeEngine
 
 
 def percentiles(samples: list[float], ps: tuple[float, ...]) -> list[float]:

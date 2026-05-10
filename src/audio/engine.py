@@ -2,12 +2,12 @@
 
 Wires the Phase 1 ONNX inference path to a real-time mic→infer→sink loop.
 
-Audio routing — IMPORTANT (see v0.1.1 fix)
+Audio routing - IMPORTANT (see v0.1.1 fix)
 ------------------------------------------
 On CachyOS, PortAudio is built with the ALSA host API only (no PulseAudio host
 API). `sd.OutputStream()` with no explicit `device=` falls through to the ALSA
 *default* device, which routes to the system default sink (laptop speakers /
-headphones) — NOT to the named PipeWire sink we want. Setting `PULSE_SINK=…`
+headphones) - NOT to the named PipeWire sink we want. Setting `PULSE_SINK=…`
 in the environment is also ignored, because there's no Pulse host API for
 PortAudio to consult.
 
@@ -16,7 +16,7 @@ The fix: instead of `sd.OutputStream`, the engine spawns
 raw float32 PCM to its stdin. `pacat` is the canonical PulseAudio client; it
 talks to pipewire-pulse natively, takes an explicit `--device=` argument, and
 never auto-routes to the system default. This is the same path that the
-acoustic loopback bench (`scripts/bench_loopback.py`) uses — proven on this host.
+acoustic loopback bench (`scripts/bench_loopback.py`) uses - proven on this host.
 
 Input is still `sd.InputStream` against the default mic; that path was always
 correct (host mic → 48 kHz capture).
@@ -25,7 +25,7 @@ Optional local monitoring
 -------------------------
 By default, **the engine writes the transformed audio to ONLY the virtual
 sink** (which `woys-mic` reads from). Nothing plays out of the laptop
-speakers — your housemates / streamers / phone calls don't hear what you're
+speakers - your housemates / streamers / phone calls don't hear what you're
 processing. Pass `monitor=True` to additionally play to the host's default
 output for self-monitoring.
 
@@ -66,7 +66,7 @@ if hasattr(ort, "preload_dlls"):
 
 
 def _preload_trt_dlls() -> bool:
-    """v0.8.1 — preload TensorRT shared libraries so ORT's TRT EP can
+    """v0.8.1 - preload TensorRT shared libraries so ORT's TRT EP can
     resolve `libnvinfer.so.10`. The pip-installed `tensorrt-cu12`
     package puts its libs under
     `<venv>/lib/python3.11/site-packages/tensorrt_libs/` which isn't
@@ -78,7 +78,7 @@ def _preload_trt_dlls() -> bool:
 
     Returns True if every libnvinfer*.so was loaded successfully,
     False otherwise (TRT EP will silently fall through to CUDA EP
-    in that case — the per-session providers list always includes
+    in that case - the per-session providers list always includes
     CUDA EP as a fallback).
     """
     import ctypes
@@ -103,7 +103,7 @@ def _preload_trt_dlls() -> bool:
     return ok
 
 
-# Best-effort TRT preload at module import. Failure is non-fatal —
+# Best-effort TRT preload at module import. Failure is non-fatal -
 # session creation falls back to CUDA EP if TRT can't be initialized.
 _TRT_PRELOAD_OK = _preload_trt_dlls()
 
@@ -116,19 +116,19 @@ DEFAULT_RMVPE = MODELS_DIR / "rmvpe_wrapped.onnx"
 DEFAULT_CONTENTVEC = MODELS_DIR / "contentvec-f.onnx"
 
 
-# B9 / arch-004 / arch-005 — single source of truth for "this EngineConfig
+# B9 / arch-004 / arch-005 - single source of truth for "this EngineConfig
 # field is user-visible". AppConfig's forwarded set, profiles._PROFILE_FIELDS,
 # vcprofile.py snapshot keys, and the migration code's allowlist all derive
 # from this. New EngineConfig field added without listing it here will fail
-# tests/test_engine_config_drift.py — that's the design.
+# tests/test_engine_config_drift.py - that's the design.
 #
 # Excluded categories:
 #   - System-only knobs that need an engine restart anyway (session_pool_size,
 #     cpu_affinity_core, realtime_priority, eager_warmup, pacat_writer_queue_size,
 #     prime_silence_seconds, pacat_watchdog_interval_s, threshold).
-#   - Path-typed model defaults (rvc_model, rmvpe_model, contentvec_model) —
+#   - Path-typed model defaults (rvc_model, rmvpe_model, contentvec_model) -
 #     handled with bespoke str↔Path conversion at the AppConfig boundary.
-#   - Subprocess / TRT toggles (inference_subprocess, use_tensorrt) —
+#   - Subprocess / TRT toggles (inference_subprocess, use_tensorrt) -
 #     experimental, intentionally kept out of the user-tunable surface.
 USER_VISIBLE_ENGINE_FIELDS: tuple[str, ...] = (
     "f0_up_key",
@@ -173,21 +173,21 @@ class EngineConfig:
     # Audio I/O
     mic_rate: int = 48_000
     sink_rate: int = 48_000
-    # v0.7.0 — dropped from 0.25 → 0.15. Empirical sweep (RTX 2070 Mobile,
+    # v0.7.0 - dropped from 0.25 → 0.15. Empirical sweep (RTX 2070 Mobile,
     # ORT-CUDA, cuDNN HEURISTIC, full realtime engine, catwoman voice):
     #
     #   chunk   late_chunks/total   inference avg   p99
-    #   0.10    13–42 / 100         77–98 ms       103–148 ms
-    #   0.15    0 / 80              76–80 ms       104–129 ms
-    #   0.20    0 / 60              92–96 ms       115–122 ms
+    #   0.10    13-42 / 100         77-98 ms       103-148 ms
+    #   0.15    0 / 80              76-80 ms       104-129 ms
+    #   0.20    0 / 60              92-96 ms       115-122 ms
     #   0.25    0 / 50              83 ms          124 ms
     #
     # At chunk=0.10 the per-chunk budget is 100 ms but real engine inference
-    # is 77–98 ms (a +50 ms tax over the standalone benchmark, traced to
+    # is 77-98 ms (a +50 ms tax over the standalone benchmark, traced to
     # GIL/scheduler effects of running inside the engine sub-thread; see
-    # LESSONS §19). 13–42 % of chunks miss budget at 0.10, even on the
+    # LESSONS §19). 13-42 % of chunks miss budget at 0.10, even on the
     # smallest voice. At chunk=0.15 the budget is 150 ms and zero chunks
-    # miss it across both light and heavy voices — that's the practical
+    # miss it across both light and heavy voices - that's the practical
     # floor on this hardware. v0.7.0 picks 0.15 (saves 100 ms vs the v0.6.x
     # 0.25 default; doesn't pretend 0.10 is achievable).
     #
@@ -196,11 +196,11 @@ class EngineConfig:
     # (search_ms 4.0 → 6.0, corr_threshold 0.25 → 0.10). Historical v0.6.7
     # reason ("dropped chunks during cuDNN warmup") was repaired by the
     # v0.7.0 HEURISTIC switch + broader pre-warm shape coverage.
-    # v0.12.4 — bumped 0.15 → 0.25 after a user perceptual A/B against the
+    # v0.12.4 - bumped 0.15 → 0.25 after a user perceptual A/B against the
     # v0.12.3 sweep's top-1 opt-in config (CHANGELOG.md v0.12.4 entry,
     # LESSONS.md §42). Top-1 has chunk_seconds=0.25 + sola_context_ms=200
     # which together drive the chunk-period spectral autocorrelation to
-    # exactly 0.000 — the "train wagon on rails" rhythm the user heard
+    # exactly 0.000 - the "train wagon on rails" rhythm the user heard
     # on sustained content disappears. Trade: +100 ms total e2e latency
     # (~540 ms → ~640 ms). Conversational threshold (~700 ms) is still
     # comfortably above this; the perceptual delta dwarfs the latency
@@ -208,11 +208,11 @@ class EngineConfig:
     chunk_seconds: float = 0.25
     channels: int = 1
 
-    # SOLA crossfade (Phase B). Disable at your peril — without it, audible
+    # SOLA crossfade (Phase B). Disable at your peril - without it, audible
     # clicks at every chunk boundary when chunk_seconds is short.
     sola_enabled: bool = True
-    # v0.12.3 — bumped 50.0 → 30.0 (low-latency tier winner of the 50-
-    # condition sweep). v0.12.4 — REVERTED to 50.0 because the
+    # v0.12.3 - bumped 50.0 → 30.0 (low-latency tier winner of the 50-
+    # condition sweep). v0.12.4 - REVERTED to 50.0 because the
     # high-latency-tier top-1 config (the user's listening-test winner)
     # uses 50.0 with chunk_seconds=0.25; at that chunk size, the
     # 30 ms crossfade was no longer optimal. See LESSONS §42.
@@ -220,19 +220,19 @@ class EngineConfig:
     # v0.6.9: widened from 4.0 to 6.0 so the search window covers at least one
     # full pitch period for typical voice f0 (>= 167 Hz period at 40 kHz model
     # rate = 240 samples = 6 ms). With a sub-period search, sustained vowels
-    # produce phase mismatches SOLA can't reach — manifests as audible
+    # produce phase mismatches SOLA can't reach - manifests as audible
     # dropouts during sustained voicing.
     # v0.12.3 picked 4.0 as the low-latency tier winner.
-    # v0.12.4 — bumped 4.0 → 16.0 because the high-latency tier (top-1, the
+    # v0.12.4 - bumped 4.0 → 16.0 because the high-latency tier (top-1, the
     # user's listening-test winner) uses 16.0. At chunk_seconds=0.25 (250 ms
     # chunk-period vs 150 ms), a wider search range captures correctly-
-    # aligned harmonic peaks that fall outside a 4 ms window — the
+    # aligned harmonic peaks that fall outside a 4 ms window - the
     # autocorrelation@chunk_period drops to 0.000, eliminating the
     # "train wagon" rhythm entirely. See LESSONS §42.
     sola_search_ms: float = 16.0  # how far to shift looking for in-phase alignment
     # History fed to the model alongside each new chunk so the embedder /
     # vocoder convolutions don't see edge artifacts. Brief calls this "context".
-    # v0.12.4 — bumped 100.0 → 200.0 with chunk_seconds=0.25. The wider
+    # v0.12.4 - bumped 100.0 → 200.0 with chunk_seconds=0.25. The wider
     # context window gives SOLA's correlation search more overlap to
     # work with at the larger chunk size, which is what enables the
     # autocorrelation@chunk_period = 0.000 outcome the user picked from
@@ -242,7 +242,7 @@ class EngineConfig:
     # SOLA falls back to centered (offset=0) on borderline cases and produces
     # phase-discontinuous crossfade for sustained content. 0.10 still rejects
     # decorrelated noise but keeps best-effort alignment for periodic signals.
-    # v0.12.3 — bumped 0.10 → 0.30 after the 50-condition sweep (LESSONS §41).
+    # v0.12.3 - bumped 0.10 → 0.30 after the 50-condition sweep (LESSONS §41).
     # Stricter rejection threshold: with v0.11.0 anti-jitter holding the
     # producer cadence steady, when SOLA's correlation search is below 0.30
     # the alignment is genuinely unreliable (transient, mostly-silent, or
@@ -262,7 +262,7 @@ class EngineConfig:
     threshold: float = 0.3
 
     # Embedder selection. Only "onnx" is supported (direct ORT contentvec-f.onnx
-    # call). The fairseq PyTorch path was removed in v0.8.0 — it had no tests,
+    # call). The fairseq PyTorch path was removed in v0.8.0 - it had no tests,
     # was opt-in only via the now-deleted [fairseq] extra, and the
     # `extract_features()[0]` indexing would have broken on fairseq API drift
     # (corr-002). The field stays in EngineConfig for backwards-compat with
@@ -278,16 +278,16 @@ class EngineConfig:
     monitor: bool = False
     # Output latency in ms requested from the playback backend.
     # v0.7.0-rc3: 220 → 280. rc2's 220 still produced audible cuts in
-    # real-world Telegram VoIP testing — confirming the rc2 retro point
+    # real-world Telegram VoIP testing - confirming the rc2 retro point
     # that the synthetic harness over-counts cuts uniformly and can't
     # distinguish real-speech variance within its flat region. 280 ms
     # is the last rung in the rc ladder: 20 ms under the v0.6.x 300 ms
     # default that we already know is audibly clean. If 280 also fails,
     # the structural floor on this hardware is hit and further latency
     # reduction needs the ~80 ms engine threading tax (LESSONS §19)
-    # closed first — that's v0.8.x territory, not another rc bump.
+    # closed first - that's v0.8.x territory, not another rc bump.
     # Wall-clock at rc3: chunk 150 + inference 80 + buffer 280 +
-    # codec 30 ≈ 540 ms (vs v0.6.x ~660 ms, −18 %).
+    # codec 30 ≈ 540 ms (vs v0.6.x ~660 ms, -18 %).
     output_latency_ms: int = 280
     # Process-time hint to pacat: write callbacks granulate to this many
     # ms. 20 ms keeps writes from coalescing into bursts that would
@@ -295,14 +295,14 @@ class EngineConfig:
     # uses PipeWire's quantum negotiation instead.
     output_process_time_ms: int = 20
 
-    # v0.7.0-rc4 — flipped back to False. v0.7.0-rc1 reverted to pw-cat
+    # v0.7.0-rc4 - flipped back to False. v0.7.0-rc1 reverted to pw-cat
     # on the reasoning that smaller chunks at chunk_seconds=0.15 would
     # eliminate the per-quantum stdin/PipeWire-callback race v0.6.7
     # documented (~43 ms zero-gaps on bursty writes). The
     # `docs/16-audit/synthesis.md` retro disagreed: rc1's "this won't
     # apply" is hand-wavy and doesn't address the race mechanism, and
     # the symptom we hear in Telegram (sample-exact zeros, voice-
-    # correlated, ~40 ms quantized — see lens 08) matches pw-cat's
+    # correlated, ~40 ms quantized - see lens 08) matches pw-cat's
     # documented per-quantum-gap pattern more closely than pacat's
     # underrun pattern. Migration cascade in `tui/config.py` pulls
     # users on the rc1+ default sentinel `True` forward to `False`;
@@ -310,24 +310,24 @@ class EngineConfig:
     # is exposed in AppConfig keep their override.
     prefer_pw_cat: bool = False
 
-    # v0.9.0 — when True, the engine spawns `bin/woys-pw-out` (native
+    # v0.9.0 - when True, the engine spawns `bin/woys-pw-out` (native
     # PipeWire client) instead of pw-cat / pacat. The native helper
     # decouples the engine's bursty 150 ms chunk writes from PipeWire's
     # per-quantum (1024/48000 = 21.33 ms) RT callback via a lock-free
     # SPSC ring buffer. NEVER falls back silently if the helper is
-    # missing — `_open_pacat` raises so the user sees the install gap
+    # missing - `_open_pacat` raises so the user sees the install gap
     # instead of mysterious cuts.
     #
-    # v0.9.1 — default flipped to True. The v0.9.0-rc4 A/B established
+    # v0.9.1 - default flipped to True. The v0.9.0-rc4 A/B established
     # that BOTH backends produce equivalent audible results on this
     # stack (engine-side writer jitter at ~80 ms is the dominant cut
     # source, downstream of any output backend). Native-pw still wins
     # on observability (honest per-quantum underrun counter, no
     # mid-session pacat-style respawns) and on architectural cleanliness
-    # — flipping the default per the audit's "honest metric" rule.
+    # - flipping the default per the audit's "honest metric" rule.
     prefer_native_pw: bool = True
 
-    # v0.9.2 — minimum ring-buffer slack (in milliseconds) the native
+    # v0.9.2 - minimum ring-buffer slack (in milliseconds) the native
     # helper holds beyond the immediate chunk size. **Default reverted to
     # 0 in v0.9.2** after v0.9.1's 80 ms default proved both ineffective
     # against the audible cuts class AND introduced a ~170 ms echo
@@ -339,7 +339,7 @@ class EngineConfig:
     #     reduced the COUNTER, but the listener still heard the same
     #     class of micro-cuts because they're driven by engine writer
     #     jitter (~80 ms std-dev), not by ring underruns directly. A
-    #     bigger ring just postpones the gap audibility — it doesn't
+    #     bigger ring just postpones the gap audibility - it doesn't
     #     fix the producer cadence that creates the gap in the first
     #     place.
     #   * The added latency (191 ms slack at default) pushed the
@@ -358,7 +358,7 @@ class EngineConfig:
     #   200         32768 (cap)        ~683 ms     ~533 ms     near-mute
     #
     # The helper's SPSC ring uses a power-of-2 mask so actual size is
-    # `next_pow2(chunk_frames + buffer_ms × sink_rate / 1000)`. The
+    # `next_pow2(chunk_frames + buffer_ms x sink_rate / 1000)`. The
     # producer-side jitter fix lives in v0.10.x; this knob is observability,
     # not the cure.
     prefer_native_pw_buffer_ms: int = 0
@@ -372,7 +372,7 @@ class EngineConfig:
 
     # v0.5.0 session-pool tuning.
     # Cap on simultaneous cached RVC sessions (each ~150 MiB VRAM).
-    # B64 / perf-15: VRAM math on RTX 2070 (8 GiB) — pool_size=4 ≈ 600 MiB
+    # B64 / perf-15: VRAM math on RTX 2070 (8 GiB) - pool_size=4 ≈ 600 MiB
     # of voice models, plus foundation models (700-1500 MiB depending on
     # rmvpe fp16 vs fp32), plus cuDNN handle / arena (~500 MiB). Combined
     # with CS2 wanting ~3-4 GiB, an 8 GiB GPU is tight under contention.
@@ -384,7 +384,7 @@ class EngineConfig:
     # pointer swap (~10 ms). Recommended for users with persistent engines.
     eager_warmup: bool = False
 
-    # v0.5.2 — pacat underrun mitigations (see docs/08-pacat-underrun-bug.md).
+    # v0.5.2 - pacat underrun mitigations (see docs/08-pacat-underrun-bug.md).
     # Channels emitted by the engine. The PipeWire null-sink loaded by
     # `woys pw setup` defaults to 2 channels; emitting 2 here
     # avoids an in-graph 1→2 upmix on every chunk.
@@ -393,22 +393,22 @@ class EngineConfig:
     # thread. Size 8 ≈ 2 s of slack at chunk_seconds=0.25; full-queue
     # events are exposed as `queue_full_events` (xrun proxy).
     pacat_writer_queue_size: int = 8
-    # v0.6.7 part 3 — initial silence written to the playback backend
+    # v0.6.7 part 3 - initial silence written to the playback backend
     # before any real engine output starts. Empirically didn't reduce
-    # xruns in our trials (in fact slightly increased them — pacat seems
+    # xruns in our trials (in fact slightly increased them - pacat seems
     # to apply its prebuf threshold to the silence and trip more
     # frequently). Default 0 (off). Kept as a tunable for users whose
     # backends (or future versions of pacat / pw-cat) might benefit.
     # See `docs/11-microcuts-bug.md` part 3.
     prime_silence_seconds: float = 0.0
-    # v0.7.0-rc4 — gate threshold lowered -55 → -75. The audit
+    # v0.7.0-rc4 - gate threshold lowered -55 → -75. The audit
     # (`docs/16-audit/synthesis.md`, lens 06 / S1) traced rc1/rc2/rc3
     # cuts to this gate firing on intra-speech RMS dips: -55 dBFS is
     # only ~6 dB below typical room noise on a QuadCast, and brief
     # speech valleys (between syllables, on plosive onsets, during
     # fricatives) routinely cross it. Each fire emits a full chunk
     # of zeros directly to the writer, bypassing SOLA, both
-    # resamplers, and inference, with no counter incremented — which
+    # resamplers, and inference, with no counter incremented - which
     # is why three rcs of output_latency_ms tuning produced a flat
     # audible response. -75 dBFS is well below room ambient; combined
     # with the new hysteresis below, the gate only fires on sustained
@@ -420,14 +420,14 @@ class EngineConfig:
     # near-silent input. Set to a very negative number (e.g. -200.0)
     # to disable entirely. See `docs/12-vad-misfire-investigation.md`.
     input_gate_dbfs: float = -75.0
-    # v0.7.0-rc4 — hysteresis on the input gate. The gate must observe
+    # v0.7.0-rc4 - hysteresis on the input gate. The gate must observe
     # `input_gate_hysteresis_ms` of continuously-below-threshold input
-    # before it fires. Brief dips in voiced speech (typical: 30–150 ms
+    # before it fires. Brief dips in voiced speech (typical: 30-150 ms
     # between syllables, on consonant onsets) no longer trigger
     # zero-emission, even if they momentarily cross threshold. Set to
     # 0 for the v0.6.9 behavior (immediate gating with no smoothing).
     # 200 ms is roughly the upper end of natural inter-syllable pause
-    # in speech — anything beyond that is genuinely silence and the
+    # in speech - anything beyond that is genuinely silence and the
     # vocoder-hallucination behavior the gate exists to prevent
     # actually appears.
     input_gate_hysteresis_ms: float = 200.0
@@ -438,7 +438,7 @@ class EngineConfig:
     # (via os.sched_setaffinity). Reduces L2/L3 cache-miss jitter on the
     # i7-10750H. None = no pinning.
     cpu_affinity_core: int | None = None
-    # v0.7.0-rc11 — engine thread runs SCHED_FIFO at priority 60 by
+    # v0.7.0-rc11 - engine thread runs SCHED_FIFO at priority 60 by
     # default. The rc10 dump showed inference p99 = 84 ms after
     # EXHAUSTIVE cuDNN trimmed shape-driven variance, but a 40 ms
     # p50 → p99 spread remains. The most likely remaining cause is
@@ -446,10 +446,10 @@ class EngineConfig:
     # inference. SCHED_FIFO at priority 60 prevents user-space
     # preemption (KDE compositing, browser, etc. run at SCHED_OTHER
     # niced 0) while staying below typical PipeWire/ALSA threads
-    # (priority 80–88) and well below kernel RT (98–99).
+    # (priority 80-88) and well below kernel RT (98-99).
     #
     # Pre-rc11 this field was named the same and was opt-in (default
-    # False) per Brief §6 — but the implementation only called
+    # False) per Brief §6 - but the implementation only called
     # `os.nice(-10)`, which raises priority within SCHED_OTHER and
     # does NOT prevent preemption by another SCHED_OTHER task. rc11
     # rewrites `_apply_thread_priority` to actually call
@@ -458,11 +458,11 @@ class EngineConfig:
     #
     # Falls back cleanly: hosts without `RLIMIT_RTPRIO ≥ 60` (and
     # without CAP_SYS_NICE) get the old nice(-10) behavior. The
-    # default `True` is safe — worst case is "no improvement" on
+    # default `True` is safe - worst case is "no improvement" on
     # locked-down systems, never a hang or crash.
     realtime_priority: bool = True
 
-    # v0.8.0 — run cv → rmvpe → rvc inference in a child process with
+    # v0.8.0 - run cv → rmvpe → rvc inference in a child process with
     # its own CUDA context. Closes the LESSONS §19 threading tax
     # (~23 ms typical-case overhead from running ORT inference in the
     # engine's daemon thread alongside writer / watchdog / stderr-
@@ -474,7 +474,7 @@ class EngineConfig:
     #
     # IPC: shared memory for hot-path audio arrays (zero-copy via
     # numpy buffer protocol), Pipes for control + small metadata
-    # (pickle overhead ~50–200 µs per call, < 1 % of inference time).
+    # (pickle overhead ~50-200 µs per call, < 1 % of inference time).
     #
     # v0.8.0-rc4 A/B confirmed multiprocessing is a null result on
     # quiet GPU (subprocess and in-process tied within noise). The
@@ -484,7 +484,7 @@ class EngineConfig:
     # long. v0.8.1 default flipped to False.
     #
     # Subprocess infrastructure stays as opt-in for users with
-    # persistent GPU contention (e.g. CS2 + woys simultaneously) —
+    # persistent GPU contention (e.g. CS2 + woys simultaneously) -
     # set `inference_subprocess=True` in `~/.config/woys/config.toml`
     # to spawn the inference child and isolate audio I/O from
     # GIL-bound inference.
@@ -500,13 +500,13 @@ class EngineConfig:
     # gc.disable is on for the engine's lifetime, which can be hours; for
     # users who hit cyclic-ref memory bloat on long sessions, set this to
     # e.g. 1000 to run a gen-0 collect every N chunks (~150 s at
-    # chunk_seconds=0.15). Cost: ~1-3 ms per collect — small enough to
+    # chunk_seconds=0.15). Cost: ~1-3 ms per collect - small enough to
     # be a non-event for the audio thread; large enough to cause an
     # observable jitter spike on tight chunk_seconds=0.10. Default 0
     # = off (current behavior).
     engine_periodic_gc_chunks: int = 0
 
-    # v0.8.1 — TensorRT execution provider, DISABLED BY DEFAULT.
+    # v0.8.1 - TensorRT execution provider, DISABLED BY DEFAULT.
     #
     # The v0.8.1 TRT pivot was a dead end on this hardware/model
     # combination (ORT 1.22 + TRT 10.16 + RVC v2 + RMVPE):
@@ -514,7 +514,7 @@ class EngineConfig:
     #   - RMVPE FP16 STFT fails TRT init outright. TRT 10.16's STFT
     #     importer requires Float32 input; RMVPE has been auto-
     #     promoted to FP16 since v0.3.0. Per-session try/except
-    #     catches this and falls back to CUDA EP for RMVPE — but
+    #     catches this and falls back to CUDA EP for RMVPE - but
     #     that means RMVPE doesn't benefit from TRT at all.
     #
     #   - RVC initializes successfully but produces MATHEMATICALLY
@@ -525,15 +525,15 @@ class EngineConfig:
     #     combination of int64 indexing in the NSF source module
     #     and lack of shape inference annotations on the model.
     #
-    #   - Speedup, ignoring correctness, is 1.04-1.87× on cv only.
-    #     Below the 1.5-3× v0.8.1 target. With cos_sim broken on
+    #   - Speedup, ignoring correctness, is 1.04-1.87x on cv only.
+    #     Below the 1.5-3x v0.8.1 target. With cos_sim broken on
     #     RVC, the win is hypothetical.
     #
     # Infrastructure stays in place for users who want to experiment
     # (set `use_tensorrt = true` in `~/.config/woys/config.toml`)
     # and as a path forward when ORT or the RVC export pipeline
     # gains TRT-friendly shape inference / int64 handling. For now,
-    # the production default is CUDA EP only — same as rc12 baseline.
+    # the production default is CUDA EP only - same as rc12 baseline.
     #
     # Per-session TRT init status (success vs CUDA fallback) is
     # surfaced via `EngineStats.trt_active_for` and printed in
@@ -541,7 +541,7 @@ class EngineConfig:
     # sessions take which path.
     use_tensorrt: bool = False
 
-    # v0.10.0-rc3 — GPU keep-alive thread to mitigate dynamic-boost
+    # v0.10.0-rc3 - GPU keep-alive thread to mitigate dynamic-boost
     # variance.
     #
     # The v0.10.0-rc1/rc2 evidence (`docs/05-perf.md` v0.10.x table,
@@ -561,7 +561,7 @@ class EngineConfig:
     # threshold," not "do useful inference." Steady-state cost is
     # ~5-15 % continuous GPU duty cycle.
     #
-    # Default off in rc3 — A/B testing planned. If the rc3 5-min run
+    # Default off in rc3 - A/B testing planned. If the rc3 5-min run
     # shows writer_jitter p99 dropping toward the ≤ 30 ms gate, rc4
     # will flip the default to True. If the keepalive op QUEUES on
     # the same CUDA stream as engine inference and INCREASES rvc.run
@@ -575,14 +575,14 @@ class EngineConfig:
     # so steady-state keepalive runs hit the cached path.
     gpu_keepalive_input_len: int = 1600
 
-    # v0.11.0 — GPU clock lock + torch separate-stream keepalive.
+    # v0.11.0 - GPU clock lock + torch separate-stream keepalive.
     #
     # The v0.10.0-partial retrospective (LESSONS §29-§30) located the cuts
     # at NVIDIA dynamic-boost auto-deboost during the engine's mic_read
     # idle window. Two software fixes attack the layer without
     # firmware/hardware risk:
     #
-    #   "clock_lock"  — calls `sudo nvidia-smi -lgc <floor>,<ceiling>`
+    #   "clock_lock"  - calls `sudo nvidia-smi -lgc <floor>,<ceiling>`
     #                   at engine start and `-rgc` at engine stop. Forces
     #                   the GPU to stay at or above the configured floor
     #                   so no idle-time deboost. SIGTERM/SIGINT-safe.
@@ -590,7 +590,7 @@ class EngineConfig:
     #                   change, no firmware. Sudoers entry needed
     #                   (see docs/22-gpu-clock-lock.md).
     #
-    #   "keepalive"   — torch.cuda.Stream() based. Daemon thread issues a
+    #   "keepalive"   - torch.cuda.Stream() based. Daemon thread issues a
     #                   tiny `tensor.add(1.0)` (~50 µs of GPU work) every
     #                   `gpu_keepalive_interval_ms`. Runs on a CUDA stream
     #                   separate from ORT's, so it doesn't queue against
@@ -599,10 +599,10 @@ class EngineConfig:
     #
     # The user-facing knob is `gpu_anti_jitter_mode`:
     #
-    #   "off"        — neither (default; v0.10.0-partial behavior)
-    #   "keepalive"  — torch keepalive only
-    #   "clock_lock" — clock lock only (sudo)
-    #   "both"       — clock lock + torch keepalive (sudo, max effect)
+    #   "off"        - neither (default; v0.10.0-partial behavior)
+    #   "keepalive"  - torch keepalive only
+    #   "clock_lock" - clock lock only (sudo)
+    #   "both"       - clock lock + torch keepalive (sudo, max effect)
     #
     # The two underlying booleans (gpu_clock_lock_enabled,
     # gpu_keepalive_torch_stream) stay configurable for advanced users
@@ -628,7 +628,7 @@ class EngineConfig:
     gpu_clock_lock_floor_offset_mhz: int = 255
 
     # Torch separate-stream keepalive (v0.11.0). Replaces the rc3
-    # ORT-stream version (`gpu_keepalive_enabled`) — when both are
+    # ORT-stream version (`gpu_keepalive_enabled`) - when both are
     # enabled, this one wins (the rc3 ORT-stream version remains
     # available as the no-torch fallback path). Tiny CUDA op
     # (1024-element float32 add) every `gpu_keepalive_torch_interval_ms`
@@ -646,14 +646,14 @@ class EngineStats:
     avg_inference_ms: float = 0.0
     last_total_ms: float = 0.0
     avg_total_ms: float = 0.0
-    # v0.6.9 — outlier visibility. avg_*_ms hides single slow chunks that
+    # v0.6.9 - outlier visibility. avg_*_ms hides single slow chunks that
     # arrive after the audio sink has already underrun. max_* tracks the
     # worst chunk since session start; late_chunks counts chunks where total
     # processing exceeded the chunk budget (chunk_seconds * 1000).
     max_inference_ms: float = 0.0
     max_total_ms: float = 0.0
     late_chunks: int = 0
-    # v0.6.9 round 5 — per-stage timing for the most recent chunk so the
+    # v0.6.9 round 5 - per-stage timing for the most recent chunk so the
     # slow_chunk_log breakdown points at which ONNX session was responsible.
     last_cv_ms: float = 0.0
     last_rmvpe_ms: float = 0.0
@@ -662,10 +662,10 @@ class EngineStats:
     # dict {chunk_idx, total_ms, inf_ms, cv_ms, rmvpe_ms, rvc_ms, input_rms}.
     # Surface via the SLOW socket command -> /tmp/woys-slow-chunks.txt.
     slow_chunk_log: list[dict[str, float]] = field(default_factory=list)
-    # v0.7.0-rc8 — chunks whose inference time was > 2× the running
+    # v0.7.0-rc8 - chunks whose inference time was > 2x the running
     # p50 of recent inference, regardless of whether total_ms passed
     # chunk_seconds*1000. The rc7 diag dump showed inference p50=40 ms
-    # / p99=96 ms / max=110 ms with overrun_ratio=0 — a 70 ms tail
+    # / p99=96 ms / max=110 ms with overrun_ratio=0 - a 70 ms tail
     # spread that doesn't trip the existing `slow_chunk_log` (gated on
     # total_ms > chunk_seconds*1000 = 150 ms). This list captures the
     # tail chunks so we can correlate their inf_ms with input shape,
@@ -676,14 +676,14 @@ class EngineStats:
     tail_chunk_log: list[dict[str, float]] = field(default_factory=list)
     last_error: str | None = None
 
-    # v0.5.2 health counters (Brief §5 — surfaced in TUI + `diag`).
+    # v0.5.2 health counters (Brief §5 - surfaced in TUI + `diag`).
     # xruns: parsed from pacat -v stderr. Closest thing to a true
     #   PulseAudio-side underrun count without reaching into pw-dump.
     # queue_full_events: writer queue was full when the engine tried to
     #   enqueue → engine has out-paced the writer/sink, treat as a
     #   self-detected underrun.
     # player_restarts: watchdog respawned the playback backend
-    #   (pacat / pw-cat / native-pw helper) — it died mid-session.
+    #   (pacat / pw-cat / native-pw helper) - it died mid-session.
     #   v0.9.0-rc4 rename: was `pacat_restarts` through v0.9.0-rc3;
     #   the legacy attribute alias is provided below for back-compat.
     # writer_jitter_ms: std dev (ms) of recent inter-chunk write
@@ -693,21 +693,21 @@ class EngineStats:
     queue_full_events: int = 0
     player_restarts: int = 0
     writer_jitter_ms: float = 0.0
-    # v0.9.0 — when the native-pw helper is in use, the helper prints
+    # v0.9.0 - when the native-pw helper is in use, the helper prints
     # "underruns=N\n" on stderr roughly once per second; the engine's
     # stderr-reader parses those lines into this counter. Closes audit
     # lens 09 rank 1 ("pw-cat is silent on underruns; we swapped a
     # metric we could see for one we can't"). Stays 0 in pw-cat /
     # pacat modes (those backends don't emit `underruns=` lines).
     player_underruns: int = 0
-    # v0.6.8 — count of chunks the engine had to drop because inference
+    # v0.6.8 - count of chunks the engine had to drop because inference
     # raised (GPU OOM, numerical, transient ORT error). Without this,
     # any single bad chunk crashes the entire engine; with it, we drop
     # the chunk, leave a brief silence (SOLA tail covers most of it),
     # and keep going. First few hits log to `last_error`; subsequent
     # ones increment silently to avoid spamming the TUI.
     dropped_chunks: int = 0
-    # v0.7.0-rc4 — instrumentation for the four silent-drop classes the
+    # v0.7.0-rc4 - instrumentation for the four silent-drop classes the
     # `docs/16-audit/synthesis.md` audit identified as previously
     # invisible to every existing counter. Each is incremented at
     # the exact site that emits zeros / loses samples; together with
@@ -716,24 +716,24 @@ class EngineStats:
     # output and the TUI STATUS reply so the next debug cycle isn't
     # blind.
     #
-    #   input_overflows    — sd.InputStream.read() reported
+    #   input_overflows    - sd.InputStream.read() reported
     #                        `overflowed=True` (mic-side ring underflow,
     #                        previously dropped on the floor at the
     #                        tuple-unpack site).
-    #   gated_chunks       — input gate fired and emitted a chunk of
+    #   gated_chunks       - input gate fired and emitted a chunk of
     #                        zeros; bypasses SOLA + resamplers +
     #                        inference, so an upstream of every buffer.
-    #   nan_chunks         — RVC vocoder output had NaN/inf and was
+    #   nan_chunks         - RVC vocoder output had NaN/inf and was
     #                        sanitized to zero (v0.6.9 path); a
     #                        non-zero rate during real-speech is
     #                        evidence for the C-class hypothesis from
     #                        the audit.
-    #   sola_fallback_count — SOLA's alignment search peak correlation
+    #   sola_fallback_count - SOLA's alignment search peak correlation
     #                        fell below `corr_threshold`; the algorithm
     #                        used `offset = 0` (centered, no shift). In
-    #                        rc5 this no longer affects emit length —
+    #                        rc5 this no longer affects emit length -
     #                        SOLA always emits `chunk_n` samples per call
-    #                        regardless of fallback — so this counter is
+    #                        regardless of fallback - so this counter is
     #                        purely a "how often is the search giving up"
     #                        diagnostic, not a cuts driver.
     #
@@ -746,7 +746,7 @@ class EngineStats:
     nan_chunks: int = 0
     sola_fallback_count: int = 0
 
-    # v0.7.0-rc6 — per-stage producer-side timing for the writer-jitter
+    # v0.7.0-rc6 - per-stage producer-side timing for the writer-jitter
     # investigation. The rc5 postmortem
     # (`docs/16-audit/12-rc5-writer-jitter-probe.md`) attributed the
     # live `writer_jitter_ms = 62` to producer-side cadence variance,
@@ -754,7 +754,7 @@ class EngineStats:
     # inference timing sum to per-iteration wall time:
     #
     #   mic_read_ms       blocking read of chunk_mic samples (PortAudio
-    #                     / ALSA — should hover near chunk_seconds *
+    #                     / ALSA - should hover near chunk_seconds *
     #                     1000 in steady state; variance reflects
     #                     ALSA period scheduling + USB iso jitter)
     #   inference_ms      RVC inference (existing, percentiles new)
@@ -775,15 +775,15 @@ class EngineStats:
     # already 128. Single window size, single mental model.
     _recent_inference: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     _recent_total: deque[float] = field(default_factory=lambda: deque(maxlen=128))
-    # v0.5.2 — inter-write intervals in ms (writer thread fills this).
+    # v0.5.2 - inter-write intervals in ms (writer thread fills this).
     _writer_intervals_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
-    # v0.7.0-rc6 — wider window than _recent_inference (32) so p95/p99
+    # v0.7.0-rc6 - wider window than _recent_inference (32) so p95/p99
     # have enough samples to be stable. 128 chunks ≈ 19 s at
     # chunk_seconds=0.15.
     _recent_mic_read_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     _recent_enqueue_lag_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
-    # v0.10.0 — per-stage rolling windows for cv / rmvpe / rvc inference.
+    # v0.10.0 - per-stage rolling windows for cv / rmvpe / rvc inference.
     # The engine has tracked `last_*_ms` (most-recent only) and `inf_ms`
     # (sum, with rolling p50/p95/p99) since v0.6.9. The aggregated `inf_ms`
     # mixes the contribution of each stage; tail variance attribution
@@ -793,7 +793,7 @@ class EngineStats:
     _recent_cv_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     _recent_rmvpe_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     _recent_rvc_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
-    # v0.10.0-rc2 — RVC stage further split into pre / run / post so we
+    # v0.10.0-rc2 - RVC stage further split into pre / run / post so we
     # can attribute the rvc tail to GPU work vs Python pre-/post-process
     # (np.repeat, _to_pitch_coarse, astype, isnan/isinf scan). Populated
     # only by the legacy in-process path; the IPC child reports an
@@ -815,14 +815,14 @@ class EngineStats:
     # in `woys diag` to spot the rc9 gap class.
     warmup_audio16_lens: set[int] = field(default_factory=set)
 
-    # v0.8.0 — inference subprocess telemetry. None / 0 when running
+    # v0.8.0 - inference subprocess telemetry. None / 0 when running
     # in-process (legacy path).
     child_pid: int | None = None
     child_restarts: int = 0
     last_ipc_roundtrip_ms: float = 0.0
     _recent_ipc_roundtrip_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
-    # v0.8.1 — per-session TRT EP status. After `_ensure_sessions`
+    # v0.8.1 - per-session TRT EP status. After `_ensure_sessions`
     # runs, this maps each loaded model's filename to True (TRT
     # active) or False (CUDA EP fallback because TRT init failed).
     # `trt_init_errors` records the failure reason per model so
@@ -835,14 +835,14 @@ class EngineStats:
     # multiple priority issues can see all of them, not just the last.
     priority_warnings: list[str] = field(default_factory=list)
 
-    # v0.10.0-rc3 — GPU keep-alive thread observability. Stays at zero
+    # v0.10.0-rc3 - GPU keep-alive thread observability. Stays at zero
     # when `gpu_keepalive_enabled=False` (default).
     keepalive_calls: int = 0
     last_keepalive_ms: float = 0.0
     keepalive_avg_ms: float = 0.0
     _recent_keepalive_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
-    # v0.11.0 — torch keepalive (separate CUDA stream). Distinct from
+    # v0.11.0 - torch keepalive (separate CUDA stream). Distinct from
     # rc3 ORT keepalive counter so we can A/B them. Reads "torch_*"
     # in `woys diag` so the active backend is unambiguous.
     torch_keepalive_calls: int = 0
@@ -850,11 +850,11 @@ class EngineStats:
     torch_keepalive_avg_ms: float = 0.0
     _recent_torch_keepalive_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
 
-    # v0.11.0 — GPU clock-lock state. Set by `_apply_gpu_clock_lock()` on
+    # v0.11.0 - GPU clock-lock state. Set by `_apply_gpu_clock_lock()` on
     # engine start when `cfg.gpu_clock_lock_enabled=True` (or
     # `gpu_anti_jitter_mode in {"clock_lock","both"}`); cleared by
     # `_revert_gpu_clock_lock()`. The lock is reverted on engine.stop()
-    # AND on SIGTERM/SIGINT (see RealtimeEngine.__init__ — _signal_handler).
+    # AND on SIGTERM/SIGINT (see RealtimeEngine.__init__ - _signal_handler).
     gpu_clock_lock_active: bool = False
     gpu_clock_lock_floor_mhz: int = 0
     gpu_clock_lock_ceiling_mhz: int = 0
@@ -862,17 +862,17 @@ class EngineStats:
     # `woys diag` so apply / revert failures are visible.
     gpu_clock_lock_last_message: str = ""
 
-    # v0.11.0 — track the helper's last-known exit cause(s) so the
+    # v0.11.0 - track the helper's last-known exit cause(s) so the
     # watchdog's "respawned" message doesn't clobber the original
     # death reason from `_stderr_reader_loop`. List-of-strings, capped
     # at 10 entries; surfaced in `woys diag` output. Each entry is
     # one of:
-    #   "native-pw: error: <reason>"  — from the helper's own stderr
-    #   "<backend> exited code=<N> at chunks=<idx>"  — from watchdog
+    #   "native-pw: error: <reason>"  - from the helper's own stderr
+    #   "<backend> exited code=<N> at chunks=<idx>"  - from watchdog
     #     when no stderr-side cause was captured before the exit
     helper_exit_reasons: list[str] = field(default_factory=list)
 
-    # v0.9.0-rc4 — back-compat alias for the field renamed from
+    # v0.9.0-rc4 - back-compat alias for the field renamed from
     # `pacat_restarts` to `player_restarts`. External callers (tests,
     # scripts that scrape EngineStats) reading the old name still work
     # for one release; v0.10 deletes the alias.
@@ -902,7 +902,7 @@ class EngineStats:
     def enqueue_lag_samples_ms(self) -> list[float]:
         return list(self._recent_enqueue_lag_ms)
 
-    # v0.10.0 — per-stage inference rolling-window accessors.
+    # v0.10.0 - per-stage inference rolling-window accessors.
     def cv_samples_ms(self) -> list[float]:
         """Snapshot of the rolling per-chunk contentvec inference times in ms."""
         return list(self._recent_cv_ms)
@@ -944,26 +944,26 @@ class EngineStats:
 # rc9 broader pre-warm together pinned the inference p99 spike to
 # cuDNN heuristic algo selection: even after rc9 pre-warmed every
 # audio16_len soxr emits (1957/1958/2446/2447), p99 stayed at ~96 ms.
-# rc9's tail log showed two distinct slow patterns — `rvc_ms` 64–72
-# ms (one shape group) and `rvc_ms` 47–48 ms + `rmvpe_ms` 17 ms
+# rc9's tail log showed two distinct slow patterns - `rvc_ms` 64-72
+# ms (one shape group) and `rvc_ms` 47-48 ms + `rmvpe_ms` 17 ms
 # (other shape group). The heuristic was picking different,
 # intrinsically slower, algos for the alternating shapes.
 #
 # v0.7.0-rc1's pre-rejection of EXHAUSTIVE was based on the autotune
-# lump: a 50–100 ms one-time cost per first-encounter shape. At
+# lump: a 50-100 ms one-time cost per first-encounter shape. At
 # chunk_seconds=0.10 / 0.15, paying that cost mid-realtime made the
-# first 5–10 chunks miss budget. rc9's broader pre-warm changes
+# first 5-10 chunks miss budget. rc9's broader pre-warm changes
 # that calculation: the autotune lump is now paid during warmup
 # (engine.start() before _run_loop), not realtime. Net startup
-# cost: another ~0.5–1 s on top of rc9's already-extended warmup.
+# cost: another ~0.5-1 s on top of rc9's already-extended warmup.
 # Acceptable trade for letting cuDNN pick the FASTEST algo per
 # shape rather than a heuristic guess.
 #
-# v0.2.0 — v0.7.0-rc9 history preserved for context:
-#   v0.2.0 default — picks fastest steady-state algo per shape but
+# v0.2.0 - v0.7.0-rc9 history preserved for context:
+#   v0.2.0 default - picks fastest steady-state algo per shape but
 #   eats 50-100 ms autotune the first time each shape lands.
 #   HEURISTIC (rc1+) picked a near-optimal algo from a heuristic
-#   without any timed search — slightly slower steady-state but no
+#   without any timed search - slightly slower steady-state but no
 #   autotune lump.
 #
 # Setting can still be flipped back via the env var if EXHAUSTIVE
@@ -987,7 +987,7 @@ def _trt_cache_dir_for(model_path: Path) -> Path:
 
 
 def _cuda_provider_entry() -> tuple[str, dict[str, object]]:
-    """The CUDA EP config we use everywhere — extracted so the TRT
+    """The CUDA EP config we use everywhere - extracted so the TRT
     fallback path can pull the same options if TRT init fails."""
     return (
         "CUDAExecutionProvider",
@@ -1000,7 +1000,7 @@ def _cuda_provider_entry() -> tuple[str, dict[str, object]]:
             "do_copy_in_default_stream": True,
             # B54 / corr-023: bool, not the string "1". ORT's CUDA EP option
             # parser accepts both, but every other entry in this dict uses
-            # native types — be consistent.
+            # native types - be consistent.
             "cudnn_conv_use_max_workspace": True,
         },
     )
@@ -1008,17 +1008,17 @@ def _cuda_provider_entry() -> tuple[str, dict[str, object]]:
 
 # Module-level record of which sessions actually got TRT EP. Surfaced
 # in `EngineStats.trt_active_for` so woys diag can show which models
-# failed TRT init and fell back to CUDA — gives the user one place to
+# failed TRT init and fell back to CUDA - gives the user one place to
 # see the real picture without grepping logs.
 _TRT_ACTIVE_PER_SESSION: dict[str, bool] = {}
 _TRT_INIT_ERRORS: dict[str, str] = {}
 
 
 def _make_session(path: Path, *, use_tensorrt: bool = True) -> ort.InferenceSession:
-    """v0.8.1 — try TensorRT EP first, fall back to CUDA EP per session.
+    """v0.8.1 - try TensorRT EP first, fall back to CUDA EP per session.
 
     ORT's TRT EP fails session initialization (not just the TRT
-    subgraph) when it encounters operators it can't handle —
+    subgraph) when it encounters operators it can't handle -
     e.g. RMVPE's FP16 STFT, which TRT requires to be FP32. We
     catch that failure and rebuild the session with CUDA EP only.
     The fallback is logged to `_TRT_INIT_ERRORS[path.name]` and
@@ -1080,7 +1080,7 @@ def _make_session(path: Path, *, use_tensorrt: bool = True) -> ort.InferenceSess
     return sess
 
 
-# v0.6.9 — pitchf sanitization for the realtime inference path.
+# v0.6.9 - pitchf sanitization for the realtime inference path.
 # Frames with NaN or f0 <= 0 are treated as "unvoiced" by the RVC vocoder's
 # NSF source module; a single such frame mid-utterance zeros the harmonic
 # source and produces an audible dropout. We replace NaN with 0 first
@@ -1098,7 +1098,7 @@ def interpolate_voiced_gaps_np(pitchf: NDArrayF32) -> NDArrayF32:
     replaces the loop with a single broadcast multiply per gap.
 
     Also keeps the dtype path in float32 throughout (pre-v0.8.0 cast to
-    float64 for the linspace arithmetic, then back to float32) — minor
+    float64 for the linspace arithmetic, then back to float32) - minor
     alloc churn reduction for B16's perf-001 partial.
     """
     if pitchf.size == 0:
@@ -1107,7 +1107,7 @@ def interpolate_voiced_gaps_np(pitchf: NDArrayF32) -> NDArrayF32:
     if not invalid.any():
         return pitchf
     if (~invalid).sum() == 0:
-        # Whole chunk is unvoiced — preserve so vocoder produces silence.
+        # Whole chunk is unvoiced - preserve so vocoder produces silence.
         return np.nan_to_num(pitchf, nan=0.0).astype(np.float32, copy=False)
     out = np.nan_to_num(pitchf, nan=0.0).astype(np.float32, copy=True)
     n = len(invalid)
@@ -1150,7 +1150,7 @@ def to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, ND
     smoke test can `from audio.engine import to_pitch_coarse` instead of
     re-implementing the algorithm. Single source of truth.
 
-    B56 / perf-003: early-exit on all-zero pitchf — the engine's input gate
+    B56 / perf-003: early-exit on all-zero pitchf - the engine's input gate
     fully zeroes audio during sub-hysteresis transitions (engine.py:2184)
     and the resulting RMVPE output is all-zero. Skipping the four numpy
     passes (log, mask multiply, clip, rint) saves ~8 µs per such chunk.
@@ -1185,7 +1185,7 @@ _to_pitch_coarse = to_pitch_coarse
 
 
 def _resample(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArrayF32:
-    """High-quality stateless resampler — used for one-shot tests + tail flushes.
+    """High-quality stateless resampler - used for one-shot tests + tail flushes.
 
     The realtime engine path uses `_StreamResampler` instead so the
     anti-aliasing filter state survives across chunks. See
@@ -1205,7 +1205,7 @@ def _resample(audio: NDArrayF32, src_rate: int, dst_rate: int) -> NDArrayF32:
 
 
 class _StreamResampler:
-    """Stateful soxr resampler — preserves filter state across chunks.
+    """Stateful soxr resampler - preserves filter state across chunks.
 
     Per-call `soxr.resample(...)` resets the anti-aliasing filter every
     invocation; concatenating the resampled chunks introduces a brief
@@ -1214,7 +1214,7 @@ class _StreamResampler:
     `soxr.ResampleStream` carries the filter buffer across calls and
     eliminates the per-chunk warm-up.
 
-    Identity case (`src_rate == dst_rate`) is a passthrough — no soxr
+    Identity case (`src_rate == dst_rate`) is a passthrough - no soxr
     object created.
     """
 
@@ -1231,7 +1231,7 @@ class _StreamResampler:
     def process(self, audio: NDArrayF32) -> NDArrayF32:
         """Consume `audio` (1-D float32 mono); return whatever soxr emits
         for this chunk. Output length will lag input length slightly while
-        the internal buffer fills — flush() drains the rest."""
+        the internal buffer fills - flush() drains the rest."""
         if self._stream is None:
             return audio.astype(np.float32, copy=False)
         if audio.size == 0:
@@ -1257,7 +1257,7 @@ class RvcSessionPool:
     set of cached sessions; second swap to an already-seen voice is a
     pointer swap (~10 ms total).
 
-    LRU eviction keeps VRAM bounded — a session uses ~150 MiB resident,
+    LRU eviction keeps VRAM bounded - a session uses ~150 MiB resident,
     so the default `max_size=4` caps voice-model VRAM at ~600 MiB on top
     of the foundations. Configurable via `EngineConfig.session_pool_size`.
 
@@ -1296,7 +1296,7 @@ class RvcSessionPool:
                 self._access_order.append(key)
                 return self._cache[key]
 
-        # Cache miss — build outside the lock (slow); other threads can
+        # Cache miss - build outside the lock (slow); other threads can
         # still get cached sessions while we tune.
         sess = _make_session(key, use_tensorrt=self._use_tensorrt)
 
@@ -1307,7 +1307,7 @@ class RvcSessionPool:
             self._cache[key] = sess
             self._access_order.append(key)
             # B26 / corr-006: the pre-v0.8.0 `if evicted != key` guard was
-            # dead — `key` was just appended at -1, the pop comes from index
+            # dead - `key` was just appended at -1, the pop comes from index
             # 0, so evicted == key only when len == 1 (and then we DO want
             # to evict, never reaching this branch). Just unconditionally
             # drop.
@@ -1319,7 +1319,7 @@ class RvcSessionPool:
         """Create + run one dummy forward pass so cudnn populates its algo
         cache. Subsequent inferences against the same shape are near-instant.
 
-        The caller is expected to know the model's input shape — we feed the
+        The caller is expected to know the model's input shape - we feed the
         widest plausible RVC v2 input (768-dim feats x 100 frames).
         """
         sess = self.get_or_create(path)
@@ -1362,13 +1362,13 @@ class RealtimeEngine:
         self.stats = EngineStats()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        # v0.7.0-rc7 — track whether GC was enabled before this engine
+        # v0.7.0-rc7 - track whether GC was enabled before this engine
         # disabled it, so stop() restores the prior state instead of
         # blindly enabling. Lets us nest cleanly inside a parent that
         # had already disabled GC (rare but possible in tests).
         self._gc_was_enabled_before_start: bool = False
 
-        # v0.8.0 — handle to the inference subprocess. Created lazily
+        # v0.8.0 - handle to the inference subprocess. Created lazily
         # in `start()` when `cfg.inference_subprocess=True`. Stays None
         # in legacy in-process mode.
         self._inf_client: Any = None
@@ -1392,7 +1392,7 @@ class RealtimeEngine:
         self.active_embedder: str = "onnx"
 
         # SOLA streaming state (Phase B). v0.5.0 fix: SOLA operates at the
-        # OUTPUT rate (model_sr — varies per voice: 16k for amitaro, 40k for
+        # OUTPUT rate (model_sr - varies per voice: 16k for amitaro, 40k for
         # most v2 voices, 32k/48k for some). Input history stays at 16 kHz
         # because contentvec/rmvpe always take 16 kHz audio. Two SOLAConfigs:
         # `_sola_input_cfg` sizes the input history (16 kHz);
@@ -1422,7 +1422,7 @@ class RealtimeEngine:
         self._pending_model_swap: Path | None = None
         self._swap_lock = threading.Lock()
         # B5 / corr-003: TUI poll sites previously checked
-        # `_pending_model_swap is None` to know "swap done" — but the slot was
+        # `_pending_model_swap is None` to know "swap done" - but the slot was
         # cleared at the START of `_maybe_swap_model`, before the actual work.
         # So the TUI replied "done" while the worker was still loading the new
         # model (~600 ms cold-cache cuDNN tune). Add an Event that's set AFTER
@@ -1434,33 +1434,33 @@ class RealtimeEngine:
         # `_pacat_lock` so the watchdog can swap the handle atomically.
         self._pacat_proc: subprocess.Popen[bytes] | None = None
         self._pacat_lock = threading.Lock()
-        # Set by `_open_pacat` to either "pw-cat" or "pacat" — surfaced in
+        # Set by `_open_pacat` to either "pw-cat" or "pacat" - surfaced in
         # `woys diag` so the user can see which backend is live.
         self._player_backend: str = ""
 
-        # v0.5.2 — pacat writer / watchdog / stderr-reader threads.
+        # v0.5.2 - pacat writer / watchdog / stderr-reader threads.
         # Lifetimes are bound to a single `_run_loop()` invocation: spawned
         # in `_run_loop`'s try, joined in its finally.
         self._writer_queue: queue.Queue[bytes] | None = None
         self._writer_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
         self._watchdog_thread: threading.Thread | None = None
-        # v0.10.0-rc3 — GPU keep-alive thread; only started when
+        # v0.10.0-rc3 - GPU keep-alive thread; only started when
         # `cfg.gpu_keepalive_enabled=True`.
         self._keepalive_thread: threading.Thread | None = None
-        # The keepalive dummy input — pre-warmed at engine start so cuDNN
+        # The keepalive dummy input - pre-warmed at engine start so cuDNN
         # has a cached algorithm for this shape. Allocated once, reused on
         # every keepalive iteration.
         self._keepalive_input: NDArrayF32 | None = None
-        # v0.11.0 — torch separate-stream keepalive thread (replaces the
+        # v0.11.0 - torch separate-stream keepalive thread (replaces the
         # rc3 ORT-stream keepalive when `gpu_keepalive_torch_stream=True`
         # OR `gpu_anti_jitter_mode in {"keepalive","both"}`).
         self._torch_keepalive_thread: threading.Thread | None = None
-        # v0.11.0 — best-effort SIGTERM/SIGINT handler so a `kill <pid>`
+        # v0.11.0 - best-effort SIGTERM/SIGINT handler so a `kill <pid>`
         # or Ctrl-C reverts an active GPU clock lock instead of leaving
         # the system in a locked state. Installed at engine start when
         # the lock is active; restored to the prior handler at engine
-        # stop. SIGKILL (`kill -9`) cannot be caught — that case relies
+        # stop. SIGKILL (`kill -9`) cannot be caught - that case relies
         # on the user manually running `nvidia-smi -rgc`, documented in
         # docs/22-gpu-clock-lock.md.
         self._prior_signal_handlers: dict[int, Any] = {}
@@ -1475,7 +1475,7 @@ class RealtimeEngine:
         # set so the engine exits cleanly rather than serving silence.
         self._consecutive_drops: int = 0
 
-        # v0.5.0 session pool — shared cache so swap = pointer swap.
+        # v0.5.0 session pool - shared cache so swap = pointer swap.
         self._rvc_pool = RvcSessionPool(
             max_size=self.cfg.session_pool_size,
             use_tensorrt=self.cfg.use_tensorrt,
@@ -1503,9 +1503,10 @@ class RealtimeEngine:
         """Child process PID, or None if running in-process."""
         if self._inf_client is None or self._inf_client._handles is None:
             return None
-        return self._inf_client._handles.proc.pid
+        pid = self._inf_client._handles.proc.pid
+        return int(pid) if pid is not None else None
 
-        # v0.6.7 — stateful per-(src,dst) resamplers. Created in `_run_loop`
+        # v0.6.7 - stateful per-(src,dst) resamplers. Created in `_run_loop`
         # before the first chunk, replaced when the model output rate
         # changes during hot-swap. See `docs/11-microcuts-bug.md`.
         self._resampler_in: _StreamResampler | None = None
@@ -1517,7 +1518,7 @@ class RealtimeEngine:
         # v0.3.0: prefer fp16 variants if present next to the fp32 file. fp16
         # rmvpe halves its VRAM footprint with no measurable pitch-detection
         # quality loss (validated v0.2.0). fp16 contentvec, by contrast, has
-        # cosine sim 0.75 vs fp32 — only auto-promoted if explicitly requested.
+        # cosine sim 0.75 vs fp32 - only auto-promoted if explicitly requested.
         cv_path = self._auto_pick_fp16(self.cfg.contentvec_model, allow=False)
         rmvpe_path = self._auto_pick_fp16(self.cfg.rmvpe_model, allow=True)
 
@@ -1538,7 +1539,7 @@ class RealtimeEngine:
         self.stats.trt_active_for = dict(_TRT_ACTIVE_PER_SESSION)
         self.stats.trt_init_errors = dict(_TRT_INIT_ERRORS)
 
-        # Resolve embedder mode. v0.8.0 removed the fairseq path — only "onnx"
+        # Resolve embedder mode. v0.8.0 removed the fairseq path - only "onnx"
         # is supported. Any non-"onnx" value in config is reported and the
         # engine falls back to onnx (so old config.toml files don't crash).
         if self.cfg.embedder != "onnx":
@@ -1566,7 +1567,7 @@ class RealtimeEngine:
         training rate (16 kHz for amitaro v2_16k, 40 kHz for most v2 voices,
         32 kHz / 48 kHz for some). The convert.py exporter stamps the rate
         into ONNX `custom_metadata_map["metadata"]` as JSON, but reading
-        that is brittle — different exporters use different keys. Probing
+        that is brittle - different exporters use different keys. Probing
         is bulletproof: feed a known-length input, count output samples.
 
         Costs ~20 ms once at session load. Worth it.
@@ -1595,7 +1596,7 @@ class RealtimeEngine:
         try:
             out = self._rvc.run(["audio"], feed)[0]
         except Exception:
-            # Probe failed (model likely doesn't take pitch/pitchf — nono variant).
+            # Probe failed (model likely doesn't take pitch/pitchf - nono variant).
             # Fall back to 16 kHz; the engine will still work, just possibly chipmunk.
             return 16_000
         n_out = int(np.asarray(out).size)
@@ -1604,7 +1605,7 @@ class RealtimeEngine:
         for sr in (16_000, 22_050, 24_000, 32_000, 40_000, 44_100, 48_000):
             if abs(n_out - sr) < sr * 0.05:
                 return sr
-        # Unknown rate — best effort, treat the raw count as Hz.
+        # Unknown rate - best effort, treat the raw count as Hz.
         return n_out
 
     def _cached_rvc_sr(self, path: Path) -> int:
@@ -1623,7 +1624,7 @@ class RealtimeEngine:
         return sr
 
     def _rebuild_sola_for_rate(self, model_sr: int) -> None:
-        """Recreate the output-side SOLAStream for the given rate. Idempotent —
+        """Recreate the output-side SOLAStream for the given rate. Idempotent -
         no-op when the rate is unchanged."""
         from audio.sola import SOLAConfig, SOLAStream
 
@@ -1642,7 +1643,7 @@ class RealtimeEngine:
         self._sola = SOLAStream(out_cfg)
 
     def reload_rvc(self, path: Path) -> None:
-        """Hot-swap the RVC voice model — synchronous, thread-unsafe.
+        """Hot-swap the RVC voice model - synchronous, thread-unsafe.
 
         Use `request_model_swap()` from any thread other than the engine
         worker; this function is kept for tests + offline use only.
@@ -1663,7 +1664,7 @@ class RealtimeEngine:
 
         B61 / perf-007: caps voice_paths at `session_pool_size`. Pre-v0.8.0
         we walked every voice in the dir even though only the last
-        `pool_size` survive eviction — so voices 1..N-pool_size were
+        `pool_size` survive eviction - so voices 1..N-pool_size were
         warmed and immediately discarded. Wasted startup time.
         """
         if voice_paths is None:
@@ -1675,7 +1676,7 @@ class RealtimeEngine:
             }  # fmt: skip
             voice_paths = sorted(p for p in MODELS_DIR.glob("*.onnx") if p.name not in foundations)
         # B61: only warm what fits in the pool. The first N entries (alphabetical)
-        # are the ones the user is most likely to land on — bias toward retaining
+        # are the ones the user is most likely to land on - bias toward retaining
         # the deterministic prefix.
         cap = self.cfg.session_pool_size
         if len(voice_paths) > cap:
@@ -1706,7 +1707,7 @@ class RealtimeEngine:
 
     def request_model_swap(self, path: Path) -> None:
         """Thread-safe: queue a model swap for the worker to pick up at the
-        next chunk boundary. Returns immediately. Idempotent — repeat calls
+        next chunk boundary. Returns immediately. Idempotent - repeat calls
         replace the pending target. The SOLA tail is drained before the
         swap so consecutive chunks crossfade cleanly across the boundary.
         """
@@ -1743,7 +1744,7 @@ class RealtimeEngine:
         # B10 / corr-005: wait for the writer queue to drain before swapping
         # the model. Without this barrier, OLD-rate audio sitting in the
         # queue (up to ~2 s worth at queue_size=8 + chunk_seconds=0.25)
-        # plays AFTER the swap completes — user hears the old voice for
+        # plays AFTER the swap completes - user hears the old voice for
         # seconds after triggering a swap. 300 ms timeout caps the wait
         # so a stuck pacat/pw-cat doesn't deadlock the swap.
         if self._writer_queue is not None:
@@ -1751,7 +1752,7 @@ class RealtimeEngine:
             while time.perf_counter() < drain_deadline and not self._writer_queue.empty():
                 time.sleep(0.005)
 
-        # v0.8.0 — subprocess swap path. Child owns the session pool;
+        # v0.8.0 - subprocess swap path. Child owns the session pool;
         # tell it to swap, wait for the new RVC sample-rate response,
         # then rebuild the output resampler in the parent if the rate
         # changed. On InferenceError (child died, swap timed out) we
@@ -1778,7 +1779,7 @@ class RealtimeEngine:
                 # would fail every chunk. Better to stop and surface the
                 # error than serve silence indefinitely.
                 self.stats.last_error = (
-                    f"subprocess swap failed: {e}. Stopping engine — "
+                    f"subprocess swap failed: {e}. Stopping engine - "
                     f"flip `inference_subprocess=false` to fall back to "
                     f"in-process inference."
                 )
@@ -1787,13 +1788,13 @@ class RealtimeEngine:
                 return
 
         # Legacy in-process path. Existing _cv (contentvec) and _rmvpe
-        # stay — they're foundation models, not voice-specific.
+        # stay - they're foundation models, not voice-specific.
         # v0.5.0: pool-cached. Cache hit ≈ 10 ms; cache miss ≈ 600 ms.
         self.cfg.rvc_model = target
         self._rvc = self._rvc_pool.get_or_create(target)
         self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
         new_sr = self._cached_rvc_sr(target)
-        # v0.6.7 — rebuild the output resampler if the new model has a
+        # v0.6.7 - rebuild the output resampler if the new model has a
         # different native rate. Identity ratios (e.g. 16k → 16k → 48k stays
         # the same) won't reset state, so swaps between same-rate voices
         # don't introduce a chunk-boundary artifact.
@@ -1821,7 +1822,7 @@ class RealtimeEngine:
     def process_chunk_16k(self, audio16k: NDArrayF32) -> NDArrayF32:
         """One inference pass on a (N,) float32 chunk at 16 kHz.
 
-        Standalone path — used by tests and by the engine when SOLA is
+        Standalone path - used by tests and by the engine when SOLA is
         disabled. Doesn't touch streaming state. The streaming engine path
         goes through `_process_streaming_16k` instead.
         """
@@ -1830,7 +1831,7 @@ class RealtimeEngine:
     def _infer(self, audio16k: NDArrayF32) -> NDArrayF32:
         """Raw model invocation; no streaming bookkeeping.
 
-        v0.8.0 — when `cfg.inference_subprocess=True` AND the
+        v0.8.0 - when `cfg.inference_subprocess=True` AND the
         `_inf_client` was successfully started, this delegates to the
         child process via `InferenceClient.infer()`. The child runs
         the full cv → rmvpe → rvc pipeline in its own CUDA context;
@@ -1879,7 +1880,7 @@ class RealtimeEngine:
             self.stats.last_rvc_ms = timings.rvc_ms
             self.stats.last_ipc_roundtrip_ms = timings.roundtrip_ms
             self.stats._recent_ipc_roundtrip_ms.append(timings.roundtrip_ms)
-            # v0.10.0 — per-stage rolling windows for percentile attribution.
+            # v0.10.0 - per-stage rolling windows for percentile attribution.
             self.stats._recent_cv_ms.append(timings.cv_ms)
             self.stats._recent_rmvpe_ms.append(timings.rmvpe_ms)
             self.stats._recent_rvc_ms.append(timings.rvc_ms)
@@ -1913,7 +1914,7 @@ class RealtimeEngine:
         pitchf = _interpolate_voiced_gaps_np(pitchf)
         t_rmvpe1 = time.perf_counter()
 
-        # v0.10.0-rc2 — split RVC stage into pre / run / post so the
+        # v0.10.0-rc2 - split RVC stage into pre / run / post so the
         # tail-attribution data tells us GPU work vs Python overhead.
         feats_2x = np.repeat(feats, 2, axis=1)
         pitch_coarse, pitchf_aligned = _to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
@@ -1940,13 +1941,13 @@ class RealtimeEngine:
         # would be undefined behavior in PipeWire's mixer chain and the
         # listener hears it as a click + brief gap.
         # B57 / audio-010: posinf=0.0 / neginf=0.0 (not ±1.0). nan_to_num is
-        # element-wise — only the rare bad samples are zeroed, not the whole
+        # element-wise - only the rare bad samples are zeroed, not the whole
         # chunk. The pre-v0.8.0 ±1.0 produced full-scale impulses (audible
         # click) on inf samples; zero is a single-sample dropout (~21 µs at
         # 48 kHz), audibly less harsh.
         if np.isnan(result).any() or np.isinf(result).any():
             result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
-            # v0.7.0-rc4 — count NaN-sanitize hits so we can attribute
+            # v0.7.0-rc4 - count NaN-sanitize hits so we can attribute
             # voice-correlated cuts to the vocoder rather than the gate
             # or SOLA. Pre-rc4 the path silently zeroed samples; lens 06
             # of the audit flagged this as one of three NaN-zero paths
@@ -1957,14 +1958,14 @@ class RealtimeEngine:
         cv_ms = (t_cv1 - t_cv0) * 1000.0
         rmvpe_ms = (t_rmvpe1 - t_cv1) * 1000.0
         rvc_ms = (t_rvc1 - t_rmvpe1) * 1000.0
-        # v0.10.0-rc2 — RVC sub-stages.
+        # v0.10.0-rc2 - RVC sub-stages.
         rvc_pre_ms = (t_rvc_pre1 - t_rmvpe1) * 1000.0
         rvc_run_ms = (t_rvc_run1 - t_rvc_pre1) * 1000.0
         rvc_post_ms = (t_rvc1 - t_rvc_run1) * 1000.0
         self.stats.last_cv_ms = cv_ms
         self.stats.last_rmvpe_ms = rmvpe_ms
         self.stats.last_rvc_ms = rvc_ms
-        # v0.10.0 — per-stage rolling windows for percentile attribution.
+        # v0.10.0 - per-stage rolling windows for percentile attribution.
         # The pre-v0.10.0 path tracked only `_recent_inference` (sum); the
         # writer-jitter investigation needs to know which stage owns the
         # tail.
@@ -1979,12 +1980,12 @@ class RealtimeEngine:
         return result_typed
 
     def _safe_process_streaming_16k(self, audio16: NDArrayF32) -> NDArrayF32 | None:
-        """v0.6.8 — wrap `_process_streaming_16k` so a transient
+        """v0.6.8 - wrap `_process_streaming_16k` so a transient
         ORT / CUDA / numerical error drops the chunk instead of killing
         the engine.
 
         Returns the inferred chunk, or `None` if inference failed.
-        Caller must check for `None` and skip the playback write — the
+        Caller must check for `None` and skip the playback write - the
         engine's main loop does this with `continue`.
 
         First three failures log to `stats.last_error` with the
@@ -2010,7 +2011,7 @@ class RealtimeEngine:
                     f"inference still dropping chunks (total #{n}): {type(e).__name__}: {e}"
                 )
             # B14 / corr-015: circuit breaker on sustained inference failure.
-            # Voice changer feeding Discord — "stopped" is better than
+            # Voice changer feeding Discord - "stopped" is better than
             # "silently giving them silence." Threshold 50 ≈ 7-12 seconds
             # at chunk_seconds in [0.15, 0.25]; long enough to ride out a
             # transient cuDNN tune but short enough to surface a genuine
@@ -2044,18 +2045,18 @@ class RealtimeEngine:
 
         full_out = self._infer(model_input)
 
-        # Map the trim from input space to output space proportionally —
+        # Map the trim from input space to output space proportionally -
         # the model is roughly 1:1 in time, but RVC trims a few samples at
         # the boundaries. Compute the per-sample ratio defensively.
         in_len = model_input.shape[0]
         out_len = full_out.shape[0]
         ratio = out_len / max(in_len, 1)
         # Drop the leading "context" portion in the model output. Keep the
-        # last `ctx_drop_out` samples — sized to match SOLA's contract:
-        #   chunk_n + cf + search   when SOLA is enabled (rc5 — gives the
+        # last `ctx_drop_out` samples - sized to match SOLA's contract:
+        #   chunk_n + cf + search   when SOLA is enabled (rc5 - gives the
         #                           alignment search positional slack so
         #                           emit length stays constant)
-        #   chunk_n + cf            when SOLA is disabled (legacy path —
+        #   chunk_n + cf            when SOLA is disabled (legacy path -
         #                           emit length variable, no slack needed)
         # The pre-rc5 implementation always trimmed to chunk_n + cf even
         # with SOLA enabled; the search then ate samples from the input
@@ -2068,7 +2069,7 @@ class RealtimeEngine:
 
         if self._sola is not None:
             return self._sola.process(emitted_region)
-        # SOLA disabled — emit raw, expect chunk-boundary clicks for short chunks.
+        # SOLA disabled - emit raw, expect chunk-boundary clicks for short chunks.
         return emitted_region
 
     def reset_streaming_state(self) -> None:
@@ -2092,13 +2093,13 @@ class RealtimeEngine:
         # warmup steps. Pre-v0.8.0 we ran `gc.disable` after warmup, so any
         # gc cycles that ORT session loading triggered (and there are some
         # under torch+ORT version combinations) paid full GC cost during the
-        # commitment-to-running phase. Move it up — disable the moment the
+        # commitment-to-running phase. Move it up - disable the moment the
         # caller commits.
         self._gc_was_enabled_before_start = gc.isenabled()
         if self._gc_was_enabled_before_start:
             gc.disable()
 
-        # v0.11.0 — apply GPU clock lock at the start of engine activity.
+        # v0.11.0 - apply GPU clock lock at the start of engine activity.
         # Done BEFORE session loading so cuDNN warmup runs at the locked
         # boost clock (avoids retuning under post-lock-application clock
         # changes).
@@ -2107,7 +2108,7 @@ class RealtimeEngine:
             self._apply_gpu_clock_lock()
 
         if self.cfg.inference_subprocess:
-            # v0.8.0 — spawn the inference child. Child loads ORT
+            # v0.8.0 - spawn the inference child. Child loads ORT
             # sessions + applies the rc7-rc12 wins (gc.disable, RT
             # priority, EXHAUSTIVE cuDNN, broader pre-warm) inside its
             # own CUDA context. Parent's audio I/O thread no longer
@@ -2127,7 +2128,7 @@ class RealtimeEngine:
             cfg_dict = self._cfg_dict_for_subprocess()
             self._inf_client = InferenceClient(cfg_dict)
             self._inf_client.start()  # raises InferenceError on child failure
-            # Child loaded the RVC session — pull rate + dtype info.
+            # Child loaded the RVC session - pull rate + dtype info.
             self._rvc_output_sr = self._inf_client.rvc_output_sr
             self._is_half = self._inf_client.is_half
             self.active_embedder = self._inf_client.active_embedder
@@ -2149,7 +2150,7 @@ class RealtimeEngine:
             self._warmup_realtime_pipeline()
 
         # v0.5.0: optionally pre-warm every voice so swaps are instant
-        # from the first press of `p`. Skipped in subprocess mode —
+        # from the first press of `p`. Skipped in subprocess mode -
         # the child's RvcSessionPool handles this internally if
         # eager_warmup is set. (Wiring full eager_warmup via IPC is
         # deferred; in v0.8.0 swaps are still on-demand for child.)
@@ -2164,14 +2165,14 @@ class RealtimeEngine:
     def _cfg_dict_for_subprocess(self) -> dict[str, Any]:
         """Convert EngineConfig to a dict for spawn pickling.
 
-        v0.8.0-rc3 — DO NOT convert Path → str. Path is picklable;
+        v0.8.0-rc3 - DO NOT convert Path → str. Path is picklable;
         converting drops Path's interface (`with_name`, `parent`,
         etc.) so engine code in the child crashes with
         `AttributeError: 'str' object has no attribute 'with_name'`
         in `_auto_pick_fp16`. The crash forced the parent's
         `start()` to fall back to in-process inference silently,
         which is why CC's bash test passed but real Telegram audio
-        sounded "broken" — production was running in-process all
+        sounded "broken" - production was running in-process all
         along, but stderr was hijacked by Textual so the fallback's
         `last_error` was never visible.
         """
@@ -2180,13 +2181,13 @@ class RealtimeEngine:
         return asdict(self.cfg)
 
     def _warmup_realtime_pipeline(self, n_chunks_per_shape: int = 4) -> None:
-        """v0.6.9 — pre-run synthetic chunks through the *full* realtime
+        """v0.6.9 - pre-run synthetic chunks through the *full* realtime
         pipeline (cv → rmvpe → rvc) so cuDNN's algo cache is populated for
         the actual shapes we feed at runtime. `RvcSessionPool.warmup` only
         warms the rvc session; the cv and rmvpe sessions still cold-start
         the first few real chunks otherwise.
 
-        v0.7.0-rc9 — extended to pre-warm EVERY unique input length
+        v0.7.0-rc9 - extended to pre-warm EVERY unique input length
         soxr's stream resampler can emit, not just the nominal one. The
         rc8 tail-chunk capture pinned the inference p99=96 ms / max=110 ms
         spike to a shape mismatch: pre-rc9 warmup ran `_infer` with
@@ -2195,7 +2196,7 @@ class RealtimeEngine:
         audio16_len`, where `audio16_len` is whatever
         `_StreamResampler(48k → 16k).process(7200)` emits. Soxr
         alternates between two specific values (1957 / 2447 in alireza's
-        QuadCast 2 S session, plus the typical 2400) — every chunk with
+        QuadCast 2 S session, plus the typical 2400) - every chunk with
         a non-cached shape costs cuDNN a fallback slow path, ~80 ms
         inference vs ~40 ms cached. See
         `docs/16-audit/12-rc5-writer-jitter-probe.md` and the rc8
@@ -2229,7 +2230,7 @@ class RealtimeEngine:
                 if out_chunk.size > 0:
                     unique_audio16_lens.add(int(out_chunk.shape[0]))
         else:
-            # mic_rate == internal — no resample, audio16_len is fixed.
+            # mic_rate == internal - no resample, audio16_len is fixed.
             unique_audio16_lens.add(chunk_n_mic)
 
         if not unique_audio16_lens:
@@ -2251,12 +2252,12 @@ class RealtimeEngine:
                 try:
                     self._infer(dummy)
                 except Exception:
-                    # If one shape fails, try the rest — the realtime
+                    # If one shape fails, try the rest - the realtime
                     # path's `_safe_process_streaming_16k` will catch
                     # any inference failure that survives warmup.
                     break
 
-        # v0.10.0 — snapshot the model-input shape set seen during warmup
+        # v0.10.0 - snapshot the model-input shape set seen during warmup
         # (populated by `_infer` instrumentation as `audio16k.shape[-1]`,
         # which equals `history_len + audio16_len` for every warmup call).
         # Runtime continues adding to `unique_audio16_lens`; the diff
@@ -2276,7 +2277,7 @@ class RealtimeEngine:
             self._thread.join(timeout=timeout)
         self.stats.running = False
 
-        # v0.8.0 — tear down the inference subprocess after the engine
+        # v0.8.0 - tear down the inference subprocess after the engine
         # thread has stopped sending it work. `InferenceClient.stop()`
         # sends CMD_STOP, joins the child, closes pipes, unlinks shm.
         if self._inf_client is not None:
@@ -2285,7 +2286,7 @@ class RealtimeEngine:
             self._inf_client = None
             self.stats.child_pid = None
 
-        # v0.7.0-rc7 — restore GC to its prior state and run one
+        # v0.7.0-rc7 - restore GC to its prior state and run one
         # collection to free any cyclic references that accumulated
         # during the session. If GC was already disabled before this
         # engine started (nested case), leave it disabled.
@@ -2294,21 +2295,21 @@ class RealtimeEngine:
             gc.collect()
             self._gc_was_enabled_before_start = False
 
-        # v0.11.0 — release the GPU clock lock if active. Idempotent;
+        # v0.11.0 - release the GPU clock lock if active. Idempotent;
         # safe to call when no lock was applied. SIGTERM/SIGINT path
         # may have already reverted, in which case this is a no-op.
         with contextlib.suppress(Exception):
             self._revert_gpu_clock_lock()
 
     def _assert_sink_loaded(self) -> None:
-        """v0.6.4 — refuse to start if `cfg.sink_name` isn't a loaded
+        """v0.6.4 - refuse to start if `cfg.sink_name` isn't a loaded
         PipeWire sink.
 
         Without this guard, `pw-cat --target=…` and `pacat --device=…`
         treat the named sink as a hint: if it's missing, the session
         manager silently routes the stream to the *default* sink
         (typically laptop speakers). The engine's playback subprocess
-        starts cleanly, exits 0, no stderr — and your transformed
+        starts cleanly, exits 0, no stderr - and your transformed
         voice plays out of the speakers instead of the virtual mic.
         See docs/10-monitor-leak-diag.md for the full forensic trail.
 
@@ -2329,7 +2330,7 @@ class RealtimeEngine:
         loaded = [line.split("\t")[1] for line in result.stdout.splitlines() if "\t" in line]
         if self.cfg.sink_name not in loaded:
             raise RuntimeError(
-                f"PipeWire sink {self.cfg.sink_name!r} is not loaded — refusing to start.\n"
+                f"PipeWire sink {self.cfg.sink_name!r} is not loaded - refusing to start.\n"
                 f"  loaded sinks: {loaded}\n"
                 f"  fix: run `woys pw setup` to load the virtual sink, "
                 f"or correct `sink_name` in ~/.config/woys/config.toml."
@@ -2368,7 +2369,7 @@ class RealtimeEngine:
         prebuf/tlength buffer near zero on every chunk → underrun storm).
         Falls back to pacat only if pw-cat is missing.
 
-        v0.6.4: pre-flights sink existence — see `_assert_sink_loaded`.
+        v0.6.4: pre-flights sink existence - see `_assert_sink_loaded`.
         Without that guard, `--target` / `--device` silently fall back
         to the default sink when the named sink is missing.
 
@@ -2378,11 +2379,11 @@ class RealtimeEngine:
         chunk writes from PipeWire's per-quantum RT callback via an
         explicit SPSC ring buffer, closing the audit's lens-08 cut
         signature (sample-exact zeros at 21.33/42.67 ms quantum
-        cadence). NEVER falls back silently — if `prefer_native_pw=True`
+        cadence). NEVER falls back silently - if `prefer_native_pw=True`
         and the helper is missing, we raise so the user sees an actionable
         error instead of cuts they can't explain.
 
-        The retained name `_open_pacat` is historical — the watchdog and
+        The retained name `_open_pacat` is historical - the watchdog and
         writer threads don't care which binary is on the other side, only
         that it accepts raw float32le on stdin.
         """
@@ -2406,9 +2407,7 @@ class RealtimeEngine:
             # where chunk_frames is one engine write (chunk_seconds *
             # sink_rate) and slack_frames absorbs writer-jitter overshoot.
             chunk_frames = int(self.cfg.chunk_seconds * self.cfg.sink_rate)
-            slack_frames = int(
-                self.cfg.prefer_native_pw_buffer_ms * self.cfg.sink_rate / 1000
-            )
+            slack_frames = int(self.cfg.prefer_native_pw_buffer_ms * self.cfg.sink_rate / 1000)
             needed = chunk_frames + slack_frames
             ring_frames = 1
             while ring_frames < needed:
@@ -2464,7 +2463,7 @@ class RealtimeEngine:
         pacat = shutil.which("pacat")
         if pacat is None:
             raise RuntimeError(
-                "neither pw-cat nor pacat found — install pipewire and pipewire-pulse"
+                "neither pw-cat nor pacat found - install pipewire and pipewire-pulse"
             )
         self._player_backend = "pacat"
         cmd = [
@@ -2505,7 +2504,7 @@ class RealtimeEngine:
 
     def _enqueue_chunk(self, payload: bytes) -> None:
         """Hand a write-ready byte payload to the writer thread. On a full
-        queue the engine has out-paced the writer/sink — bump the
+        queue the engine has out-paced the writer/sink - bump the
         queue_full counter (xrun proxy) and drop the chunk rather than
         block the engine main loop.
         """
@@ -2580,7 +2579,7 @@ class RealtimeEngine:
     def _stderr_reader_loop(self, proc: subprocess.Popen[bytes]) -> None:
         """Daemon thread: parses pacat -v stderr for underrun tokens.
 
-        Bound to a single pacat process — when it exits, readline returns
+        Bound to a single pacat process - when it exits, readline returns
         b'' and the thread terminates. The watchdog spawns a new reader
         for the replacement process.
 
@@ -2598,7 +2597,7 @@ class RealtimeEngine:
         # the player backend writes to stderr is also appended to that
         # path with a wall-clock timestamp. Zero overhead when the env
         # var is unset. Useful for forensic post-mortems of "the helper
-        # died at some point during a session" cases — we lose nothing
+        # died at some point during a session" cases - we lose nothing
         # to the existing parse-and-overwrite pattern.
         debug_log_path = os.environ.get("WOYS_HELPER_STDERR_LOG")
         debug_fp = None
@@ -2623,7 +2622,7 @@ class RealtimeEngine:
                     if "underrun" in line.lower():
                         self.stats.xruns += 1
                 elif is_native:
-                    # v0.9.0 — native helper emits:
+                    # v0.9.0 - native helper emits:
                     #   "ready"                      once after STREAMING
                     #   "quantum=N rate=M ..."       once after format negotiation
                     #   "underruns=N"                every UNDERRUN_REPORT_SECS
@@ -2639,22 +2638,22 @@ class RealtimeEngine:
                         # Surface the helper's hard-fail message to woys diag.
                         cause = f"native-pw: {s[len('error:') :].strip()}"
                         self.stats.last_error = cause
-                        # v0.11.0 — also push to helper_exit_reasons so the
+                        # v0.11.0 - also push to helper_exit_reasons so the
                         # watchdog's "respawned" message can't clobber the
                         # cause when the watchdog fires shortly after.
                         self.stats.helper_exit_reasons.append(cause)
                         if len(self.stats.helper_exit_reasons) > 10:
                             self.stats.helper_exit_reasons.pop(0)
-                # else: pw-cat or unknown — drain-only.
+                # else: pw-cat or unknown - drain-only.
         except (ValueError, OSError):
-            # Pipe closed mid-read during shutdown — expected.
+            # Pipe closed mid-read during shutdown - expected.
             return
         finally:
             if debug_fp is not None:
                 with contextlib.suppress(OSError):
                     debug_fp.close()
 
-    # ---- v0.11.0 — GPU clock lock + torch separate-stream keepalive ----------
+    # ---- v0.11.0 - GPU clock lock + torch separate-stream keepalive ----------
 
     def _resolve_anti_jitter_flags(self) -> tuple[bool, bool]:
         """Map `cfg.gpu_anti_jitter_mode` (the user-facing knob) to the
@@ -2672,7 +2671,7 @@ class RealtimeEngine:
             return True, False
         if mode == "both":
             return True, True
-        # Unknown value — log to last_error, fall back to off.
+        # Unknown value - log to last_error, fall back to off.
         self.stats.last_error = (
             f"unknown gpu_anti_jitter_mode={mode!r}; expected "
             f"off|keepalive|clock_lock|both. Falling back to off."
@@ -2750,7 +2749,7 @@ class RealtimeEngine:
         # The brief's hard constraint: clock-lock must use stock or
         # sub-stock values only. We treat `clocks.max.graphics` as
         # NVIDIA's documented stock ceiling for this card. If the user's
-        # explicit ceiling overshoots that, refuse — the assistant will
+        # explicit ceiling overshoots that, refuse - the assistant will
         # not enable an over-stock-spec lock.
         if max_graphics > 0 and ceiling > max_graphics:
             raise RuntimeError(
@@ -2771,9 +2770,7 @@ class RealtimeEngine:
             return False, "nvidia-smi not on PATH"
         cmd = ["sudo", "-n", "nvidia-smi", *args]
         try:
-            res = subprocess.run(
-                cmd, check=False, capture_output=True, text=True, timeout=timeout
-            )
+            res = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=timeout)
         except (OSError, subprocess.TimeoutExpired) as e:
             return False, f"{type(e).__name__}: {e}"
         out = (res.stdout or "").strip()
@@ -2787,7 +2784,7 @@ class RealtimeEngine:
         return True, merged
 
     def _apply_gpu_clock_lock(self) -> None:
-        """v0.11.0 — apply nvidia-smi -lgc <floor>,<ceiling>. Hard-fails
+        """v0.11.0 - apply nvidia-smi -lgc <floor>,<ceiling>. Hard-fails
         the engine start on any unexpected output / exit code. Also
         installs a SIGTERM/SIGINT handler so kill / Ctrl-C reverts the
         lock before the process exits."""
@@ -2810,31 +2807,29 @@ class RealtimeEngine:
         self.stats.gpu_clock_lock_ceiling_mhz = ceiling
 
         # Best-effort signal handler so SIGTERM / SIGINT revert the lock.
-        # SIGKILL cannot be caught — documented in docs/22-gpu-clock-lock.md.
+        # SIGKILL cannot be caught - documented in docs/22-gpu-clock-lock.md.
         # Only install handlers if we're on the main thread (signal.signal
         # raises ValueError otherwise; engine.start() runs in caller's thread
         # which is typically main but might not be in tests).
         if threading.current_thread() is threading.main_thread():
             for sig in (signal.SIGTERM, signal.SIGINT):
-                try:
+                # Some environments (Textual TUI inside async loop) don't
+                # let us install handlers; that's fine, engine.stop() will
+                # still revert on the normal exit path.
+                with contextlib.suppress(OSError, ValueError):
                     self._prior_signal_handlers[sig] = signal.signal(
                         sig, self._signal_handler_revert_lock
                     )
-                except (OSError, ValueError):
-                    # Some environments (Textual TUI inside async loop) don't
-                    # let us install handlers; that's fine, engine.stop() will
-                    # still revert on the normal exit path.
-                    pass
 
     def _revert_gpu_clock_lock(self) -> None:
-        """v0.11.0 — call nvidia-smi -rgc and restore prior signal
+        """v0.11.0 - call nvidia-smi -rgc and restore prior signal
         handlers. Idempotent (safe to call multiple times); a second call
         when the lock isn't active just no-ops."""
         if not self.stats.gpu_clock_lock_active:
             return
         ok, msg = self._run_nvidia_smi(["-rgc"], timeout=4.0)
         self.stats.gpu_clock_lock_last_message = msg[:200]
-        # Mark inactive whether or not the call succeeded — we don't want a
+        # Mark inactive whether or not the call succeeded - we don't want a
         # second engine start to try to "re-revert" on a stale state. If the
         # call failed, the user sees the error in last_message + last_error.
         self.stats.gpu_clock_lock_active = False
@@ -2854,11 +2849,9 @@ class RealtimeEngine:
         """SIGTERM / SIGINT handler that reverts the GPU clock lock and
         re-raises the default action so the process still exits cleanly.
         Best-effort: a SIGKILL bypasses this entirely."""
-        try:
+        # Don't let cleanup errors mask the original signal.
+        with contextlib.suppress(Exception):
             self._revert_gpu_clock_lock()
-        except Exception:
-            # Don't let cleanup errors mask the original signal.
-            pass
         # Restore default handler then re-raise so the process exits
         # the way the user asked.
         with contextlib.suppress(OSError, ValueError):
@@ -2866,21 +2859,21 @@ class RealtimeEngine:
         os.kill(os.getpid(), signum)
 
     def _torch_keepalive_loop(self) -> None:
-        """v0.11.0 — torch.cuda.Stream() based keepalive.
+        """v0.11.0 - torch.cuda.Stream() based keepalive.
 
         Replaces the rc3 ORT-stream keepalive when
         `gpu_keepalive_torch_stream=True` (or
         `gpu_anti_jitter_mode in {"keepalive","both"}`). The op is a tiny
         `tensor.add(1.0)` (1024 fp32 elements ≈ 50 µs of GPU work) issued
         on a torch CUDA stream that is NOT shared with ORT's session
-        stream — the GPU scheduler can interleave them without
+        stream - the GPU scheduler can interleave them without
         serialization, closing the rc3 contention regression.
 
         Failure-safe: any exception during stream creation or the hot
         loop logs to `stats.last_error` and exits the thread cleanly.
         Engine continues running without keepalive in that case."""
         try:
-            import torch  # noqa: PLC0415 — opt-in dep, late import
+            import torch
         except ImportError as e:
             self.stats.last_error = (
                 f"torch import failed; torch keepalive disabled: {e}. "
@@ -2896,12 +2889,11 @@ class RealtimeEngine:
             return
 
         try:
-            stream = torch.cuda.Stream()
+            stream = torch.cuda.Stream()  # type: ignore[no-untyped-call]  # torch's Stream stub lacks annotations
             buf = torch.empty(1024, device="cuda", dtype=torch.float32)
         except Exception as e:
             self.stats.last_error = (
-                f"torch keepalive setup failed; thread exiting: "
-                f"{type(e).__name__}: {e}"
+                f"torch keepalive setup failed; thread exiting: {type(e).__name__}: {e}"
             )
             return
 
@@ -2924,13 +2916,12 @@ class RealtimeEngine:
             try:
                 with torch.cuda.stream(stream):
                     buf = buf.add(1.0)
-                # Don't synchronize — we want the GPU command queue to
+                # Don't synchronize - we want the GPU command queue to
                 # absorb the op without blocking; the kernel launch alone
                 # is enough to keep the boost from idling.
             except Exception as e:
                 self.stats.last_error = (
-                    f"torch keepalive crash; retiring thread: "
-                    f"{type(e).__name__}: {e}"
+                    f"torch keepalive crash; retiring thread: {type(e).__name__}: {e}"
                 )
                 break
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
@@ -2942,7 +2933,7 @@ class RealtimeEngine:
             next_tick = max(next_tick + interval_s, time.perf_counter())
 
     def _keepalive_loop(self) -> None:
-        """v0.10.0-rc3 — periodic tiny ORT op to keep the GPU at boosted
+        """v0.10.0-rc3 - periodic tiny ORT op to keep the GPU at boosted
         clock state during the engine's idle gaps.
 
         Background: the v0.10.0-rc1/rc2 evidence (LESSONS §29) showed
@@ -2958,7 +2949,7 @@ class RealtimeEngine:
         with the engine's `_extract_feats` path; ORT serializes
         concurrent `session.run()` calls internally on the same
         CUDA stream, so this op queues if engine is busy and runs
-        if engine is idle — which is the desired behavior.
+        if engine is idle - which is the desired behavior.
 
         Cost: ~1-3 ms of GPU work per call. At 25 ms cadence that's
         ~5-12 % continuous GPU duty cycle. The intent is to keep
@@ -2984,7 +2975,7 @@ class RealtimeEngine:
             )
             return
 
-        # v0.10.0-rc3 — keepalive runs at lower priority than the engine
+        # v0.10.0-rc3 - keepalive runs at lower priority than the engine
         # main / writer; the audio path always wins same-class tie-breaks.
         self._apply_thread_priority(label="keepalive", priority=40)
 
@@ -3007,7 +2998,7 @@ class RealtimeEngine:
             try:
                 self._cv.run(["unit12"], {"audio": dummy_in})
             except Exception:
-                # Bail on persistent error — don't spam stats.last_error.
+                # Bail on persistent error - don't spam stats.last_error.
                 break
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             self.stats.keepalive_calls += 1
@@ -3045,7 +3036,7 @@ class RealtimeEngine:
                 time.sleep(0.5)
                 continue
             # B11 / corr-007: if stop fired while we were opening the new
-            # proc (a slow path — _open_pacat takes ~50-200 ms), do NOT
+            # proc (a slow path - _open_pacat takes ~50-200 ms), do NOT
             # install the new handle. Kill it instead so the engine's
             # finally-block teardown sees a stable `_pacat_proc` and the
             # new proc doesn't leak fds.
@@ -3058,7 +3049,7 @@ class RealtimeEngine:
                 # Discard the dead handle (caller already detected death).
                 self._pacat_proc = new_proc
             self.stats.player_restarts += 1
-            # v0.11.0 — preserve the helper's own death cause if the
+            # v0.11.0 - preserve the helper's own death cause if the
             # stderr reader captured one before the exit. If not, log
             # the watchdog's view (exit code + chunk index) so the user
             # can correlate. Either way, append to helper_exit_reasons
@@ -3094,7 +3085,7 @@ class RealtimeEngine:
         Called from inside whichever thread should be pinned; affinity /
         scheduling class are per-thread on Linux.
 
-        v0.7.0-rc11 — `realtime_priority=True` requests SCHED_FIFO at the
+        v0.7.0-rc11 - `realtime_priority=True` requests SCHED_FIFO at the
         given `priority` (default 60). On hosts with RLIMIT_RTPRIO ≥ 60
         (or CAP_SYS_NICE), the thread becomes non-preemptible by
         user-space SCHED_OTHER tasks (KDE compositing, picom, browser,
@@ -3103,7 +3094,7 @@ class RealtimeEngine:
 
         B19 / perf-009: writer thread now passes `priority=59` so the
         engine main thread (priority 60) wins SCHED_FIFO tie-breaks
-        without starving the writer. Same FIFO scheduler class — both
+        without starving the writer. Same FIFO scheduler class - both
         threads still preempt SCHED_OTHER background work.
         """
         # B28 + B47: shared `audio.priority` helpers; warnings append to
@@ -3126,7 +3117,7 @@ class RealtimeEngine:
         chunk_mic = int(self.cfg.mic_rate * self.cfg.chunk_seconds)
         # Reset SOLA buffers so a stop/start cycle doesn't leak stale audio.
         self.reset_streaming_state()
-        # v0.6.7 — fresh stateful resamplers. Built per `(src, dst)` pair so
+        # v0.6.7 - fresh stateful resamplers. Built per `(src, dst)` pair so
         # filter state survives across chunks; hot-swapped if the model SR
         # changes mid-session (see `_maybe_swap_model`).
         self._resampler_in = _StreamResampler(self.cfg.mic_rate, 16_000)
@@ -3144,7 +3135,7 @@ class RealtimeEngine:
             initial_proc = self._open_pacat()
             with self._pacat_lock:
                 self._pacat_proc = initial_proc
-            # v0.6.7 part 3 — prime the playback backend's stream buffer
+            # v0.6.7 part 3 - prime the playback backend's stream buffer
             # with `prime_silence_seconds` of zeros before any real audio.
             # Without priming, the buffer steady-state oscillates 0 → chunk
             # → 0 → chunk; engine writer jitter (~30 ms std) pushes the
@@ -3153,7 +3144,7 @@ class RealtimeEngine:
             # 1x chunk pre-roll, the buffer floor lifts above 0 and only
             # outsized jitter (>chunk_seconds) can underrun.
             # Trade-off: this adds prime_silence_seconds to mic-to-app
-            # wall-clock latency. Default 0.25 s matches chunk_seconds —
+            # wall-clock latency. Default 0.25 s matches chunk_seconds -
             # smallest pre-roll that fully bridges typical jitter.
             prime_n = int(self.cfg.sink_rate * self.cfg.prime_silence_seconds)
             if prime_n > 0 and initial_proc.stdin is not None:
@@ -3185,11 +3176,11 @@ class RealtimeEngine:
             )
             self._watchdog_thread.start()
 
-            # v0.10.0-rc3 — GPU keep-alive thread (default off). Spawns
+            # v0.10.0-rc3 - GPU keep-alive thread (default off). Spawns
             # only in legacy in-process mode where we own `_cv` directly;
             # the IPC subprocess mode keeps the GPU warm via its own
             # constant-rate inference and doesn't need the keepalive.
-            # v0.11.0 — torch separate-stream keepalive takes precedence
+            # v0.11.0 - torch separate-stream keepalive takes precedence
             # over the rc3 ORT-stream version when either is enabled. The
             # rc3 version remains as a no-torch fallback for environments
             # where torch isn't installed.
@@ -3206,14 +3197,12 @@ class RealtimeEngine:
                 and not self.cfg.inference_subprocess
                 and self._cv is not None
             ):
-                # Legacy rc3 ORT-stream keepalive — only spun up when
+                # Legacy rc3 ORT-stream keepalive - only spun up when
                 # torch keepalive is OFF AND the rc3 knob is explicitly
                 # set. Allocate the dummy input once, here, so the
                 # warmup pass in _keepalive_loop doesn't allocate on
                 # the hot path.
-                self._keepalive_input = np.zeros(
-                    self.cfg.gpu_keepalive_input_len, dtype=np.float32
-                )
+                self._keepalive_input = np.zeros(self.cfg.gpu_keepalive_input_len, dtype=np.float32)
                 self._keepalive_thread = threading.Thread(
                     target=self._keepalive_loop, name="woys-keepalive", daemon=True
                 )
@@ -3239,7 +3228,7 @@ class RealtimeEngine:
                     self.stats.last_error = f"monitor: {type(e).__name__}: {e}"
                     monitor_stream = None
 
-            # v0.7.0-rc4 — input-gate hysteresis state. The gate must
+            # v0.7.0-rc4 - input-gate hysteresis state. The gate must
             # observe ≥`input_gate_hysteresis_ms` of continuously-below
             # threshold input before it fires; voice transients (brief
             # dips between syllables, plosive onsets, fricative onsets)
@@ -3251,7 +3240,7 @@ class RealtimeEngine:
             # B31 / corr-016: documented disable sentinel is -200.0 dBFS;
             # use it. The pre-v0.8.0 `> -120.0` cutoff was a magic number
             # (and gave qualitatively-different behavior for -120.0 vs
-            # -119.999 — a value that should be a no-op kill threshold).
+            # -119.999 - a value that should be a no-op kill threshold).
             gate_thresh = (
                 10.0 ** (self.cfg.input_gate_dbfs / 20.0)
                 if self.cfg.input_gate_dbfs > -200.0
@@ -3264,14 +3253,14 @@ class RealtimeEngine:
                     # the next mic chunk. Owns _rvc on this thread, so no
                     # race with _infer below.
                     self._maybe_swap_model()
-                    # v0.7.0-rc4 — capture the overflow flag PortAudio
+                    # v0.7.0-rc4 - capture the overflow flag PortAudio
                     # returns when its internal ring buffer overran
                     # since the previous read. Pre-rc4 this was tuple-
                     # unpacked into `_` and lost; lens 01 of the audit
                     # flagged it as a silent mic-side drop site
                     # invisible to every existing counter.
                     #
-                    # v0.7.0-rc6 — wrapped with timing so we can attribute
+                    # v0.7.0-rc6 - wrapped with timing so we can attribute
                     # producer-side cadence variance to the mic read vs
                     # processing vs handoff. Steady-state mic_read_ms
                     # should hover near chunk_seconds * 1000; variance
@@ -3304,7 +3293,7 @@ class RealtimeEngine:
                     rms = float(np.sqrt(np.mean(audio**2)))
                     self.stats.last_input_rms = rms
 
-                    # v0.7.0-rc4 — gate with hysteresis. Below threshold
+                    # v0.7.0-rc4 - gate with hysteresis. Below threshold
                     # alone is no longer enough to fire; the gate has to
                     # see hysteresis_s of continuous below-threshold
                     # input first. Above threshold resets the timer.
@@ -3340,17 +3329,17 @@ class RealtimeEngine:
                     # Streaming path uses SOLA + input history (Phase B). When
                     # `sola_enabled=False`, _process_streaming_16k still routes
                     # the model call through the history buffer but skips the
-                    # crossfade — useful for A/B perf comparisons.
+                    # crossfade - useful for A/B perf comparisons.
                     out_native = self._safe_process_streaming_16k(audio16)
                     inf_ms = (time.perf_counter() - t_inf) * 1000
 
                     if out_native is None or out_native.shape[0] == 0:
-                        # `None`: inference raised — `_safe_*` already
+                        # `None`: inference raised - `_safe_*` already
                         # bumped `stats.dropped_chunks` and updated
                         # `stats.last_error`. Skip the write; SOLA's
                         # held-back tail covers the gap on resume.
                         # `shape[0] == 0`: first-chunk warmup or
-                        # resampler buffer fill — emit nothing yet.
+                        # resampler buffer fill - emit nothing yet.
                         continue
 
                     # `out_native` is at the loaded RVC model's native sample
@@ -3366,14 +3355,14 @@ class RealtimeEngine:
                     if out48.size == 0:
                         # Soxr stream might emit nothing on the very first
                         # chunk while the internal buffer fills. Skip the
-                        # write — the next chunk will produce extra samples.
+                        # write - the next chunk will produce extra samples.
                         continue
 
                     # v0.5.2: hand off to writer thread (non-blocking enqueue).
-                    # The watchdog respawns pacat if it dies — main loop
+                    # The watchdog respawns pacat if it dies - main loop
                     # never raises out of the loop on a transient pacat fault.
                     #
-                    # v0.7.0-rc6 — wrapped with timing. enqueue_lag_ms
+                    # v0.7.0-rc6 - wrapped with timing. enqueue_lag_ms
                     # covers _to_sink_bytes (numpy convert) + put_nowait
                     # (queue insert). Should be sub-ms in steady state;
                     # spikes mean GC pause / GIL contention / queue
@@ -3385,17 +3374,17 @@ class RealtimeEngine:
                     self.stats.last_enqueue_lag_ms = enq_lag_ms
                     self.stats._recent_enqueue_lag_ms.append(enq_lag_ms)
 
-                    # v0.7.0-rc5 — pull SOLA's threshold-fallback count
+                    # v0.7.0-rc5 - pull SOLA's threshold-fallback count
                     # into engine stats. The rc4 `sola_drain_ms` (zero-
                     # pad bookkeeping) is gone because the pad itself is
-                    # gone — SOLA emits constant-size chunks now. A
+                    # gone - SOLA emits constant-size chunks now. A
                     # non-zero fallback count means the alignment search
                     # is giving up (peak corr below threshold); it's a
                     # diagnostic, not a cuts driver.
                     if self._sola is not None:
                         self.stats.sola_fallback_count = self._sola.fallback_count
 
-                    # v0.13.1 — live toggle: engine reads self.cfg.monitor
+                    # v0.13.1 - live toggle: engine reads self.cfg.monitor
                     # each iteration and opens/closes the monitor stream
                     # as needed. Lets the TUI's 'm' keybind take effect
                     # without an engine restart (~5 s of session loss).
@@ -3438,7 +3427,7 @@ class RealtimeEngine:
                         self.stats.max_total_ms = total_ms
                     if total_ms > self.cfg.chunk_seconds * 1000.0:
                         self.stats.late_chunks += 1
-                        # v0.6.9 round 5 — capture per-stage breakdown for
+                        # v0.6.9 round 5 - capture per-stage breakdown for
                         # postmortem of which session caused the outlier.
                         # Capped at 50 entries so memory doesn't grow without
                         # bound on a degraded GPU.
@@ -3455,9 +3444,9 @@ class RealtimeEngine:
                         )
                         if len(self.stats.slow_chunk_log) > 50:
                             self.stats.slow_chunk_log.pop(0)
-                    # v0.7.0-rc8 — tail-chunk capture, gated on inference
+                    # v0.7.0-rc8 - tail-chunk capture, gated on inference
                     # time alone (not total_ms). Fires when inf_ms is more
-                    # than 2× the running p50 of `_recent_inference`, which
+                    # than 2x the running p50 of `_recent_inference`, which
                     # has been pre-this-chunk's-append at the bottom of the
                     # loop. Skip until the deque has ≥16 prior samples so
                     # the threshold is stable. Captures input-shape and

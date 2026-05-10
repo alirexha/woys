@@ -1,30 +1,29 @@
-"""`.vcprofile` — shareable voice profile bundles (no model weights).
+"""`.vcprofile` - shareable voice profile bundles (no model weights).
 
 A `.vcprofile` is just a TOML file with three top-level tables:
 
-  [meta]              — format version, woys version, author hint
-  [profile]           — full snapshot of the profile fields (same keys as
+  [meta]              - format version, woys version, author hint
+  [profile]           - full snapshot of the profile fields (same keys as
                         the `[profiles.<name>]` section in config.toml)
-  [model]             — file name (basename) + SHA-256 of the .onnx the
+  [model]             - file name (basename) + SHA-256 of the .onnx the
                         profile expects. Importer uses the hash to locate
                         the matching local file in the model library, or to
                         complain if the user is missing it.
 
-Crucially, the profile *does not bundle the model weights* — those are user-
+Crucially, the profile *does not bundle the model weights* - those are user-
 contributed and license-encumbered. Sharing a .vcprofile says "use *that*
 voice with *these* settings (pitch, sid, chunks, etc.)"; the receiver still
 needs the matching .onnx in their library (verified via SHA-256).
 
 Format version: 1.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
 
 import hashlib
 import sys
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -81,7 +80,7 @@ def export_profile(name: str, output: Path, *, config_path: Path | None = None) 
             "missing": True,
         }
 
-    # Drop the absolute path from the on-the-wire profile — the receiver will
+    # Drop the absolute path from the on-the-wire profile - the receiver will
     # resolve via the model library.
     snap.pop("rvc_model", None)
 
@@ -128,15 +127,14 @@ def import_profile(
     from tui.config import CONFIG_FILE, load_config, save_config
     from woys.models import MODELS_DIR as DEFAULT_MODELS_DIR
     from woys.models import discover_models
-    from woys.profiles import save_profile
 
-    # v0.6.8 — guard against malformed .vcprofile so a single bad export
+    # v0.6.8 - guard against malformed .vcprofile so a single bad export
     # file doesn't crash the import flow with a stack trace.
     try:
         with path.open("rb") as f:
             raw = tomllib.load(f)
     except tomllib.TOMLDecodeError as e:
-        raise ValueError(f"{path} is malformed TOML — cannot import. Parse error: {e}") from e
+        raise ValueError(f"{path} is malformed TOML - cannot import. Parse error: {e}") from e
     except OSError as e:
         raise ValueError(f"cannot read {path} ({type(e).__name__}: {e})") from e
 
@@ -187,7 +185,7 @@ def import_profile(
     # B30 / corr-014: build the snapshot directly. The pre-v0.8.0 code
     # called `save_profile(cfg, name)` first (which snapshotted the
     # CURRENT cfg, not snap_in's data) and then immediately overwrote
-    # the result — dead code with a side effect that left an
+    # the result - dead code with a side effect that left an
     # intermediate-state profile in `cfg._extras` for the millisecond
     # between the save_profile and the bag overwrite.
     from tui.config import AppConfig

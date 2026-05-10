@@ -37,15 +37,15 @@ def test_ensure_pipewire_passes_on_host() -> None:
 def test_virtual_mic_round_trip() -> None:
     vm = VirtualMic()
 
-    # v0.6.6 — snapshot the host's pre-test state so we can restore it.
+    # v0.6.6 - snapshot the host's pre-test state so we can restore it.
     # Before this guard, running pytest on a real desktop wiped the user's
-    # active virtual mic — the test's final teardown left them without
+    # active virtual mic - the test's final teardown left them without
     # `woys-mic` and Discord / CS2 lost their input device until the next
     # `systemctl --user restart woys-mic.service`. Tests must not bite
     # the hand that runs them.
     pretest_state = get_state()
     try:
-        # Make sure we start clean — earlier runs / orphans get cleared.
+        # Make sure we start clean - earlier runs / orphans get cleared.
         vm.teardown()
         initial = get_state()
         assert not initial.fully_present
@@ -57,7 +57,7 @@ def test_virtual_mic_round_trip() -> None:
             assert state.source_module_id is not None
 
             # Verify Discord/CS2-visible names appear in pactl listings.
-            # v0.13.1 — match exact tab-separated name. Substring match
+            # v0.13.1 - match exact tab-separated name. Substring match
             # was brittle once v0.13.0 added a `woys-mic-clean` source
             # whose name contains `woys-mic` (the v0.6.5 / v0.12.x
             # virtual-mic name).
@@ -74,7 +74,7 @@ def test_virtual_mic_round_trip() -> None:
             assert _has_named(sources, SOURCE_NAME), sources
             assert _has_named(sinks, SINK_NAME), sinks
 
-            # Idempotent — second ensure returns same module IDs.
+            # Idempotent - second ensure returns same module IDs.
             again = vm.ensure()
             assert again.sink_module_id == state.sink_module_id
             assert again.source_module_id == state.source_module_id
@@ -93,12 +93,10 @@ def test_virtual_mic_round_trip() -> None:
                     return True
             return False
 
-        assert not _has_named(sources, SOURCE_NAME), (
-            f"orphan source after teardown: {sources}"
-        )
+        assert not _has_named(sources, SOURCE_NAME), f"orphan source after teardown: {sources}"
         assert not _has_named(sinks, SINK_NAME), f"orphan sink after teardown: {sinks}"
     finally:
-        # Restore the host's pre-test state — if the user had the mic loaded
+        # Restore the host's pre-test state - if the user had the mic loaded
         # before the test started, give it back to them.
         if pretest_state.fully_present:
             vm.ensure()

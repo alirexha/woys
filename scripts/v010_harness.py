@@ -18,9 +18,9 @@ What the harness does
    to `--out` as JSON. Designed to be diffed across runs / branches.
 
 The signal is a 1.5-second loop of:
-  - 0.500 s voiced (sine + low pink noise) at RMS ≈ 0.10  — gate stays on
-  - 0.200 s unvoiced (white noise) at RMS ≈ 0.05         — pitch path goes silent
-  - 0.100 s silence                                       — gate eventually fires
+  - 0.500 s voiced (sine + low pink noise) at RMS ≈ 0.10  - gate stays on
+  - 0.200 s unvoiced (white noise) at RMS ≈ 0.05         - pitch path goes silent
+  - 0.100 s silence                                       - gate eventually fires
   - 0.700 s voiced (different pitch)
   Loop frequency: 0.667 Hz; covers gate transitions + RMVPE pitch
   changes, which are two of the brief's candidate jitter sources.
@@ -63,13 +63,10 @@ Output schema (stable for diff-based regression)
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import math
-import os
 import subprocess
 import sys
-import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -91,10 +88,10 @@ def _build_signal(duration_s: float, sample_rate: int, *, seed: int = 42) -> np.
     """One contiguous mono float32 buffer covering `duration_s` seconds.
 
     Loops a 1.5 s pattern that exercises:
-      [0.0–0.5)  voiced sine 220 Hz + 1/f noise   (RMS ≈ 0.10)
-      [0.5–0.7)  white noise                      (RMS ≈ 0.05)
-      [0.7–0.8)  silence
-      [0.8–1.5)  voiced sine 330 Hz + 1/f noise   (RMS ≈ 0.12)
+      [0.0-0.5)  voiced sine 220 Hz + 1/f noise   (RMS ≈ 0.10)
+      [0.5-0.7)  white noise                      (RMS ≈ 0.05)
+      [0.7-0.8)  silence
+      [0.8-1.5)  voiced sine 330 Hz + 1/f noise   (RMS ≈ 0.12)
 
     Pitch alternation forces the RMVPE network through different f0
     bins (candidate #4 in the v0.10 brief). Voiced/unvoiced/silence
@@ -103,12 +100,12 @@ def _build_signal(duration_s: float, sample_rate: int, *, seed: int = 42) -> np.
     """
     rng = np.random.default_rng(seed)
     pattern_s = 1.5
-    n_pattern = int(round(pattern_s * sample_rate))
+    n_pattern = round(pattern_s * sample_rate)
     pattern = np.zeros(n_pattern, dtype=np.float32)
 
     def _voiced(start_s: float, end_s: float, freq_hz: float, rms: float) -> None:
-        i0 = int(round(start_s * sample_rate))
-        i1 = int(round(end_s * sample_rate))
+        i0 = round(start_s * sample_rate)
+        i1 = round(end_s * sample_rate)
         n = i1 - i0
         if n <= 0:
             return
@@ -128,8 +125,8 @@ def _build_signal(duration_s: float, sample_rate: int, *, seed: int = 42) -> np.
         pattern[i0:i1] = mix
 
     def _white(start_s: float, end_s: float, rms: float) -> None:
-        i0 = int(round(start_s * sample_rate))
-        i1 = int(round(end_s * sample_rate))
+        i0 = round(start_s * sample_rate)
+        i1 = round(end_s * sample_rate)
         n = i1 - i0
         if n <= 0:
             return
@@ -145,7 +142,7 @@ def _build_signal(duration_s: float, sample_rate: int, *, seed: int = 42) -> np.
     _voiced(0.8, 1.5, freq_hz=330.0, rms=0.12)
 
     # Tile out to the requested duration.
-    n_total = int(round(duration_s * sample_rate))
+    n_total = round(duration_s * sample_rate)
     n_loops = math.ceil(n_total / n_pattern)
     out = np.tile(pattern, n_loops)[:n_total]
     return out.astype(np.float32, copy=False)
@@ -183,7 +180,7 @@ class _MockInputStream:
         self._next_read_at: float | None = None
 
     # Context manager protocol; engine uses `with in_stream:`.
-    def __enter__(self) -> "_MockInputStream":
+    def __enter__(self) -> _MockInputStream:
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -199,7 +196,7 @@ class _MockInputStream:
             time.sleep(self._next_read_at - now)
             self._next_read_at = self._next_read_at + self._chunk_seconds
         else:
-            # Fell behind — schedule the next one from "now" rather than
+            # Fell behind - schedule the next one from "now" rather than
             # bursting to catch up. Realistic mic behavior.
             self._next_read_at = time.perf_counter() + self._chunk_seconds
 
@@ -294,7 +291,7 @@ def _stats_dict(engine: Any, *, chunk_ms_target: float) -> dict[str, Any]:
         "unwarmed_shapes": sorted(s.unique_audio16_lens - s.warmup_audio16_lens),
         "n_inference_samples": len(inf),
         "n_writer_samples": len(wri),
-        # v0.10.0-rc3 — GPU keepalive observability.
+        # v0.10.0-rc3 - GPU keepalive observability.
         "keepalive_calls": int(s.keepalive_calls),
         "keepalive_avg_ms": float(s.keepalive_avg_ms),
         "keepalive_p50_ms": _pct(list(s._recent_keepalive_ms), 50)
@@ -303,7 +300,7 @@ def _stats_dict(engine: Any, *, chunk_ms_target: float) -> dict[str, Any]:
         "keepalive_p99_ms": _pct(list(s._recent_keepalive_ms), 99)
         if s._recent_keepalive_ms
         else 0.0,
-        # v0.11.0 — torch keepalive + clock lock
+        # v0.11.0 - torch keepalive + clock lock
         "torch_keepalive_calls": int(getattr(s, "torch_keepalive_calls", 0)),
         "torch_keepalive_p50_ms": _pct(list(getattr(s, "_recent_torch_keepalive_ms", []) or []), 50)
         if getattr(s, "_recent_torch_keepalive_ms", None)
@@ -345,12 +342,14 @@ def _run_engine_synthetic(
         sid=cfg.sid,
         chunk_seconds=chunk_seconds if chunk_seconds is not None else cfg.chunk_seconds,
         sink_name=cfg.sink_name,
-        monitor=False,  # never self-monitor — would block on default device
+        monitor=False,  # never self-monitor - would block on default device
         output_latency_ms=cfg.output_latency_ms,
         output_process_time_ms=cfg.output_process_time_ms,
         embedder=cfg.embedder,
         sola_enabled=enable_sola,
-        sola_crossfade_ms=sola_crossfade_ms if sola_crossfade_ms is not None else cfg.sola_crossfade_ms,
+        sola_crossfade_ms=sola_crossfade_ms
+        if sola_crossfade_ms is not None
+        else cfg.sola_crossfade_ms,
         sola_search_ms=sola_search_ms if sola_search_ms is not None else cfg.sola_search_ms,
         sola_context_ms=sola_context_ms if sola_context_ms is not None else cfg.sola_context_ms,
         input_gain_db=cfg.input_gain_db,
@@ -381,7 +380,7 @@ def _run_engine_synthetic(
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path
 
-    chunk_mic_frames = int(round(engine_cfg.chunk_seconds * engine_cfg.mic_rate))
+    chunk_mic_frames = round(engine_cfg.chunk_seconds * engine_cfg.mic_rate)
     print(
         f"[harness] generating {duration_s:.0f}s signal at {engine_cfg.mic_rate} Hz "
         f"(chunk_mic={chunk_mic_frames} frames)",
@@ -392,7 +391,9 @@ def _run_engine_synthetic(
     # Monkey-patch sounddevice.InputStream BEFORE the engine constructs one.
     import sounddevice as sd
 
-    def _make_mock(*, samplerate: int, channels: int, blocksize: int, **kwargs: Any) -> _MockInputStream:
+    def _make_mock(
+        *, samplerate: int, channels: int, blocksize: int, **kwargs: Any
+    ) -> _MockInputStream:
         return _MockInputStream(
             samplerate=samplerate,
             channels=channels,
@@ -434,9 +435,7 @@ def _run_engine_synthetic(
                 last_print = now
             if engine.stats.last_error and "respawned" not in (engine.stats.last_error or ""):
                 # Surface fatal errors immediately; shorten the run.
-                print(
-                    f"[harness] engine error mid-run: {engine.stats.last_error}", file=sys.stderr
-                )
+                print(f"[harness] engine error mid-run: {engine.stats.last_error}", file=sys.stderr)
     finally:
         engine.stop(timeout=3.0)
 
@@ -472,7 +471,7 @@ def _print_summary(out: dict[str, Any]) -> None:
         f"  underrun rate           {s['player_underruns'] / max(out['duration_s'], 1):.2f}/sec  "
         f"(acceptance gate ≤ 0.5/sec)"
     )
-    print(f"  writer_jitter σ         {s['writer_jitter_ms_stddev']:.1f} ms")
+    print(f"  writer_jitter σ         {s['writer_jitter_ms_stddev']:.1f} ms")  # noqa: RUF001  # sigma symbol (statistics)
     print(
         f"  writer_interval p50/p95/p99  {s['writer_interval_p50_ms']:.1f} / "
         f"{s['writer_interval_p95_ms']:.1f} / {s['writer_interval_p99_ms']:.1f} ms  "
@@ -487,22 +486,12 @@ def _print_summary(out: dict[str, Any]) -> None:
         f"{s['inference_p95_ms']:.1f} / {s['inference_p99_ms']:.1f} / "
         f"{s['inference_max_ms']:.1f} ms"
     )
-    print(
-        f"   .cv      p50/p99   {s['cv_p50_ms']:.1f} / {s['cv_p99_ms']:.1f} ms"
-    )
-    print(
-        f"   .rmvpe   p50/p99   {s['rmvpe_p50_ms']:.1f} / {s['rmvpe_p99_ms']:.1f} ms"
-    )
-    print(
-        f"   .rvc     p50/p99   {s['rvc_p50_ms']:.1f} / {s['rvc_p99_ms']:.1f} ms"
-    )
+    print(f"   .cv      p50/p99   {s['cv_p50_ms']:.1f} / {s['cv_p99_ms']:.1f} ms")
+    print(f"   .rmvpe   p50/p99   {s['rmvpe_p50_ms']:.1f} / {s['rmvpe_p99_ms']:.1f} ms")
+    print(f"   .rvc     p50/p99   {s['rvc_p50_ms']:.1f} / {s['rvc_p99_ms']:.1f} ms")
     if "rvc_run_p50_ms" in s:
-        print(
-            f"     .rvc_pre   p50/p99   {s['rvc_pre_p50_ms']:.1f} / {s['rvc_pre_p99_ms']:.1f} ms"
-        )
-        print(
-            f"     .rvc_run   p50/p99   {s['rvc_run_p50_ms']:.1f} / {s['rvc_run_p99_ms']:.1f} ms"
-        )
+        print(f"     .rvc_pre   p50/p99   {s['rvc_pre_p50_ms']:.1f} / {s['rvc_pre_p99_ms']:.1f} ms")
+        print(f"     .rvc_run   p50/p99   {s['rvc_run_p50_ms']:.1f} / {s['rvc_run_p99_ms']:.1f} ms")
         print(
             f"     .rvc_post  p50/p99   {s['rvc_post_p50_ms']:.1f} / {s['rvc_post_p99_ms']:.1f} ms"
         )
@@ -534,7 +523,9 @@ def _print_summary(out: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--duration", type=float, default=60.0, help="seconds")
     parser.add_argument("--out", type=Path, default=None, help="output JSON path")
     parser.add_argument("--no-sola", action="store_true", help="disable SOLA crossfade")
@@ -557,7 +548,7 @@ def main() -> int:
         default="off",
         help="v0.11.0 anti-jitter mode: off / keepalive (torch stream) / clock_lock (sudo nvidia-smi) / both",
     )
-    # v0.12.0 — SOLA-param overrides for the Phase 2 A/B sweep.
+    # v0.12.0 - SOLA-param overrides for the Phase 2 A/B sweep.
     parser.add_argument("--sola-crossfade-ms", type=float, default=None)
     parser.add_argument("--sola-search-ms", type=float, default=None)
     parser.add_argument("--sola-context-ms", type=float, default=None)

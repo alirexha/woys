@@ -15,10 +15,10 @@ This script isolates suspect 2 by driving pacat at the engine's
 cadence WITHOUT going through the engine. It writes silence chunks at
 150 ms intervals and captures per-stage timing:
 
-  write_ms    — wall time spent in `proc.stdin.write(payload)`
-  flush_ms    — wall time spent in `proc.stdin.flush()`
-  total_ms    — write_ms + flush_ms
-  interval_ms — wall time between successive write-completes
+  write_ms    - wall time spent in `proc.stdin.write(payload)`
+  flush_ms    - wall time spent in `proc.stdin.flush()`
+  total_ms    - write_ms + flush_ms
+  interval_ms - wall time between successive write-completes
 
 If write+flush variance dominates `interval_ms` variance, the pipe is
 the bottleneck and `fcntl(F_SETPIPE_SZ)` is the candidate fix. If
@@ -47,7 +47,7 @@ import time
 
 import numpy as np
 
-# Linux F_SETPIPE_SZ value — request the kernel resize a pipe.
+# Linux F_SETPIPE_SZ value - request the kernel resize a pipe.
 F_SETPIPE_SZ = 1031
 
 
@@ -239,7 +239,7 @@ def main() -> int:
     parser.add_argument(
         "--compare-pipe-sizes",
         action="store_true",
-        help="Run twice — once with default pipe size, once with 1 MB — "
+        help="Run twice - once with default pipe size, once with 1 MB - "
         "to A/B test whether F_SETPIPE_SZ is the candidate rc6 fix.",
     )
     args = parser.parse_args()

@@ -82,7 +82,7 @@ def test_import_resolves_model_by_sha(tmp_path: Path, monkeypatch: pytest.Monkey
 
     receiver_models = tmp_path / "receiver_models"
     receiver_models.mkdir()
-    # Receiver renamed it locally — same content, different name.
+    # Receiver renamed it locally - same content, different name.
     _write_dummy_onnx(receiver_models / "myvoice_renamed.onnx", voice_payload)
 
     cfg_path = tmp_path / "config.toml"
@@ -130,7 +130,7 @@ def test_import_resolves_model_by_sha(tmp_path: Path, monkeypatch: pytest.Monkey
 def test_import_missing_model_leaves_rvc_unset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Receiver has no matching .onnx — import should still succeed but
+    """Receiver has no matching .onnx - import should still succeed but
     leave rvc_model empty + warn."""
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 

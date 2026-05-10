@@ -16,7 +16,7 @@ def test_hann_fade_sums_to_one() -> None:
     fo, fi = _hann_fade(64)
     assert fo.shape == (64,)
     assert fi.shape == (64,)
-    # Hann pair must sum to 1 everywhere — that's the whole point.
+    # Hann pair must sum to 1 everywhere - that's the whole point.
     assert np.allclose(fo + fi, 1.0, atol=1e-6)
     # Endpoints: starts at (1, 0), ends near (0, 1).
     assert fo[0] > 0.99 and fi[0] < 0.01
@@ -95,7 +95,7 @@ def test_sola_first_chunk_emits_chunk_n() -> None:
 
 
 def test_sola_no_nan_or_clip_on_random_stream() -> None:
-    """Process a random-noise stream — output must stay finite and bounded
+    """Process a random-noise stream - output must stay finite and bounded
     by the input's amplitude (Hann fades sum to 1, so no gain explosion)."""
     rng = np.random.default_rng(seed=1)
     cfg = SOLAConfig(rate=16_000, crossfade_ms=30.0, search_ms=3.0)
@@ -161,7 +161,7 @@ def test_sola_emit_length_constant_across_offsets() -> None:
 
 def test_sola_emit_is_signal_not_zeros() -> None:
     """v0.7.0-rc5 contract guarantees output length without padding silence.
-    A non-silent input must produce a non-silent emit — there must be NO
+    A non-silent input must produce a non-silent emit - there must be NO
     trailing zero-pad region. This is the test that would have caught the
     rc4 zero-pad regression: rc4 emitted chunk_n samples but with a known-
     silence suffix, producing audible cuts. rc5 must not."""
@@ -176,7 +176,7 @@ def test_sola_emit_is_signal_not_zeros() -> None:
     # Warmup with random noise (creates prev_tail).
     sola.process(rng.standard_normal(chunk_sz).astype(np.float32))
 
-    # Non-silent chunk — every sample is loud noise, no zeros.
+    # Non-silent chunk - every sample is loud noise, no zeros.
     loud_chunk = (0.5 * rng.standard_normal(chunk_sz)).astype(np.float32)
     out = sola.process(loud_chunk)
 

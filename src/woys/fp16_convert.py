@@ -6,16 +6,16 @@ Halves the on-disk size of `rmvpe_wrapped.onnx` and (optionally)
 
 Quality notes (validated on this CachyOS / RTX 2070 host):
 
-  * **rmvpe (pitch detector)** — fp16 inference produces pitch values within
+  * **rmvpe (pitch detector)** - fp16 inference produces pitch values within
     0.1 Hz of the fp32 baseline on a 220 Hz sustained voiced test. Safe to
     promote by default.
-  * **contentvec (content encoder)** — fp16 inference produces feats with
+  * **contentvec (content encoder)** - fp16 inference produces feats with
     cosine similarity ~0.75 vs fp32, which is *low enough* to materially
     change RVC voice quality downstream. **Not promoted by default**; the
     `--include-contentvec` flag emits the file but the engine still loads
     fp32 unless the user explicitly points `contentvec_model` at it.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ def convert_contentvec(models_dir: Path = MODELS_DIR, *, force: bool = False) ->
         print(f"  [skip] {dst.name} already present ({dst.stat().st_size / 1024 / 1024:.1f} MiB)")
         return dst
     print(
-        "  [warn] contentvec fp16 lowers quality (cosine ~0.75 vs fp32) — "
+        "  [warn] contentvec fp16 lowers quality (cosine ~0.75 vs fp32) - "
         "not auto-loaded by the engine; point contentvec_model at it explicitly."
     )
     sz = _convert_one(src, dst)
@@ -101,7 +101,7 @@ def _main() -> int:
     p.add_argument(
         "--include-contentvec",
         action="store_true",
-        help="also fp16-convert contentvec (lower quality — not auto-loaded)",
+        help="also fp16-convert contentvec (lower quality - not auto-loaded)",
     )
     p.add_argument("--force", action="store_true", help="overwrite existing fp16 files")
     args = p.parse_args()

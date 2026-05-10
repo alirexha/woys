@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""v0.12.3 — comprehensive parameter sweep, intelligent (Phase 1 individual,
+"""v0.12.3 - comprehensive parameter sweep, intelligent (Phase 1 individual,
 Phase 2 cartesian top-2), serial-ID-based recording (the v0.12.2 fix).
 
 Output: ranked table (cuts/min, autocorr at chunk-period, latency cost),
@@ -8,7 +8,7 @@ top-3 raw WAVs, best-config recommendation.
 Single-process execution (engine + GPU + PipeWire route are shared
 single-resource; parallel harnesses would mix audio in WoysSink and
 contend for CUDA). Phase 1 ≈ 20 configs, Phase 2 ≈ 25 configs, plus 3
-baseline repeats for noise floor → ~50 runs × ~45 s = ~40 min wall.
+baseline repeats for noise floor → ~50 runs x ~45 s = ~40 min wall.
 """
 
 from __future__ import annotations
@@ -19,9 +19,7 @@ import re
 import shutil
 import signal
 import subprocess
-import sys
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +38,7 @@ BASELINE: dict[str, float] = {
     "sola_context_ms": 100.0,
 }
 
-# Phase 1 — sweep each parameter individually with the others at baseline.
+# Phase 1 - sweep each parameter individually with the others at baseline.
 PHASE1: dict[str, list[float]] = {
     "chunk_seconds": [0.10, 0.125, 0.15, 0.175, 0.20, 0.25],
     "sola_search_ms": [4.0, 6.0, 8.0, 12.0, 16.0],
@@ -49,9 +47,10 @@ PHASE1: dict[str, list[float]] = {
     "sola_context_ms": [50.0, 100.0, 150.0, 200.0],
 }
 
+
 # v0.11.0 baseline e2e latency: ~540 ms (chunk 150 + inference 80 +
 # native-pw 170 + codec 30 ≈ 430 + 110 = 540). Latency penalty for a
-# config = (chunk_seconds - 0.15) × 1000 ms. SOLA-context affects the
+# config = (chunk_seconds - 0.15) x 1000 ms. SOLA-context affects the
 # input-history buffer and can add a few ms to inference but the
 # chunk_seconds is the dominant lever.
 def latency_penalty_ms(config: dict[str, float]) -> float:
@@ -59,11 +58,14 @@ def latency_penalty_ms(config: dict[str, float]) -> float:
 
 
 def woys_sink_monitor_serial() -> int:
-    """pactl serial id of WoysSink.monitor — re-resolved per run because
+    """pactl serial id of WoysSink.monitor - re-resolved per run because
     a pw teardown/setup cycle can change it."""
     out = subprocess.run(
         ["pactl", "list", "short", "sources"],
-        capture_output=True, text=True, check=True, timeout=5,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=5,
     )
     for line in out.stdout.splitlines():
         parts = line.split("\t")
@@ -84,27 +86,48 @@ def run_config(config: dict[str, float], label: str, duration_s: float = 30.0) -
 
     # Spawn pw-record before harness so we don't miss the first chunks.
     rec_proc = subprocess.Popen(
-        ["pw-record", f"--target={serial}", "--rate=48000",
-         "--channels=2", "--format=f32", str(wav_path)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        [
+            "pw-record",
+            f"--target={serial}",
+            "--rate=48000",
+            "--channels=2",
+            "--format=f32",
+            str(wav_path),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     time.sleep(0.5)
 
     cmd = [
         str(REPO / ".venv" / "bin" / "python"),
         str(REPO / "scripts" / "v012_1_tts_run.py"),
-        "--duration", str(duration_s),
-        "--anti-jitter-mode", "both",
-        "--out", str(json_path),
-        "--chunk-seconds", str(config["chunk_seconds"]),
-        "--sola-crossfade-ms", str(config["sola_crossfade_ms"]),
-        "--sola-search-ms", str(config["sola_search_ms"]),
-        "--sola-context-ms", str(config["sola_context_ms"]),
-        "--sola-corr-threshold", str(config["sola_corr_threshold"]),
+        "--duration",
+        str(duration_s),
+        "--anti-jitter-mode",
+        "both",
+        "--out",
+        str(json_path),
+        "--chunk-seconds",
+        str(config["chunk_seconds"]),
+        "--sola-crossfade-ms",
+        str(config["sola_crossfade_ms"]),
+        "--sola-search-ms",
+        str(config["sola_search_ms"]),
+        "--sola-context-ms",
+        str(config["sola_context_ms"]),
+        "--sola-corr-threshold",
+        str(config["sola_corr_threshold"]),
     ]
     with log_path.open("wb") as logf:
-        subprocess.run(cmd, stdout=logf, stderr=subprocess.STDOUT,
-                       check=True, cwd=str(REPO), timeout=duration_s + 90)
+        subprocess.run(
+            cmd,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            check=True,
+            cwd=str(REPO),
+            timeout=duration_s + 90,
+        )
 
     time.sleep(1.0)
     rec_proc.send_signal(signal.SIGINT)
@@ -130,18 +153,29 @@ def analyze_wav(wav_path: Path, config: dict[str, float], label: str) -> dict[st
     diag_events: int = -1
     try:
         out = subprocess.run(
-            ["woys-diag", "analyze", str(wav_path),
-             "--duration", "30", "--source", label, "--no-spectrogram"],
-            capture_output=True, text=True, timeout=60, check=False,
+            [
+                "woys-diag",
+                "analyze",
+                str(wav_path),
+                "--duration",
+                "30",
+                "--source",
+                label,
+                "--no-spectrogram",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
         )
         # The verdict line OR the events line gives /min.
-        # "150 events across 72s (124.3/min)" — pull "/min" pattern.
+        # "150 events across 72s (124.3/min)" - pull "/min" pattern.
         m = re.search(r"(\d+)\s+events\s+across\s+\d+s\s*\((\d+\.\d+)/min\)", out.stdout)
         if m:
             diag_events = int(m.group(1))
             cuts_per_min = float(m.group(2))
         else:
-            # Could be "Audio is clean" — explicit zero.
+            # Could be "Audio is clean" - explicit zero.
             if "Audio is clean" in out.stdout:
                 diag_events = 0
                 cuts_per_min = 0.0
@@ -151,13 +185,20 @@ def analyze_wav(wav_path: Path, config: dict[str, float], label: str) -> dict[st
     # Spectral autocorrelation at chunk_period.
     autocorr_at_chunk: float = float("nan")
     try:
-        chunk_ms = int(round(config["chunk_seconds"] * 1000))
+        chunk_ms = round(config["chunk_seconds"] * 1000)
         out = subprocess.run(
-            [str(REPO / ".venv" / "bin" / "python"),
-             str(REPO / "scripts" / "v012_spectral_flux.py"),
-             str(wav_path), "--no-plot",
-             "--chunk-seconds", str(config["chunk_seconds"])],
-            capture_output=True, text=True, timeout=60, check=False,
+            [
+                str(REPO / ".venv" / "bin" / "python"),
+                str(REPO / "scripts" / "v012_spectral_flux.py"),
+                str(wav_path),
+                "--no-plot",
+                "--chunk-seconds",
+                str(config["chunk_seconds"]),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
         )
         # Find the autocorrelation peak nearest chunk_period.
         # Output format includes "lag= 150.0 ms  autocorr=0.123" lines.
@@ -169,11 +210,8 @@ def analyze_wav(wav_path: Path, config: dict[str, float], label: str) -> dict[st
         # Pick the autocorr value at the lag closest to chunk_ms (within 10 ms).
         if peaks:
             close = [(lag, ac) for (lag, ac) in peaks if abs(lag - chunk_ms) <= 10.0]
-            if close:
-                autocorr_at_chunk = max(ac for _, ac in close)
-            else:
-                # No peak near chunk-period in top-10 — use 0 (effectively below threshold).
-                autocorr_at_chunk = 0.0
+            # If no peak near chunk-period in top-10, use 0 (effectively below threshold).
+            autocorr_at_chunk = max(ac for _, ac in close) if close else 0.0
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
 
@@ -192,11 +230,11 @@ def analyze_wav(wav_path: Path, config: dict[str, float], label: str) -> dict[st
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--duration", type=float, default=30.0,
-                        help="seconds per condition")
+    parser.add_argument("--duration", type=float, default=30.0, help="seconds per condition")
     parser.add_argument("--phase", choices=["1", "2", "all"], default="all")
-    parser.add_argument("--baseline-repeats", type=int, default=3,
-                        help="number of baseline repeats for noise floor")
+    parser.add_argument(
+        "--baseline-repeats", type=int, default=3, help="number of baseline repeats for noise floor"
+    )
     args = parser.parse_args()
 
     # Make sure the PipeWire setup is up.
@@ -207,19 +245,22 @@ def main() -> int:
 
     if args.phase in ("1", "all"):
         # Baseline noise-floor probes.
-        print(f"\n=== noise-floor baseline ({args.baseline_repeats}× repeats) ===", flush=True)
+        print(f"\n=== noise-floor baseline ({args.baseline_repeats}x repeats) ===", flush=True)
         for i in range(args.baseline_repeats):
             label = f"baseline_{i}"
             print(f"  [{label}] running...", flush=True)
             try:
                 r = run_config(BASELINE, label, args.duration)
-                print(f"    cuts/min={r['cuts_per_min']:.1f} autocorr@chunk={r['autocorr_at_chunk_period']:.3f}", flush=True)
+                print(
+                    f"    cuts/min={r['cuts_per_min']:.1f} autocorr@chunk={r['autocorr_at_chunk_period']:.3f}",
+                    flush=True,
+                )
                 results.append(r)
             except Exception as e:
                 print(f"    [error] {type(e).__name__}: {e}", flush=True)
 
-        # Phase 1 — sweep each parameter individually.
-        print(f"\n=== phase 1 — individual sweeps ===", flush=True)
+        # Phase 1 - sweep each parameter individually.
+        print("\n=== phase 1 - individual sweeps ===", flush=True)
         for param, values in PHASE1.items():
             for v in values:
                 if abs(v - BASELINE[param]) < 1e-9:
@@ -230,7 +271,10 @@ def main() -> int:
                 print(f"  [{label}] {param}={v}", flush=True)
                 try:
                     r = run_config(cfg, label, args.duration)
-                    print(f"    cuts/min={r['cuts_per_min']:.1f} autocorr@chunk={r['autocorr_at_chunk_period']:.3f}", flush=True)
+                    print(
+                        f"    cuts/min={r['cuts_per_min']:.1f} autocorr@chunk={r['autocorr_at_chunk_period']:.3f}",
+                        flush=True,
+                    )
                     results.append(r)
                 except Exception as e:
                     print(f"    [error] {type(e).__name__}: {e}", flush=True)
@@ -257,7 +301,7 @@ def main() -> int:
             if len(differing) == 1:
                 per_param_runs[differing[0]].append(r)
             elif not differing:
-                # baseline — include in every group's reference.
+                # baseline - include in every group's reference.
                 for p in PHASE1:
                     per_param_runs[p].append(r)
 
@@ -268,7 +312,9 @@ def main() -> int:
                 runs,
                 key=lambda r: (
                     r["cuts_per_min"] if not np.isnan(r["cuts_per_min"]) else 1e9,
-                    r["autocorr_at_chunk_period"] if not np.isnan(r["autocorr_at_chunk_period"]) else 1e9,
+                    r["autocorr_at_chunk_period"]
+                    if not np.isnan(r["autocorr_at_chunk_period"])
+                    else 1e9,
                 ),
             )
             picks: list[float] = []
@@ -283,22 +329,28 @@ def main() -> int:
             top_values[param] = picks
             print(f"\n[top-2] {param} = {picks}", flush=True)
 
-        # Phase 2 — cartesian over top-2 per param.
+        # Phase 2 - cartesian over top-2 per param.
         from itertools import product as iproduct
+
         combos = list(iproduct(*[top_values[p] for p in PHASE1]))
         # Dedup against existing single-param + baseline runs.
         already_run: set[tuple[float, ...]] = set()
         for r in results:
             already_run.add(tuple(r["config"][p] for p in PHASE1))
         unique_combos = [c for c in combos if c not in already_run]
-        print(f"\n=== phase 2 — {len(unique_combos)} combinations ===", flush=True)
+        print(f"\n=== phase 2 - {len(unique_combos)} combinations ===", flush=True)
         for combo in unique_combos:
             cfg = dict(zip(PHASE1.keys(), combo, strict=False))
-            label = "p2_" + "_".join(f"{p[0]}{v}" for p, v in zip(PHASE1.keys(), combo, strict=False)).replace(".", "p")
+            label = "p2_" + "_".join(
+                f"{p[0]}{v}" for p, v in zip(PHASE1.keys(), combo, strict=False)
+            ).replace(".", "p")
             print(f"  [{label}] {cfg}", flush=True)
             try:
                 r = run_config(cfg, label, args.duration)
-                print(f"    cuts/min={r['cuts_per_min']:.1f} autocorr@chunk={r['autocorr_at_chunk_period']:.3f}", flush=True)
+                print(
+                    f"    cuts/min={r['cuts_per_min']:.1f} autocorr@chunk={r['autocorr_at_chunk_period']:.3f}",
+                    flush=True,
+                )
                 results.append(r)
             except Exception as e:
                 print(f"    [error] {type(e).__name__}: {e}", flush=True)
@@ -309,7 +361,7 @@ def main() -> int:
     print(f"\n[saved] {all_path}", flush=True)
 
     # Rank by combined score.
-    # subjective_score = cuts_per_min + 50 × autocorr@chunk + 0.05 × latency_penalty
+    # subjective_score = cuts_per_min + 50 x autocorr@chunk + 0.05 x latency_penalty
     # (rough weighting: 1 cut/min == 0.02 autocorr units == 20 ms latency)
     for r in results:
         c = r["cuts_per_min"] if not np.isnan(r["cuts_per_min"]) else 999.0
@@ -318,11 +370,17 @@ def main() -> int:
         r["score"] = c + 50.0 * a + 0.05 * lat
 
     results.sort(key=lambda r: r["score"])
-    print(f"\n=== TOP 10 (lower score = better) ===", flush=True)
-    print(f"{'rank':>4}  {'cuts/min':>8}  {'ac@chunk':>8}  {'+lat':>5}  {'score':>6}  {'label'}", flush=True)
+    print("\n=== TOP 10 (lower score = better) ===", flush=True)
+    print(
+        f"{'rank':>4}  {'cuts/min':>8}  {'ac@chunk':>8}  {'+lat':>5}  {'score':>6}  {'label'}",
+        flush=True,
+    )
     for i, r in enumerate(results[:10]):
-        print(f"  {i + 1:2d}  {r['cuts_per_min']:>8.1f}  {r['autocorr_at_chunk_period']:>8.3f}  "
-              f"{r['latency_penalty_ms']:>4.0f}ms  {r['score']:>6.1f}  {r['label']}", flush=True)
+        print(
+            f"  {i + 1:2d}  {r['cuts_per_min']:>8.1f}  {r['autocorr_at_chunk_period']:>8.3f}  "
+            f"{r['latency_penalty_ms']:>4.0f}ms  {r['score']:>6.1f}  {r['label']}",
+            flush=True,
+        )
 
     # Save top-3 wavs to canonical locations.
     for rank, r in enumerate(results[:3]):

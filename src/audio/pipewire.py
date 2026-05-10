@@ -1,6 +1,6 @@
 """PipeWire integration: persistent virtual mic via `pactl` modules.
 
-Architecture (matches Q6 — persistent woys-mic):
+Architecture (matches Q6 - persistent woys-mic):
   Boot/login → systemd user unit `woys-mic.service` runs
   `woys pw setup`, which loads two PipeWire modules:
     1. module-null-sink  →  WoysSink (apps see it as an audio output)
@@ -8,10 +8,10 @@ Architecture (matches Q6 — persistent woys-mic):
        (Discord/CS2 see it as a microphone)
 
   The engine writes transformed audio to WoysSink; everyone listening
-  on woys-mic hears it. The modules persist across engine start/stop —
+  on woys-mic hears it. The modules persist across engine start/stop -
   Discord can lock onto woys-mic once and forget about it.
 
-v0.6.5 — the source name was renamed `vcclient-mic` → `woys-mic`. Probe
+v0.6.5 - the source name was renamed `vcclient-mic` → `woys-mic`. Probe
 and teardown also recognise the legacy name so users upgrading from
 v0.6.4 or earlier get the orphan module cleared on next setup.
 
@@ -49,7 +49,7 @@ SOURCE_NAME = "woys-mic"
 SINK_DESC = "_internal-woys-engine-output"
 SOURCE_DESC = "woys-no-cleanup"
 
-# v0.6.5 — pre-rename source name. Probe / teardown still recognise it so
+# v0.6.5 - pre-rename source name. Probe / teardown still recognise it so
 # v0.6.4-and-earlier users can be cleanly upgraded on next `woys pw setup`.
 # Safe to remove in a future major when no in-the-wild install can have it.
 LEGACY_SOURCE_NAME = "vcclient-mic"
@@ -78,7 +78,7 @@ class VirtualMicState:
 def _run_pactl(args: list[str]) -> subprocess.CompletedProcess[str]:
     pactl = shutil.which("pactl")
     if pactl is None:
-        raise PipeWireError("pactl not found — install `pipewire-pulse`")
+        raise PipeWireError("pactl not found - install `pipewire-pulse`")
     return subprocess.run(
         [pactl, *args],
         capture_output=True,
@@ -93,7 +93,7 @@ def ensure_pipewire() -> None:
     out = _run_pactl(["info"])
     if out.returncode != 0:
         raise PipeWireError(
-            f"pactl info failed — is the audio daemon running?\n  stderr: {out.stderr.strip()}"
+            f"pactl info failed - is the audio daemon running?\n  stderr: {out.stderr.strip()}"
         )
     if "PipeWire" not in out.stdout:
         raise PipeWireError(
@@ -186,7 +186,7 @@ def get_state() -> VirtualMicState:
 
 
 def _find_legacy_source_module_id() -> int | None:
-    """v0.6.5 — module id of any pre-rename `vcclient-mic` remap-source, or
+    """v0.6.5 - module id of any pre-rename `vcclient-mic` remap-source, or
     None. Used to clear orphans during upgrade."""
     for mod_id, name, args in _list_modules():
         if name == "module-remap-source" and f"source_name={LEGACY_SOURCE_NAME}" in args:
@@ -195,10 +195,10 @@ def _find_legacy_source_module_id() -> int | None:
 
 
 def _unload_legacy_source() -> None:
-    """v0.6.5 — best-effort unload of any pre-rename source module.
+    """v0.6.5 - best-effort unload of any pre-rename source module.
 
     Safe to call on fresh installs (no-op if nothing matches). Failures
-    are silently ignored — the worst case is one orphan module that
+    are silently ignored - the worst case is one orphan module that
     pactl's next `unload-module` invocation would catch."""
     legacy_id = _find_legacy_source_module_id()
     if legacy_id is not None:
@@ -210,7 +210,7 @@ class VirtualMic:
     """Idempotent setup/teardown of the woys-mic node pair.
 
     `linger` defaults to False because PipeWire modules persist across pactl
-    client disconnects natively — modules are server-side state, not client
+    client disconnects natively - modules are server-side state, not client
     state. Setting `object.linger=true` would leave orphan PipeWire *nodes*
     after `unload-module`, which we'd then need pw-cli to destroy by ID.
     """
@@ -245,7 +245,7 @@ class VirtualMic:
         return get_state()
 
     def teardown(self) -> None:
-        """Unload both modules. Idempotent — silent if nothing to do.
+        """Unload both modules. Idempotent - silent if nothing to do.
 
         v0.6.5: also unloads any orphan `vcclient-mic` remap-source from
         pre-rename installs.
@@ -257,7 +257,7 @@ class VirtualMic:
         if state.sink_module_id is not None:
             _run_pactl(["unload-module", str(state.sink_module_id)])
         _unload_legacy_source()
-        # Sweep orphans (defensive — should be a no-op when linger=False).
+        # Sweep orphans (defensive - should be a no-op when linger=False).
         _destroy_orphan_nodes()
 
     # ---- internals ----------------------------------------------------------

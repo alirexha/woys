@@ -1,6 +1,6 @@
 """Optional system-tray icon (KDE Plasma 6 / GNOME via libappindicator).
 
-Talks to a *running* TUI through its Unix-domain control socket — same
+Talks to a *running* TUI through its Unix-domain control socket - same
 protocol as `woys toggle`. The tray therefore *requires* a TUI
 to already be running; if not, it offers to launch one.
 
@@ -17,7 +17,7 @@ Then:
 
 Stays in the background until the user clicks "Quit" in the menu.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ _ICON_SIZE = 64
 
 
 def _make_icon_image(running: bool) -> Any:
-    """Tiny circular icon — green when the engine is running, dim otherwise."""
+    """Tiny circular icon - green when the engine is running, dim otherwise."""
     from PIL import Image, ImageDraw
 
     img = Image.new("RGBA", (_ICON_SIZE, _ICON_SIZE), (0, 0, 0, 0))
@@ -92,7 +92,7 @@ def run_tray() -> int:
     """Block and run the tray loop. Returns when the user picks Quit."""
     try:
         import pystray
-    except ImportError as e:  # pragma: no cover — optional extra
+    except ImportError as e:  # pragma: no cover - optional extra
         print(
             f"[tray] pystray not installed ({e}). Install with: uv pip install -e '.[tray]'",
             file=sys.stderr,

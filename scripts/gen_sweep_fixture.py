@@ -4,18 +4,18 @@ Composition (matches v0.7.0 brief):
 
 | Time     | Block            | Stress target                                    |
 | -------- | ---------------- | ------------------------------------------------ |
-| 0–3 s    | lead silence     | input gate, vocoder voicing-floor hallucination  |
-| 3–13 s   | sustained vowel  | RMVPE pitch tracking + NSF source on stable f0   |
-| 13–23 s  | counting bursts  | RVC attack/decay + pitch-step transitions        |
-| 23–33 s  | plosive grid     | SOLA crossfade across sharp transients           |
-| 33–43 s  | fricative noise  | embedder + vocoder under high-band noise         |
-| 43–53 s  | speech-like mix  | combined vowel + plosive + voicing transitions   |
-| 53–60 s  | tail silence     | quiescent end (matches woys-diag tail block)     |
+| 0-3 s    | lead silence     | input gate, vocoder voicing-floor hallucination  |
+| 3-13 s   | sustained vowel  | RMVPE pitch tracking + NSF source on stable f0   |
+| 13-23 s  | counting bursts  | RVC attack/decay + pitch-step transitions        |
+| 23-33 s  | plosive grid     | SOLA crossfade across sharp transients           |
+| 33-43 s  | fricative noise  | embedder + vocoder under high-band noise         |
+| 43-53 s  | speech-like mix  | combined vowel + plosive + voicing transitions   |
+| 53-60 s  | tail silence     | quiescent end (matches woys-diag tail block)     |
 
 The fixture is mono 48 kHz int16 PCM. The amplitude is normalized so the
-loudest section peaks at −3 dBFS, mirroring a hot-but-not-clipped mic.
+loudest section peaks at -3 dBFS, mirroring a hot-but-not-clipped mic.
 The RNG is seeded so re-running this script produces a byte-identical
-file — important so that sweep results are reproducible and a future
+file - important so that sweep results are reproducible and a future
 re-run with the same engine code lands on the same numbers.
 
 Run:
@@ -51,7 +51,7 @@ def _vowel(seconds: float, f0: float = 200.0, n_harmonics: int = 5) -> np.ndarra
 
 
 def _counting(seconds: float, rng: np.random.Generator) -> np.ndarray:
-    """Short voiced bursts at varying f0 — proxy for 'one, two, three…'."""
+    """Short voiced bursts at varying f0 - proxy for 'one, two, three…'."""
     out = np.zeros(int(seconds * SR), dtype=np.float32)
     pitches = (110, 130, 155, 180, 165, 200, 175, 220, 195, 240)
     burst = 0.30
@@ -76,7 +76,7 @@ def _counting(seconds: float, rng: np.random.Generator) -> np.ndarray:
 
 
 def _plosive(seconds: float, rng: np.random.Generator) -> np.ndarray:
-    """Sharp impulsive bursts every 250 ms — stresses SOLA boundary phase."""
+    """Sharp impulsive bursts every 250 ms - stresses SOLA boundary phase."""
     out = np.zeros(int(seconds * SR), dtype=np.float32)
     interval = 0.25
     n = int(seconds // interval)
@@ -93,7 +93,7 @@ def _plosive(seconds: float, rng: np.random.Generator) -> np.ndarray:
 
 
 def _fricative(seconds: float, rng: np.random.Generator) -> np.ndarray:
-    """Band-pass-filtered white noise 4–8 kHz — proxy for 'sss', 'fff'."""
+    """Band-pass-filtered white noise 4-8 kHz - proxy for 'sss', 'fff'."""
     n = int(seconds * SR)
     noise = rng.standard_normal(n).astype(np.float32)
     spec = np.fft.rfft(noise)
@@ -134,7 +134,7 @@ def _speech_like(seconds: float, rng: np.random.Generator) -> np.ndarray:
         decay = np.exp(-np.arange(p_len) / (0.30 * p_len)).astype(np.float32)
         out[pos : pos + p_len] = burst * decay
         pos += p_len
-        # Brief gap 50–150 ms
+        # Brief gap 50-150 ms
         gap = int(rng.uniform(0.05, 0.15) * SR)
         pos += gap
     return out
@@ -153,7 +153,7 @@ def main() -> None:
     ]
     sig = np.concatenate(parts)
 
-    # Normalize peak to −3 dBFS so the loudest section is hot-but-not-clipped.
+    # Normalize peak to -3 dBFS so the loudest section is hot-but-not-clipped.
     peak = float(np.abs(sig).max())
     target = 10.0 ** (-3.0 / 20.0)
     if peak > 0:
@@ -173,7 +173,7 @@ def main() -> None:
     block_sec = (3.0, 10.0, 10.0, 10.0, 10.0, 10.0, 7.0)
     block_names = ("silence", "vowel", "counting", "plosive", "fricative", "speech", "tail")
     pos = 0
-    for name, sec in zip(block_names, block_sec):
+    for name, sec in zip(block_names, block_sec, strict=False):
         n = int(sec * SR)
         chunk = sig[pos : pos + n]
         rms = float(np.sqrt(np.mean(chunk * chunk))) if chunk.size else 0.0

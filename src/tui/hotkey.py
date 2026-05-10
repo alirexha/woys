@@ -2,7 +2,7 @@
 
 Per Q7 / project brief: evdev raw-grab tripping VAC heuristics is a real risk
 for CS2 users. The default control path is the Unix socket plus the WM-level
-shortcut wrapper — this module is only loaded when the user explicitly opts
+shortcut wrapper - this module is only loaded when the user explicitly opts
 in via `enable_evdev_hotkey = true` in config.toml.
 
 Setup

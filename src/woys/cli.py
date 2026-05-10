@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=None,
         help="also play transformed audio to your default output (self-monitor). "
-        "OFF by default — engine writes only to WoysSink.",
+        "OFF by default - engine writes only to WoysSink.",
     )
 
     sub.add_parser("toggle", help="toggle a running TUI's engine on/off")
@@ -83,14 +83,14 @@ def build_parser() -> argparse.ArgumentParser:
     convert_p.add_argument(
         "--fp16",
         action="store_true",
-        help="export weights in fp16 — RVC v2 only, validate quality before shipping",
+        help="export weights in fp16 - RVC v2 only, validate quality before shipping",
     )
     convert_p.add_argument(
         "--yes-i-trust-the-pickle",
         dest="trust_pickle",
         action="store_true",
         help=(
-            "consent to load arbitrary code from this .pth via torch.load — "
+            "consent to load arbitrary code from this .pth via torch.load - "
             "needed for older RVC checkpoints whose unpickle constructors "
             "torch's safe-load mode rejects. Only pass this for files you "
             "trust (ones you trained, or from a verified source)."
@@ -104,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     fp16_p.add_argument(
         "--include-contentvec",
         action="store_true",
-        help="also convert contentvec (lower quality — not auto-loaded)",
+        help="also convert contentvec (lower quality - not auto-loaded)",
     )
     fp16_p.add_argument("--force", action="store_true", help="overwrite existing fp16 files")
 
@@ -116,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     use_p = models_sub.add_parser("use", help="set the active RVC model in config.toml")
     use_p.add_argument("name", help="model name (file stem) or absolute path to a .onnx")
 
-    prof_p = sub.add_parser("profile", help="named state snapshots — model + pitch + chunk + ...")
+    prof_p = sub.add_parser("profile", help="named state snapshots - model + pitch + chunk + ...")
     prof_sub = prof_p.add_subparsers(dest="profile_cmd", required=True, metavar="ACTION")
     p_save = prof_sub.add_parser("save", help="snapshot the current config under a name")
     p_save.add_argument("name")
@@ -175,9 +175,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip the engine run; only report static info (CUDA, PipeWire, sink state)",
     )
 
-    # v0.8.0-rc2 — engine without the TUI. Same RealtimeEngine + same
+    # v0.8.0-rc2 - engine without the TUI. Same RealtimeEngine + same
     # InferenceClient subprocess spawn, but no Textual hijacking
-    # stderr — useful for headless smoke testing the production path
+    # stderr - useful for headless smoke testing the production path
     # (autonomous CC iteration, CI, debugging the multiprocessing
     # layer). Behaves like `woys run --autostart` minus the
     # interactive UI: starts engine, prints status every second,
@@ -255,24 +255,24 @@ def cmd_pw_teardown() -> int:
 
 
 def cmd_diag(seconds: float, no_engine: bool) -> int:
-    """v0.5.2 — engine + audio-pipeline self-test.
+    """v0.5.2 - engine + audio-pipeline self-test.
 
     Runs the realtime engine against the configured mic for `seconds` and
     prints the v0.5.2 audio-health counters at the end. Useful for the
-    user to confirm a clean session before declaring "no underruns" — and
+    user to confirm a clean session before declaring "no underruns" - and
     for diagnosing third-party audio issues (Discord noise suppression,
     aggressive PipeWire suspend, etc.) without launching the TUI.
     """
     import time
 
-    print(f"woys diag — {__version__}")
+    print(f"woys diag - {__version__}")
     print("---- environment ----")
     cmd_info()  # cuda + pipewire-server versions, gpu
 
     if no_engine:
         return 0
 
-    # Lazy import — diag without --no-engine is the only path that needs ORT.
+    # Lazy import - diag without --no-engine is the only path that needs ORT.
     from audio.engine import EngineConfig, RealtimeEngine
     from audio.pipewire import PipeWireError, VirtualMic, get_state
     from tui.config import load_config
@@ -303,7 +303,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         sola_search_ms=cfg.sola_search_ms,
         sola_context_ms=cfg.sola_context_ms,
         input_gain_db=cfg.input_gain_db,
-        # v0.7.0-rc4 — pre-rc4 these silently fell back to the
+        # v0.7.0-rc4 - pre-rc4 these silently fell back to the
         # dataclass defaults, so `woys diag` was always running
         # the rc1+ defaults regardless of what the user had in
         # `config.toml`. See `docs/16-audit/synthesis.md`.
@@ -341,7 +341,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
 
     s = engine.stats
     print("---- results ----")
-    # v0.8.0-rc4 — surface the inference path explicitly so silent
+    # v0.8.0-rc4 - surface the inference path explicitly so silent
     # fallbacks (rc2 corruption bug) can never hide again.
     if engine.cfg.inference_subprocess:
         if s.child_pid is not None:
@@ -350,7 +350,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
             print("  inference path   : IN-PROCESS (subprocess requested but NOT running!)")
     else:
         print("  inference path   : IN-PROCESS (legacy, by config)")
-    # v0.8.1 — per-session TRT status. Show which sessions actually
+    # v0.8.1 - per-session TRT status. Show which sessions actually
     # use TRT EP and which fell back to CUDA EP because TRT init
     # failed (e.g. RMVPE FP16 STFT, RVC Int64 binding edge cases).
     if engine.cfg.use_tensorrt:
@@ -370,12 +370,12 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     print(f"  avg total e2e    : {s.avg_total_ms:.1f} ms")
     print(f"  avg inference    : {s.avg_inference_ms:.1f} ms")
     print(f"  writer jitter    : {s.writer_jitter_ms:.1f} ms (target <5% of chunk)")
-    print(f"  player xruns     : {s.xruns}  (pacat-only — pw-cat does not report)")
+    print(f"  player xruns     : {s.xruns}  (pacat-only - pw-cat does not report)")
     print(f"  native-pw under. : {s.player_underruns}  (native-pw helper only)")
     print(f"  queue-full events: {s.queue_full_events}")
     print(f"  player restarts  : {s.player_restarts}")
-    # v0.7.0-rc4/rc5 — silent-drop counters previously invisible to
-    # woys-diag. rc5 dropped `sola_drain_ms` (zero-pad bookkeeping) —
+    # v0.7.0-rc4/rc5 - silent-drop counters previously invisible to
+    # woys-diag. rc5 dropped `sola_drain_ms` (zero-pad bookkeeping) -
     # SOLA emits constant-size chunks now and never pads silence; see
     # `docs/16-audit/11-rc4-postmortem.md`. `sola_fallback_count` is
     # now a pure "alignment search gave up" diagnostic and does NOT
@@ -388,10 +388,10 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         f"(alignment search peak corr below threshold; emit length unaffected in rc5+)"
     )
     print(f"  dropped chunks   : {s.dropped_chunks}  (inference exceptions)")
-    # v0.7.0-rc5 — inference budget overrun rate. `late_chunks` is
+    # v0.7.0-rc5 - inference budget overrun rate. `late_chunks` is
     # already stored; the ratio is the threading-tax visibility surface
     # the rc4 postmortem flagged as missing. > ~0.05 means the engine
-    # routinely runs past its chunk budget — that's the v0.8.x
+    # routinely runs past its chunk budget - that's the v0.8.x
     # threading-tax track, not something rc5 attempts to fix.
     if s.chunks_processed > 0:
         overrun = s.late_chunks / s.chunks_processed
@@ -400,11 +400,11 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
             f"({s.late_chunks}/{s.chunks_processed} chunks past budget)"
         )
 
-    # v0.7.0-rc6 — per-stage producer-side timing percentiles. The rc5
+    # v0.7.0-rc6 - per-stage producer-side timing percentiles. The rc5
     # writer-jitter probe (docs/16-audit/12-rc5-writer-jitter-probe.md)
     # ruled out the writer side. Producer-side cadence variance is
     # what writer_jitter_ms reflects; this breakdown attributes it to
-    # mic_read vs inference vs enqueue_lag. Pure instrumentation —
+    # mic_read vs inference vs enqueue_lag. Pure instrumentation -
     # no behavior change, no fix proposed.
     import numpy as _np
 
@@ -427,7 +427,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         f"p99={_pct(inf_samples, 99):6.2f}  "
         f"max={s.max_inference_ms:6.2f}  (n={len(inf_samples)})"
     )
-    # v0.10.0 — per-stage breakdown for tail-attribution. Whichever
+    # v0.10.0 - per-stage breakdown for tail-attribution. Whichever
     # stage has the largest p99 - p50 spread owns the tail.
     print(
         f"  inference.cv     p50={_pct(cv_samples, 50):6.2f}  "
@@ -444,7 +444,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         f"p95={_pct(rvc_samples, 95):6.2f}  "
         f"p99={_pct(rvc_samples, 99):6.2f}  (n={len(rvc_samples)})"
     )
-    # v0.10.0-rc2 — rvc broken into pre/run/post. If post-rc2 reads
+    # v0.10.0-rc2 - rvc broken into pre/run/post. If post-rc2 reads
     # show rvc_run owns most of the tail, the bottleneck is GPU
     # work (ORT kernel selection variance / cuDNN); if rvc_pre or
     # rvc_post owns it, the bottleneck is Python (numpy alloc churn,
@@ -480,7 +480,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         f"p99={_pct(enq_samples, 99):6.2f}  "
         f"(n={len(enq_samples)}; should be sub-ms in steady state)"
     )
-    # v0.10.0 — writer-interval percentiles + jitter delta. The brief's
+    # v0.10.0 - writer-interval percentiles + jitter delta. The brief's
     # acceptance gate is `writer_jitter p99 ≤ 30 ms`, computed as the
     # p99 of inter-write intervals minus the chunk cadence; drives the
     # "is the producer keeping cadence" question.
@@ -496,9 +496,9 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
             f"target={chunk_ms_target:.0f}ms; jitter_p99={wjit_p99:.1f}ms)"
         )
     else:
-        print("  writer_interval  (no samples — engine ran <16 chunks?)")
+        print("  writer_interval  (no samples - engine ran <16 chunks?)")
 
-    # v0.10.0 — runtime input-shape coverage vs the warmup pre-warm set.
+    # v0.10.0 - runtime input-shape coverage vs the warmup pre-warm set.
     # The rc9 broader pre-warm targets soxr's polyphase alternation
     # pattern (4 shapes typical). If runtime introduces shapes outside
     # the pre-warm set, cuDNN re-tunes on the cold shape (~80 ms one-
@@ -514,13 +514,13 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         if unwarmed:
             print(
                 f"  [!] {len(unwarmed)} runtime shape(s) NOT in warmup set "
-                f"({unwarmed}). cuDNN re-tunes on cold shapes — expect "
+                f"({unwarmed}). cuDNN re-tunes on cold shapes - expect "
                 f"~80 ms one-off inference cost on first hit."
             )
     elif runtime_shapes:
         print(f"  audio16_len      runtime={runtime_shapes} (no warmup snapshot)")
 
-    # v0.10.0-rc3 — GPU keep-alive thread observability.
+    # v0.10.0-rc3 - GPU keep-alive thread observability.
     if engine.cfg.gpu_keepalive_enabled:
         ka_recent = list(s._recent_keepalive_ms)
         if ka_recent:
@@ -532,16 +532,16 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
             )
         else:
             print(
-                f"  gpu_keepalive    on  (no calls yet — interval="
+                f"  gpu_keepalive    on  (no calls yet - interval="
                 f"{engine.cfg.gpu_keepalive_interval_ms} ms)"
             )
     else:
         print("  gpu_keepalive    off (set gpu_keepalive_enabled=true to A/B test)")
 
-    # v0.7.0-rc8 — inference tail samples. Captures chunks where
-    # inf_ms > 2× running p50, with the input shape + per-session-
+    # v0.7.0-rc8 - inference tail samples. Captures chunks where
+    # inf_ms > 2x running p50, with the input shape + per-session-
     # stage breakdown so we can read what slow chunks have in common.
-    # Empty list means no chunks crossed the 2× threshold during this
+    # Empty list means no chunks crossed the 2x threshold during this
     # session (rare; usually means inference was very stable).
     if s.tail_chunk_log:
         print(f"  ---- inference tail samples ({len(s.tail_chunk_log)} entries) ----")
@@ -561,20 +561,20 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     if s.last_error:
         print(f"  last_error       : {s.last_error}")
 
-    # v0.11.0 — helper death causes (preserved across watchdog respawns).
+    # v0.11.0 - helper death causes (preserved across watchdog respawns).
     # Empty list = no helper exits. Capped at 10; shows the most recent.
     if s.helper_exit_reasons:
         print(f"  helper exits ({len(s.helper_exit_reasons)}):")
         for reason in s.helper_exit_reasons:
             print(f"    {reason}")
 
-    # Exit non-zero if we saw any underruns or restarts — useful for CI
+    # Exit non-zero if we saw any underruns or restarts - useful for CI
     # / shell scripting on top of this command.
     return 1 if (s.xruns or s.queue_full_events or s.player_restarts) else 0
 
 
 def cmd_engine(seconds: float, quiet: bool) -> int:
-    """v0.8.0-rc2 — headless engine entry. Same engine + InferenceClient
+    """v0.8.0-rc2 - headless engine entry. Same engine + InferenceClient
     spawn path the TUI uses, minus Textual's terminal hijacking. SIGINT
     triggers a clean stop+teardown."""
     import signal as _signal
@@ -584,7 +584,7 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
     from audio.pipewire import PipeWireError, VirtualMic, get_state
     from tui.config import load_config
 
-    print(f"woys engine — {__version__}")
+    print(f"woys engine - {__version__}")
     try:
         VirtualMic().ensure()
         st = get_state()
@@ -633,7 +633,7 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
     eng = RealtimeEngine(engine_cfg)
     print("starting engine...")
     eng.start()
-    # v0.11.0 — surface anti-jitter mode + clock lock state so the
+    # v0.11.0 - surface anti-jitter mode + clock lock state so the
     # user sees that the policy actually took effect.
     mode = (eng.cfg.gpu_anti_jitter_mode or "off").strip().lower()
     if mode != "off":
@@ -646,7 +646,7 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
             )
         elif mode in ("clock_lock", "both"):
             print(
-                "  clock_lock NOT active despite mode — check last_error, "
+                "  clock_lock NOT active despite mode - check last_error, "
                 "sudoers, or GPU spec query"
             )
         if mode in ("keepalive", "both"):
@@ -671,7 +671,7 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
     _signal.signal(_signal.SIGINT, _on_sigint)
     _signal.signal(_signal.SIGTERM, _on_sigint)
 
-    # v0.8.0-rc4 — capture child_pid + last_error BEFORE eng.stop()
+    # v0.8.0-rc4 - capture child_pid + last_error BEFORE eng.stop()
     # since stop() clears them as part of subprocess teardown. We
     # want to know what the engine actually ran with, not its
     # post-shutdown state.
@@ -710,7 +710,7 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
         else:
             path = "IN-PROCESS (legacy, by config)"
         print(f"inference path: {path}")
-        # Print last_error from BEFORE stop() — stop() may set its own.
+        # Print last_error from BEFORE stop() - stop() may set its own.
         if running_last_error:
             print(f"last_error (during run): {running_last_error}")
         elif s.last_error:
@@ -728,7 +728,7 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
         )
         # v0.9.0-rc5: surfacing player_underruns + player_restarts in
         # final output. Pre-rc5 these counters were tracked in EngineStats
-        # but only displayed by `woys diag` — `woys engine` users were
+        # but only displayed by `woys diag` - `woys engine` users were
         # blind to per-quantum underruns and watchdog respawns.
         if s.player_restarts > 0:
             print(
@@ -769,7 +769,7 @@ def cmd_pw_status() -> int:
 
 
 def _prewarm_mp_resource_tracker() -> None:
-    """v0.8.0-rc2 — force `multiprocessing.resource_tracker` to spawn its
+    """v0.8.0-rc2 - force `multiprocessing.resource_tracker` to spawn its
     daemon NOW, while `sys.stderr.fileno()` is still a real fd.
 
     Why this exists: the resource_tracker daemon is lazily started on the
@@ -787,7 +787,7 @@ def _prewarm_mp_resource_tracker() -> None:
     the entry of `cli.main()`, BEFORE any TUI import. The first call
     spawns the resource_tracker daemon with a real stderr fd. Subsequent
     SharedMemory creations (including the ones inside Textual's
-    on_mount) reuse the already-running tracker — no respawn, no
+    on_mount) reuse the already-running tracker - no respawn, no
     fileno-of-bad-stream needed.
 
     Cost: one shm create + close + unlink ≈ 200 µs. Once per process
@@ -796,13 +796,13 @@ def _prewarm_mp_resource_tracker() -> None:
     `cfg.inference_subprocess=False` in those cases).
     """
     try:
-        from multiprocessing import shared_memory  # noqa: PLC0415
+        from multiprocessing import shared_memory
 
         _shm = shared_memory.SharedMemory(create=True, size=8)
         _shm.close()
         _shm.unlink()
     except Exception:
-        # /dev/shm unwritable, sandbox restrictions, etc. — leave the
+        # /dev/shm unwritable, sandbox restrictions, etc. - leave the
         # tracker un-warmed; subprocess inference will fail later with
         # a clearer error message in InferenceClient.start().
         pass
@@ -813,7 +813,7 @@ def main(argv: list[str] | None = None) -> int:
     _prewarm_mp_resource_tracker()
     parser = build_parser()
     args = parser.parse_args(argv)
-    # `woys` with no subcommand launches the TUI with autostart — same as
+    # `woys` with no subcommand launches the TUI with autostart - same as
     # `woys run --autostart`. Helpful for "type the app name to open it"
     # ergonomics. `woys --help` and `woys --version` still work because
     # argparse intercepts those before reaching this dispatch.

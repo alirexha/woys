@@ -2,7 +2,7 @@
 
 Goal: empirical answer to "is IOBinding worth implementing in the realtime
 engine path?" The brief estimates -30 to -50 ms; LESSONS §6 estimates
--20 to -50 ms. With chunk_seconds=0.10–0.25, the inputs are small enough
+-20 to -50 ms. With chunk_seconds=0.10-0.25, the inputs are small enough
 that the .run()-side host↔device copy overhead might be negligible.
 
 Run:
@@ -25,7 +25,7 @@ if hasattr(ort, "preload_dlls"):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from audio.engine import (  # noqa: E402
+from audio.engine import (
     MODELS_DIR,
     EngineConfig,
     RealtimeEngine,

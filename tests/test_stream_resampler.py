@@ -1,4 +1,4 @@
-"""v0.6.7 — `_StreamResampler` regression tests.
+"""v0.6.7 - `_StreamResampler` regression tests.
 
 The realtime engine resamples mic→16k and model_sr→48k once per chunk.
 Stateless `soxr.resample(...)` resets its anti-aliasing filter every call,
@@ -24,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-# Local import — `audio` lives under src/.
+# Local import - `audio` lives under src/.
 SRC = Path(__file__).resolve().parent.parent / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -45,7 +45,7 @@ def test_streamed_chunks_match_one_shot() -> None:
     """Sustained 220 Hz sine; chunk-by-chunk streaming should match the
     one-shot resample within the soxr noise floor (~-90 dB), well below
     audibility. Stateless per-chunk soxr calls also stay within this floor
-    on a stationary signal — the audible artifact only shows up after the
+    on a stationary signal - the audible artifact only shows up after the
     full RVC pipeline. The stateful resampler must not regress that floor."""
     src = 32_000
     dst = 48_000
@@ -70,7 +70,7 @@ def test_streamed_chunks_match_one_shot() -> None:
     rmse = float(np.sqrt(np.mean((one_shot - streamed) ** 2)))
     rmse_dbfs = 20.0 * np.log10(max(rmse, 1e-12))
     assert rmse < 1e-3, (
-        f"streamed vs one-shot RMSE {rmse:.6f} ({rmse_dbfs:.1f} dBFS) — stateful path drifted"
+        f"streamed vs one-shot RMSE {rmse:.6f} ({rmse_dbfs:.1f} dBFS) - stateful path drifted"
     )
 
 

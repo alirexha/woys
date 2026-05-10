@@ -7,7 +7,7 @@ top of standalone-bench inference, but no profile has ever attributed
 it to specific functions. The rc4 postmortem
 (`docs/16-audit/11-rc4-postmortem.md`) flagged `writer_jitter_ms = 63.8`
 at chunk_seconds=150 ms cadence as evidence that the threading tax is
-the next P0 to attack — but doing so requires a real profile, not
+the next P0 to attack - but doing so requires a real profile, not
 code reading.
 
 This script wraps py-spy with the right flags for that profile so the
@@ -15,7 +15,7 @@ user doesn't have to remember them between debug sessions.
 
 Usage:
 
-  # Start the engine in one terminal (any of these — they all spawn
+  # Start the engine in one terminal (any of these - they all spawn
   # the `woys-engine` sub-thread the profiler attaches to):
   woys run --autostart        # full TUI
   woys diag --duration 60     # CLI diag mode
@@ -119,7 +119,7 @@ def main() -> int:
         "--rate",
         type=int,
         default=200,
-        help="Sample rate in Hz. Default 200 (every 5 ms — enough to "
+        help="Sample rate in Hz. Default 200 (every 5 ms - enough to "
         "resolve the 150 ms chunk cadence and finer GIL events).",
     )
     parser.add_argument(
@@ -171,11 +171,11 @@ def main() -> int:
         "--rate",
         str(args.rate),
         "--threads",  # capture all threads incl. writer / watchdog / stderr-reader
-        "--idle",  # include time spent in syscalls (read, flush, get) — what we
+        "--idle",  # include time spent in syscalls (read, flush, get) - what we
         # actually care about for writer-thread jitter
     ]
 
-    # py-spy needs ptrace — re-exec under sudo if the caller doesn't
+    # py-spy needs ptrace - re-exec under sudo if the caller doesn't
     # already have it. /proc/sys/kernel/yama/ptrace_scope=0 would also
     # work but we don't presume to set that.
     if os.geteuid() != 0:

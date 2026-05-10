@@ -23,7 +23,7 @@ DURATION_S = 1.0
 def main() -> int:
     n = int(SR * DURATION_S)
     samples: list[int] = []
-    f0 = 200.0  # Hz — comfortable male/female pitch
+    f0 = 200.0  # Hz - comfortable male/female pitch
     for i in range(n):
         t = i / SR
         # voiced: f0 + 2*f0 + 3*f0 with mild amplitude modulation

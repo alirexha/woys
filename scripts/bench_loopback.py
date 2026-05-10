@@ -7,7 +7,7 @@ and listens on `woys-mic` via `parec`; measures wall-clock delay between
 playback time and capture time using cross-correlation.
 
 This bench is intentionally separate from the in-process timestamp test
-(`tests/test_smoke_rvc_onnx.py`) — that one isolates inference cost; this one
+(`tests/test_smoke_rvc_onnx.py`) - that one isolates inference cost; this one
 measures everything the user actually hears, including audio I/O buffering.
 
 Run: `.venv/bin/python scripts/bench_loopback.py`
@@ -60,7 +60,7 @@ def find_click(audio: np.ndarray, sr: int) -> int | None:
 
 def run() -> int:
     if shutil.which("pacat") is None or shutil.which("parec") is None:
-        print("error: pacat/parec not found — install pipewire-pulse", file=sys.stderr)
+        print("error: pacat/parec not found - install pipewire-pulse", file=sys.stderr)
         return 2
 
     click_path = ROOT / "tests" / "fixtures" / "click.wav"
@@ -99,7 +99,7 @@ def run() -> int:
 
     idx = find_click(audio, SR)
     if idx is None:
-        print("  FAIL: no click found in capture — engine routing broken?")
+        print("  FAIL: no click found in capture - engine routing broken?")
         return 3
     one_way_ms = (idx - expected_click_idx) * 1000.0 / SR
     print(f"  click landed at sample {idx} → one-way delay {one_way_ms:.2f} ms")

@@ -23,9 +23,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import sounddevice as sd  # noqa: E402
+import sounddevice as sd
 
-from audio.engine import MODELS_DIR, EngineConfig, RealtimeEngine  # noqa: E402
+from audio.engine import MODELS_DIR, EngineConfig, RealtimeEngine
 
 
 class _SyntheticInputStream:
@@ -121,7 +121,9 @@ def main() -> None:
         print(f"  chunks_processed = {s.chunks_processed}")
         print(f"  xruns            = {s.xruns}  (target = 0)")
         print(f"  queue_full       = {s.queue_full_events}  (target = 0)")
-        print(f"  late_chunks      = {s.late_chunks}  (chunks where total_ms > {args.chunk*1000:.0f})")
+        print(
+            f"  late_chunks      = {s.late_chunks}  (chunks where total_ms > {args.chunk * 1000:.0f})"
+        )
         print(f"  pacat_restarts   = {s.pacat_restarts}")
         print(f"  dropped_chunks   = {s.dropped_chunks}")
         print(stats("inference", infs))

@@ -6,7 +6,7 @@ supported. These tests cover:
      shaped feats for both v1 (256-dim) and v2 (768-dim) paths.
   2. The engine reports `active_embedder == "onnx"` regardless of the
      `embedder` config value (legacy "fairseq" string falls back without
-     crashing — see B8 / corr-002).
+     crashing - see B8 / corr-002).
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ def test_engine_embedder_default_is_onnx() -> None:
 @pytest.mark.gpu
 def test_engine_embedder_legacy_fairseq_value_falls_back_safely() -> None:
     """v0.8.0 dropped the fairseq embedder. Old config.toml files with
-    `embedder = "fairseq"` must NOT crash the engine — they fall back to
+    `embedder = "fairseq"` must NOT crash the engine - they fall back to
     ONNX with a logged warning."""
     from audio.engine import EngineConfig, RealtimeEngine
 

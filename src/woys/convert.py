@@ -1,4 +1,4 @@
-"""`woys convert <pth>` — real RVC .pth → .onnx exporter.
+"""`woys convert <pth>` - real RVC .pth → .onnx exporter.
 
 The upstream voice-changer repo ships an `export2onnx` function but expects
 to be called from inside its own Pipeline / FastAPI server context. This
@@ -20,10 +20,10 @@ will execute arbitrary Python on load. We try `weights_only=True` first;
 if torch's safe-load mode rejects the checkpoint (older RVC formats with
 custom unpickle constructors do), we require explicit consent via the
 `--yes-i-trust-the-pickle` flag (or `WOYS_YES_I_TRUST_THE_PICKLE=1`)
-before falling back. Only consent for files you trust — RVC checkpoints
+before falling back. Only consent for files you trust - RVC checkpoints
 shared on Discord / unknown forks are an RCE vector.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 CACHE_DIR = Path.home() / ".local" / "share" / "woys" / "converted"
 
@@ -44,7 +45,7 @@ def _user_trusts_pickle(flag: bool) -> bool:
 
     True if `--yes-i-trust-the-pickle` was passed OR
     `WOYS_YES_I_TRUST_THE_PICKLE=1` is in the environment. We don't
-    interactive-prompt — that's unsafe in scripts and CI.
+    interactive-prompt - that's unsafe in scripts and CI.
     """
     if flag:
         return True
@@ -52,7 +53,7 @@ def _user_trusts_pickle(flag: bool) -> bool:
     return val in ("1", "true", "yes")
 
 
-def _safe_torch_load(pth_path: Path, *, trust_pickle: bool):
+def _safe_torch_load(pth_path: Path, *, trust_pickle: bool) -> Any:
     """Load a torch checkpoint with weights_only=True first; on failure,
     require explicit consent before falling back to weights_only=False
     (the unsafe pickle-deserialize mode).
@@ -96,7 +97,7 @@ def _probe_pth_metadata(pth_path: Path, *, trust_pickle: bool = False) -> _RVCMe
     """Inspect the .pth checkpoint dict to figure out which RVC variant it is.
 
     Mirrors the upstream `_setInfoByPytorch` decision tree. Doesn't import
-    upstream's class hierarchy — keeps this module a pure original-work
+    upstream's class hierarchy - keeps this module a pure original-work
     derivative-of-format-knowledge, not a derivative of upstream code.
 
     `trust_pickle=True` allows fall-through to the unsafe `torch.load
@@ -107,7 +108,7 @@ def _probe_pth_metadata(pth_path: Path, *, trust_pickle: bool = False) -> _RVCMe
     config = cpt.get("config")
     if config is None:
         raise ValueError(
-            f"{pth_path.name}: missing 'config' field — not a recognized RVC checkpoint"
+            f"{pth_path.name}: missing 'config' field - not a recognized RVC checkpoint"
         )
     config_len = len(config)
     version = cpt.get("version", "v1")
@@ -151,7 +152,7 @@ def _probe_pth_metadata(pth_path: Path, *, trust_pickle: bool = False) -> _RVCMe
             useFinalProj=False,
         )
 
-    # DDPN-style WebUI checkpoint — has explicit embChannels in config[17].
+    # DDPN-style WebUI checkpoint - has explicit embChannels in config[17].
     emb_channels = int(config[17]) if len(config) > 17 else 768
     use_final_proj = emb_channels == 256
     emb_layer = int(cpt.get("embedder_output_layer", 9))
@@ -199,7 +200,7 @@ def convert_pth_to_onnx(
     """Convert an RVC `.pth` to ONNX. Returns the output path.
 
     `fp16=True` exports half-precision weights. Use only on RVC v2 models
-    where you've validated quality is preserved — v1 models often degrade.
+    where you've validated quality is preserved - v1 models often degrade.
     `opset=17` matches what the engine expects; raise it only if you've
     verified ORT 1.20+ supports the ops the model emits.
 
@@ -249,8 +250,6 @@ def convert_pth_to_onnx(
 
     # Pin the opset for the duration of the export. torch.onnx.export's
     # signature has too many overloads to type-narrow cleanly.
-    from typing import Any
-
     original_export: Any = torch.onnx.export
 
     def _export_with_opset(*args: Any, **kwargs: Any) -> Any:
@@ -270,13 +269,13 @@ def convert_pth_to_onnx(
         torch.onnx.export = original_export
 
     if not output_path.exists():
-        raise RuntimeError(f"export silently failed — {output_path} not created")
+        raise RuntimeError(f"export silently failed - {output_path} not created")
 
     print(f"[convert] wrote {output_path} ({output_path.stat().st_size / 1024 / 1024:.1f} MiB)")
     _validate_onnx_loads(output_path)
-    print("[convert] ONNX validation OK — ready for the engine.")
+    print("[convert] ONNX validation OK - ready for the engine.")
 
-    # v0.6.6 — `_export2onnx` always writes a `<stem>_simple.onnx` sibling
+    # v0.6.6 - `_export2onnx` always writes a `<stem>_simple.onnx` sibling
     # for upstream's stripped-down inference path, but the woys engine only
     # ever loads the regular `.onnx`. Leaving the sibling around bloats the
     # models dir and confuses `woys models list`. Drop it.

@@ -5,10 +5,10 @@ before perf-002's vectorization changes the implementation; covers
 synthetic inputs (silence, all-voiced, brief gap, long gap exceeding
 `_VOICED_GAP_MAX_FRAMES`).
 
-B56 / B24 / B17: pin `to_pitch_coarse` behavior — early-exit on all-zero
+B56 / B24 / B17: pin `to_pitch_coarse` behavior - early-exit on all-zero
 input + boundary cases that match the upstream RVC f0-coarse contract.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from audio.engine import (  # noqa: E402
     to_pitch_coarse,
 )
 
-
 # ---- interpolate_voiced_gaps_np ---------------------------------------------
 
 
@@ -53,7 +52,7 @@ def test_interpolate_all_voiced_unchanged() -> None:
 
 
 def test_interpolate_short_gap_bridges_linearly() -> None:
-    """Gap of 4 frames between two voiced frames at 100 Hz / 200 Hz —
+    """Gap of 4 frames between two voiced frames at 100 Hz / 200 Hz -
     output should linearly interpolate."""
     pitchf = np.array(
         [100.0, 100.0, 0.0, 0.0, 0.0, 0.0, 200.0, 200.0],
@@ -80,7 +79,7 @@ def test_interpolate_short_gap_bridges_linearly() -> None:
 
 def test_interpolate_long_gap_left_as_zeros() -> None:
     """Gap longer than `_VOICED_GAP_MAX_FRAMES` is genuine silence, not
-    bridged — RVC vocoder should produce silence rather than fabricated
+    bridged - RVC vocoder should produce silence rather than fabricated
     pitch."""
     gap_len = _VOICED_GAP_MAX_FRAMES + 2
     pitchf = np.concatenate(

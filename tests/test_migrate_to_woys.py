@@ -1,4 +1,4 @@
-"""v0.6.0 — unit tests for the rename migration script.
+"""v0.6.0 - unit tests for the rename migration script.
 
 Drive `scripts/migrate_to_woys.py::migrate` against a synthetic $HOME in
 tmp_path, verify everything moves to the new layout and `config.toml` paths
@@ -114,7 +114,7 @@ def test_migrate_idempotent_when_target_exists(tmp_path: Path) -> None:
 def test_migrate_skips_target_if_already_migrated_partial(tmp_path: Path) -> None:
     """If the new dir already exists from a half-finished previous run, the
     migrator should not overwrite it (the old dir would still be present and
-    would be left alone — operator intervention required)."""
+    would be left alone - operator intervention required)."""
     from migrate_to_woys import migrate
 
     _build_old_install(tmp_path)
@@ -168,7 +168,7 @@ def test_migrate_partial_install(tmp_path: Path, missing: str) -> None:
 
 
 def test_migrate_rewrites_legacy_sink_name(tmp_path: Path) -> None:
-    """v0.6.4 — a v0.5.x config carries `sink_name = "VCClientCachySink"`
+    """v0.6.4 - a v0.5.x config carries `sink_name = "VCClientCachySink"`
     which v0.6.0+ doesn't load (the sink is named `WoysSink` now). Without
     this rewrite, pw-cat falls back to the default sink and audio leaks
     to laptop speakers. See docs/10-monitor-leak-diag.md."""
@@ -203,7 +203,7 @@ def test_migrate_idempotent_on_already_correct_sink_name(tmp_path: Path) -> None
 
 
 def test_migrate_bumps_stale_output_latency_ms(tmp_path: Path) -> None:
-    """v0.6.7 — `output_latency_ms` below 300 makes the playback backend's
+    """v0.6.7 - `output_latency_ms` below 300 makes the playback backend's
     ring buffer too small to absorb the engine's bursty 250 ms-chunk
     writes. v0.6.7 retro on v0.5.2: pw-cat at 100 ms still drops one
     PipeWire quantum every chunk; pacat at 300 ms is 40x cleaner.
@@ -226,7 +226,7 @@ def test_migrate_bumps_stale_output_latency_ms(tmp_path: Path) -> None:
 
 
 def test_migrate_bumps_intermediate_latency_to_300(tmp_path: Path) -> None:
-    """v0.6.7 — also bumps the v0.5.2 default of 100 (which v0.6.7 found
+    """v0.6.7 - also bumps the v0.5.2 default of 100 (which v0.6.7 found
     insufficient) to the new 300 ms baseline."""
     from migrate_to_woys import migrate
 

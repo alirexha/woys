@@ -24,7 +24,7 @@ import onnxruntime as ort
 if hasattr(ort, "preload_dlls"):
     ort.preload_dlls()
 
-from audio.engine import MODELS_DIR, EngineConfig, RealtimeEngine, _resample  # noqa: E402
+from audio.engine import MODELS_DIR, EngineConfig, RealtimeEngine, _resample
 
 
 def percentiles(samples: list[float], ps: tuple[float, ...]) -> list[float]:
@@ -88,7 +88,9 @@ def main() -> None:
         t = time.perf_counter()
         _ = engine._safe_process_streaming_16k(audio16)
         streaming_t.append((time.perf_counter() - t) * 1000.0)
-        infer_t.append(engine.stats.last_cv_ms + engine.stats.last_rmvpe_ms + engine.stats.last_rvc_ms)
+        infer_t.append(
+            engine.stats.last_cv_ms + engine.stats.last_rmvpe_ms + engine.stats.last_rvc_ms
+        )
 
     def fmt(name: str, vals: list[float]) -> str:
         if not vals:

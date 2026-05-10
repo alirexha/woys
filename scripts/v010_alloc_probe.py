@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""v0.10.x — tracemalloc probe for Python alloc churn on the engine hot path.
+"""v0.10.x - tracemalloc probe for Python alloc churn on the engine hot path.
 
 Wraps the v0.10.x synthetic harness in `tracemalloc` and dumps the top-N
 allocation hotspots over a short bounded run. Brief candidate #5 is
@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import time
 import tracemalloc
 from pathlib import Path
 
@@ -45,14 +44,14 @@ def _format_top(stats: list[tracemalloc.Statistic], top: int) -> list[str]:
         parts = loc.split("/")
         if len(parts) > 3:
             loc = ".../" + "/".join(parts[-3:])
-        lines.append(
-            f"  #{i + 1:2d}  size={s.size:>10d} B  count={s.count:>6d}  {loc}"
-        )
+        lines.append(f"  #{i + 1:2d}  size={s.size:>10d} B  count={s.count:>6d}  {loc}")
     return lines
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--duration", type=float, default=60.0)
     parser.add_argument("--top", type=int, default=30)
     parser.add_argument("--out", type=Path, default=Path("/tmp/v010_alloc.txt"))
@@ -83,7 +82,10 @@ def main() -> int:
         inference_subprocess=False,
     )
     snap_pre = tracemalloc.take_snapshot()
-    print(f"[alloc-probe] pre-run snapshot: {len(snap_pre.statistics('lineno')):d} stats", file=sys.stderr)
+    print(
+        f"[alloc-probe] pre-run snapshot: {len(snap_pre.statistics('lineno')):d} stats",
+        file=sys.stderr,
+    )
 
     print(f"[alloc-probe] running engine for {args.duration:.0f}s ...", file=sys.stderr)
     v010_harness._run_engine_synthetic(

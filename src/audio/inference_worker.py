@@ -1,4 +1,4 @@
-"""v0.8.0 — inference subprocess.
+"""v0.8.0 - inference subprocess.
 
 Closes the LESSONS §19 threading tax (~23 ms typical-case overhead
 when ORT inference runs in the engine's daemon thread alongside the
@@ -7,7 +7,7 @@ GIL during numpy ops between ONNX sessions).
 
 The child process:
   - Owns its own CUDA context (forced via `spawn` start method, never
-    `fork` — CUDA contexts don't survive fork).
+    `fork` - CUDA contexts don't survive fork).
   - Loads cv + rmvpe + rvc ONNX sessions for life. Hot-swaps RVC
     sessions via the same `RvcSessionPool` the in-process path
     uses.
@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import contextlib
 import gc
-import multiprocessing as mp
 import os
 import sys
 import time
@@ -51,7 +50,7 @@ NDArrayI64 = npt.NDArray[np.int64]
 
 # Protocol message kinds (must match inference_client). Defined here
 # inline rather than in a shared module to keep the child's import
-# graph tiny — child doesn't need to import the engine module just
+# graph tiny - child doesn't need to import the engine module just
 # to read these constants.
 CMD_INFER = "infer"
 CMD_SWAP_MODEL = "swap_model"
@@ -66,7 +65,7 @@ def _ort_preload_dlls() -> None:
     """Mirror `engine.py`'s ORT preload step. ORT-GPU 1.20+ on driver
     595 needs explicit preload of the pip-shipped CUDA libs before
     any session creation."""
-    import onnxruntime as ort  # noqa: PLC0415 — child-process-only
+    import onnxruntime as ort
 
     if hasattr(ort, "preload_dlls"):
         ort.preload_dlls()
@@ -74,7 +73,7 @@ def _ort_preload_dlls() -> None:
 
 # B47 / quality-013: the priority logic moved into `audio.priority`. Kept as
 # a thin alias to preserve any external imports that referenced the old name.
-from audio.priority import try_set_realtime_priority as _try_set_rt_priority  # noqa: E402,F401
+from audio.priority import try_set_realtime_priority as _try_set_rt_priority  # noqa: E402
 
 
 def child_main(
@@ -89,14 +88,14 @@ def child_main(
 
     Started via `multiprocessing.Process(target=child_main, args=(...))`
     with the `spawn` start method. Pipes are passed as
-    `multiprocessing.connection.Connection` objects — multiprocessing
+    `multiprocessing.connection.Connection` objects - multiprocessing
     pickles them correctly across spawn so the child receives live
     Connection handles (NOT raw fds, which would be invalid in the
     new process).
 
     Args:
       parent_recv: Connection the child reads commands FROM (parent's
-        write end — i.e. parent calls `.send(...)` on the other end,
+        write end - i.e. parent calls `.send(...)` on the other end,
         child calls `.recv()` here).
       child_send: Connection the child writes responses TO.
 
@@ -107,7 +106,7 @@ def child_main(
       4. Loop: recv command, dispatch, send response.
       5. Exit on CMD_STOP or parent-death.
     """
-    # No reconstruction needed — Connection objects come through spawn intact.
+    # No reconstruction needed - Connection objects come through spawn intact.
 
     # Step 1: open the shared memory regions the parent created.
     try:
@@ -126,7 +125,7 @@ def child_main(
 
     # Step 3: build a RealtimeEngine instance in legacy in-process mode
     # and let it load sessions / pre-warm. The child then routes every
-    # CMD_INFER through `eng._infer()` — the SAME method the
+    # CMD_INFER through `eng._infer()` - the SAME method the
     # in-process path runs. This guarantees the child and in-process
     # paths execute byte-identical inference logic; v0.8.0-rc1/rc2's
     # parallel `_infer_impl` had drifted (or appeared to drift via
@@ -207,7 +206,7 @@ def child_main(
         if cmd == CMD_SWAP_MODEL:
             try:
                 new_path = Path(msg["path"])
-                # Same hot-swap path the in-process engine uses —
+                # Same hot-swap path the in-process engine uses -
                 # `reload_rvc()` updates the RVC session via the
                 # cached pool, refreshes _is_half, recomputes the
                 # output sample rate, and resets streaming state.
@@ -236,7 +235,7 @@ def child_main(
         if cmd == CMD_INFER:
             try:
                 shape = tuple(msg["input_shape"])
-                size = int(np.prod(shape))
+                int(np.prod(shape))
                 in_buf = input_shm.buf
                 assert in_buf is not None
                 # Copy out of shared memory into a fresh contiguous
@@ -246,7 +245,7 @@ def child_main(
                 # mid-flight. Copying once decouples ORT from shm.
                 audio16k_view: NDArrayF32 = np.ndarray(shape, dtype=np.float32, buffer=in_buf)
                 audio16k: NDArrayF32 = np.ascontiguousarray(audio16k_view).copy()
-                # Per-call knobs — mutate the in-child engine's cfg so
+                # Per-call knobs - mutate the in-child engine's cfg so
                 # `eng._infer` reads the parent's intent. self.cfg is
                 # the canonical source for f0/sid/threshold inside
                 # `_infer`, so this is the single point of control.
@@ -257,7 +256,7 @@ def child_main(
                 # Snapshot per-stage timings BEFORE the call (eng's
                 # _infer mutates self.stats.last_cv_ms etc.).
                 prev_nan_chunks = eng.stats.nan_chunks
-                t_full = time.perf_counter()
+                time.perf_counter()
                 # SAME _infer the in-process path runs. Guarantees
                 # bit-identical inference logic across the two paths;
                 # any divergence between paths now lives in the IPC
@@ -275,7 +274,7 @@ def child_main(
                 # Write result into the output shared memory.
                 flat = np.ascontiguousarray(result.reshape(-1)).astype(np.float32, copy=False)
                 out_bytes = flat.size * 4
-                # Defensive bound check — parent allocated the shm with
+                # Defensive bound check - parent allocated the shm with
                 # a known max size; if the model output exceeds that,
                 # we send an error rather than overflow.
                 if out_bytes > output_shm.size:

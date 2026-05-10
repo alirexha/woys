@@ -1,4 +1,4 @@
-"""Named profiles — full-state snapshots of pitch / model / chunk / monitor.
+"""Named profiles - full-state snapshots of pitch / model / chunk / monitor.
 
 Stored in `~/.config/woys/config.toml` under a `[profiles.<name>]`
 section. The top-level keys mirror `AppConfig`; profile sections have the
@@ -13,7 +13,7 @@ CLI:
 
 The TUI bindings (Phase 4 polish) cycle through the saved profiles.
 
-Original work — Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
+Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
 from __future__ import annotations
@@ -30,11 +30,11 @@ def _ensure_audio_path() -> None:
         sys.path.insert(0, str(repo_root))
 
 
-# B9 / arch-005 — derive _PROFILE_FIELDS from the single source of truth
+# B9 / arch-005 - derive _PROFILE_FIELDS from the single source of truth
 # in `audio.engine.USER_VISIBLE_ENGINE_FIELDS`. Adding a user-visible
 # EngineConfig field there now automatically makes it survive a profile
 # save/use cycle. Pre-v0.8.0, this was a hand-maintained tuple that lost
-# `input_gate_dbfs`, `prefer_pw_cat`, etc. — exactly the rc4 drift class.
+# `input_gate_dbfs`, `prefer_pw_cat`, etc. - exactly the rc4 drift class.
 _ensure_audio_path()
 from audio.engine import USER_VISIBLE_ENGINE_FIELDS as _ENGINE_FIELDS  # noqa: E402
 
@@ -44,13 +44,13 @@ _PROFILE_FIELDS: tuple[str, ...] = ("rvc_model", *_ENGINE_FIELDS)
 
 
 def _ensure_tui_path() -> None:
-    """Alias kept for backwards compat — same as `_ensure_audio_path`."""
+    """Alias kept for backwards compat - same as `_ensure_audio_path`."""
     _ensure_audio_path()
 
 
 def _profiles_bag(cfg: Any) -> dict[str, dict[str, Any]]:
     """The on-disk profiles live under `cfg._extras["profiles"]` because
-    AppConfig itself doesn't have a `profiles` field — `_extras` round-trips
+    AppConfig itself doesn't have a `profiles` field - `_extras` round-trips
     unknown keys (see `tui.config.load_config`)."""
     bag = cfg._extras.get("profiles", {})
     if not isinstance(bag, dict):

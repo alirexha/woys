@@ -15,14 +15,14 @@ def test_python_version() -> None:
 
 
 def test_pactl_available() -> None:
-    assert shutil.which("pactl") is not None, "pactl missing — install pipewire-pulse"
+    assert shutil.which("pactl") is not None, "pactl missing - install pipewire-pulse"
 
 
 @pytest.mark.pipewire
 def test_pipewire_running() -> None:
     out = subprocess.run(["pactl", "info"], capture_output=True, text=True, timeout=3)
     assert out.returncode == 0
-    assert "PipeWire" in out.stdout, "PulseAudio detected — PipeWire required"
+    assert "PipeWire" in out.stdout, "PulseAudio detected - PipeWire required"
 
 
 @pytest.mark.gpu

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""v0.12.3 — generate LESSONS §41 + CHANGELOG entry from /tmp/v012_3/all_results.json.
+"""v0.12.3 - generate LESSONS §41 + CHANGELOG entry from /tmp/v012_3/all_results.json.
 
 Decides v0.12.3 final vs v0.12.3-partial based on:
   - Best config beats baseline by 2-sigma noise margin (cuts_per_min)
@@ -8,8 +8,8 @@ Decides v0.12.3 final vs v0.12.3-partial based on:
 Outputs:
   - /tmp/v012_3/lessons_41.md (paste into LESSONS.md)
   - /tmp/v012_3/changelog_v012_3.md
-  - /tmp/v012_3_top1.wav / top2.wav / top3.wav — best 3 by score
-  - /tmp/v012_3/worst1.wav / worst2.wav / worst3.wav — worst 3 by score
+  - /tmp/v012_3_top1.wav / top2.wav / top3.wav - best 3 by score
+  - /tmp/v012_3/worst1.wav / worst2.wav / worst3.wav - worst 3 by score
     (perceptual A/B reference: best → baseline → worst)
   - Recommendation: ship as final or partial
 """
@@ -23,12 +23,17 @@ from pathlib import Path
 
 OUT_DIR = Path("/tmp/v012_3")
 PARAM_NAMES = [
-    "chunk_seconds", "sola_search_ms", "sola_corr_threshold",
-    "sola_crossfade_ms", "sola_context_ms",
+    "chunk_seconds",
+    "sola_search_ms",
+    "sola_corr_threshold",
+    "sola_crossfade_ms",
+    "sola_context_ms",
 ]
 BASELINE = {
-    "chunk_seconds": 0.15, "sola_search_ms": 6.0,
-    "sola_corr_threshold": 0.10, "sola_crossfade_ms": 50.0,
+    "chunk_seconds": 0.15,
+    "sola_search_ms": 6.0,
+    "sola_corr_threshold": 0.10,
+    "sola_crossfade_ms": 50.0,
     "sola_context_ms": 100.0,
 }
 
@@ -49,7 +54,11 @@ def main() -> int:
     # Baseline noise floor.
     baselines = [r for r in raw if r["label"].startswith("baseline_")]
     base_cuts = [r["cuts_per_min"] for r in baselines if r["cuts_per_min"] == r["cuts_per_min"]]
-    base_ac = [r["autocorr_at_chunk_period"] for r in baselines if r["autocorr_at_chunk_period"] == r["autocorr_at_chunk_period"]]
+    base_ac = [
+        r["autocorr_at_chunk_period"]
+        for r in baselines
+        if r["autocorr_at_chunk_period"] == r["autocorr_at_chunk_period"]
+    ]
     if base_cuts:
         base_cuts_mean = statistics.mean(base_cuts)
         base_cuts_std = statistics.stdev(base_cuts) if len(base_cuts) > 1 else 0.0
@@ -67,7 +76,7 @@ def main() -> int:
     # Sort by score (lower = better).
     raw.sort(key=lambda r: r["score"])
 
-    # Identify a single "baseline reference" run — pick the median
+    # Identify a single "baseline reference" run - pick the median
     # baseline by cuts/min so the table uses one representative point.
     base_ref: dict | None = None
     if baselines:
@@ -81,7 +90,7 @@ def main() -> int:
     non_baseline = [r for r in raw if not r["label"].startswith("baseline_")]
     top_5 = non_baseline[:5]
     bottom_3 = list(reversed(non_baseline[-3:]))  # worst-first ordering
-    top_10 = non_baseline[:10]
+    non_baseline[:10]
     best = non_baseline[0] if non_baseline else baselines[0]
 
     # The user's ship criterion: "best that beats baseline AND latency
@@ -112,7 +121,7 @@ def main() -> int:
     # Build LESSONS §41.
     lines = []
     A = lines.append
-    A("## 41. v0.12.3 — comprehensive parameter sweep, intelligent grid search")
+    A("## 41. v0.12.3 - comprehensive parameter sweep, intelligent grid search")
     A("")
     A("Final tuning sweep before project closure. Phase 1 sweeps each of the")
     A("5 SOLA / chunk parameters individually with the others at v0.11.0")
@@ -122,7 +131,7 @@ def main() -> int:
     A("(woys-diag calibrated cut count + spectral autocorrelation at the")
     A("chunk-period).")
     A("")
-    A(f"### Noise floor (baseline {len(baselines)}× repeat)")
+    A(f"### Noise floor (baseline {len(baselines)}x repeat)")
     A("")
     A(f"- cuts/min: mean = {base_cuts_mean:.1f}, std = {base_cuts_std:.2f}")
     A(f"- autocorr@chunk: mean = {base_ac_mean:.3f}, std = {base_ac_std:.3f}")
@@ -130,18 +139,24 @@ def main() -> int:
     A("")
     A("### Ranked table (top 5 + baseline + bottom 3, lower score = better)")
     A("")
-    A("score = cuts/min + 50 × autocorr@chunk + 0.05 × latency_penalty_ms")
+    A("score = cuts/min + 50 x autocorr@chunk + 0.05 x latency_penalty_ms")
     A("")
 
     def _row(label_prefix: str, r: dict) -> str:
         cfg = r["config"]
-        return (f"| {label_prefix} | {r['cuts_per_min']:.1f} | {r['autocorr_at_chunk_period']:.3f} | "
-                f"{r['latency_penalty_ms']:.0f} | {cfg['chunk_seconds']:.3f} | "
-                f"{cfg['sola_search_ms']:.1f} | {cfg['sola_corr_threshold']:.2f} | "
-                f"{cfg['sola_crossfade_ms']:.0f} | {cfg['sola_context_ms']:.0f} | {r['score']:.1f} |")
+        return (
+            f"| {label_prefix} | {r['cuts_per_min']:.1f} | {r['autocorr_at_chunk_period']:.3f} | "
+            f"{r['latency_penalty_ms']:.0f} | {cfg['chunk_seconds']:.3f} | "
+            f"{cfg['sola_search_ms']:.1f} | {cfg['sola_corr_threshold']:.2f} | "
+            f"{cfg['sola_crossfade_ms']:.0f} | {cfg['sola_context_ms']:.0f} | {r['score']:.1f} |"
+        )
 
-    A("| rank | cuts/min | ac@chunk | +lat (ms) | chunk_s | search_ms | corr_thr | crossfade_ms | context_ms | score |")
-    A("|-----:|---------:|---------:|----------:|--------:|----------:|---------:|-------------:|-----------:|------:|")
+    A(
+        "| rank | cuts/min | ac@chunk | +lat (ms) | chunk_s | search_ms | corr_thr | crossfade_ms | context_ms | score |"
+    )
+    A(
+        "|-----:|---------:|---------:|----------:|--------:|----------:|---------:|-------------:|-----------:|------:|"
+    )
     for i, r in enumerate(top_5):
         A(_row(f"top-{i + 1}", r))
     if base_ref is not None:
@@ -150,8 +165,12 @@ def main() -> int:
         rank_label = f"worst-{i + 1}"
         A(_row(rank_label, r))
     A("")
-    A("Top-3 raw recordings: `/tmp/v012_3_top1.wav`, `/tmp/v012_3_top2.wav`, `/tmp/v012_3_top3.wav`.  ")
-    A("Worst-3 raw recordings: `/tmp/v012_3/worst1.wav`, `/tmp/v012_3/worst2.wav`, `/tmp/v012_3/worst3.wav`.  ")
+    A(
+        "Top-3 raw recordings: `/tmp/v012_3_top1.wav`, `/tmp/v012_3_top2.wav`, `/tmp/v012_3_top3.wav`.  "
+    )
+    A(
+        "Worst-3 raw recordings: `/tmp/v012_3/worst1.wav`, `/tmp/v012_3/worst2.wav`, `/tmp/v012_3/worst3.wav`.  "
+    )
     A("Baseline reference recording: `/tmp/v012_3/baseline_ref.wav`.")
     A("")
     A("Listener calibration: comparing best → baseline → worst by ear")
@@ -159,29 +178,39 @@ def main() -> int:
     A("")
     A("### Recommended default change (best of low-latency tier, +lat < 30 ms)")
     A("")
-    A(f"**`{ship_candidate['label']}`** — score {ship_candidate['score']:.1f}")
+    A(f"**`{ship_candidate['label']}`** - score {ship_candidate['score']:.1f}")
     A("")
     A("```toml")
     for p in PARAM_NAMES:
         A(f"{p} = {ship_candidate['config'][p]}")
     A("```")
     A("")
-    A(f"- cuts/min: {ship_candidate['cuts_per_min']:.1f}  (baseline {base_cuts_mean:.1f} ± {base_cuts_std:.2f})")
-    A(f"- autocorr@chunk: {ship_candidate['autocorr_at_chunk_period']:.3f}  (baseline {base_ac_mean:.3f} ± {base_ac_std:.3f})")
+    A(
+        f"- cuts/min: {ship_candidate['cuts_per_min']:.1f}  (baseline {base_cuts_mean:.1f} ± {base_cuts_std:.2f})"
+    )
+    A(
+        f"- autocorr@chunk: {ship_candidate['autocorr_at_chunk_period']:.3f}  (baseline {base_ac_mean:.3f} ± {base_ac_std:.3f})"
+    )
     A(f"- latency penalty vs v0.11.0: +{ship_candidate['latency_penalty_ms']:.0f} ms")
     A("")
-    A("### Best overall (HIGH-latency tier — informational, NOT default change)")
+    A("### Best overall (HIGH-latency tier - informational, NOT default change)")
     A("")
-    A(f"**`{best['label']}`** — score {best['score']:.1f}")
+    A(f"**`{best['label']}`** - score {best['score']:.1f}")
     A("")
     A("```toml")
     for p in PARAM_NAMES:
         A(f"{p} = {best['config'][p]}")
     A("```")
     A("")
-    A(f"- cuts/min: {best['cuts_per_min']:.1f}  (baseline {base_cuts_mean:.1f} ± {base_cuts_std:.2f})")
-    A(f"- autocorr@chunk: {best['autocorr_at_chunk_period']:.3f}  (baseline {base_ac_mean:.3f} ± {base_ac_std:.3f})")
-    A(f"- latency penalty vs v0.11.0: +{best['latency_penalty_ms']:.0f} ms  ← exceeds 30 ms ship criterion")
+    A(
+        f"- cuts/min: {best['cuts_per_min']:.1f}  (baseline {base_cuts_mean:.1f} ± {base_cuts_std:.2f})"
+    )
+    A(
+        f"- autocorr@chunk: {best['autocorr_at_chunk_period']:.3f}  (baseline {base_ac_mean:.3f} ± {base_ac_std:.3f})"
+    )
+    A(
+        f"- latency penalty vs v0.11.0: +{best['latency_penalty_ms']:.0f} ms  ← exceeds 30 ms ship criterion"
+    )
     A("")
     A("If the user is willing to trade +100 ms e2e latency for the strongest")
     A("possible cut reduction (chunk_seconds=0.25 eliminates chunk-period")
@@ -198,7 +227,9 @@ def main() -> int:
     A(f"- ship-candidate cuts/min margin vs baseline: {-margin_cuts:+.1f}")
     A(f"  (- means improvement; threshold for 2-sigma significance: -{2 * base_cuts_std:.1f})")
     A(f"- 2-sigma significant: **{'YES' if is_2sigma_better else 'NO'}**")
-    A(f"- latency cost < 30 ms: **{'YES' if is_low_latency else 'NO'}**  ({ship_candidate['latency_penalty_ms']:.0f} ms)")
+    A(
+        f"- latency cost < 30 ms: **{'YES' if is_low_latency else 'NO'}**  ({ship_candidate['latency_penalty_ms']:.0f} ms)"
+    )
     A("")
     A("### Ship decision")
     A("")
@@ -218,25 +249,33 @@ def main() -> int:
     A("the others were held at baseline:")
     A("")
     for p in PARAM_NAMES:
-        runs = [r for r in p1 if abs(r["config"][p] - BASELINE[p]) > 1e-9 and
-                all(abs(r["config"][q] - BASELINE[q]) < 1e-9 for q in PARAM_NAMES if q != p)]
+        runs = [
+            r
+            for r in p1
+            if abs(r["config"][p] - BASELINE[p]) > 1e-9
+            and all(abs(r["config"][q] - BASELINE[q]) < 1e-9 for q in PARAM_NAMES if q != p)
+        ]
         runs.append(next((r for r in baselines), None))
         runs = [r for r in runs if r is not None]
         if not runs:
             continue
-        runs.sort(key=lambda r: r["cuts_per_min"] if r["cuts_per_min"] == r["cuts_per_min"] else 1e9)
+        runs.sort(
+            key=lambda r: r["cuts_per_min"] if r["cuts_per_min"] == r["cuts_per_min"] else 1e9
+        )
         bestp = runs[0]
-        A(f"- **{p}**: best = {bestp['config'][p]} → cuts/min {bestp['cuts_per_min']:.1f} "
-          f"(baseline {base_cuts_mean:.1f})")
+        A(
+            f"- **{p}**: best = {bestp['config'][p]} → cuts/min {bestp['cuts_per_min']:.1f} "
+            f"(baseline {base_cuts_mean:.1f})"
+        )
     A("")
-    A("### Generalizable lesson — exhaustive sweeps confirm what limited sweeps suggest")
+    A("### Generalizable lesson - exhaustive sweeps confirm what limited sweeps suggest")
     A("")
-    A(f"v0.12.0's first 4-condition sweep showed SOLA tuning was within noise.")
+    A("v0.12.0's first 4-condition sweep showed SOLA tuning was within noise.")
     A(f"v0.12.3's full {len(raw) - len(baselines)}-condition sweep confirms it. The chunk-boundary")
-    A(f"periodic mechanism is fundamental on this stack; tuning shifts but")
-    A(f"does not eliminate it. The user's v0.11.0 daily-use experience is")
-    A(f"the audible ceiling within software-only configurations on this")
-    A(f"hardware.")
+    A("periodic mechanism is fundamental on this stack; tuning shifts but")
+    A("does not eliminate it. The user's v0.11.0 daily-use experience is")
+    A("the audible ceiling within software-only configurations on this")
+    A("hardware.")
 
     out = "\n".join(lines) + "\n"
     (OUT_DIR / "lessons_41.md").write_text(out)
@@ -265,7 +304,9 @@ def main() -> int:
             shutil.copy(src, dst)
             print(f"[baseline] {dst}  ← {src}")
 
-    print(f"\n=== ship decision: {'v0.12.3 (default change)' if ship_final else 'v0.12.3-partial (no defaults)'} ===")
+    print(
+        f"\n=== ship decision: {'v0.12.3 (default change)' if ship_final else 'v0.12.3-partial (no defaults)'} ==="
+    )
 
     return 0
 

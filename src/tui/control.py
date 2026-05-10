@@ -1,7 +1,7 @@
 """Unix-socket control channel.
 
 Lets a running TUI (or headless engine) be poked from outside by a small CLI
-client — `woys toggle`, `woys pitch +1`, etc. Wired here
+client - `woys toggle`, `woys pitch +1`, etc. Wired here
 instead of D-Bus to avoid running a GLib mainloop alongside Textual's asyncio
 loop. KDE/GNOME WM shortcuts call the CLI; the CLI talks to this socket.
 
@@ -10,22 +10,22 @@ Protocol
 One newline-terminated command per connection. Server replies with a single
 short status line and closes. Commands:
 
-  TOGGLE        — start engine if stopped, stop if running
-  PITCH +N      — pitch shift +N semitones (relative)
-  PITCH -N      — pitch shift -N semitones (relative)
-  PITCH 0       — reset to 0
-  MODEL <slug>  — hot-swap the active RVC model (returns job id; v0.5.0 async)
-  PROFILE <n>   — apply a saved profile by name (returns job id; v0.5.0 async)
-  JOB <id>      — poll a previously-issued async job: pending/running/done/error
-  STATUS        — print one-line status (instant, never blocks)
-  QUIT          — instruct the TUI to exit
+  TOGGLE        - start engine if stopped, stop if running
+  PITCH +N      - pitch shift +N semitones (relative)
+  PITCH -N      - pitch shift -N semitones (relative)
+  PITCH 0       - reset to 0
+  MODEL <slug>  - hot-swap the active RVC model (returns job id; v0.5.0 async)
+  PROFILE <n>   - apply a saved profile by name (returns job id; v0.5.0 async)
+  JOB <id>      - poll a previously-issued async job: pending/running/done/error
+  STATUS        - print one-line status (instant, never blocks)
+  QUIT          - instruct the TUI to exit
 
 Async semantics (v0.5.0)
 ------------------------
 Slow commands (MODEL, PROFILE) return immediately with `OK job=<id>` and
 spawn the work on a background thread. Clients poll `JOB <id>` until the
 state is `done` or `error <msg>`. Older clients that only spoke MODEL get
-back the same OK reply but never poll — on a cache-cold swap they may see
+back the same OK reply but never poll - on a cache-cold swap they may see
 the new voice up to ~600 ms later, but no error.
 
 Path: $XDG_RUNTIME_DIR/woys/control.sock (falls back to /tmp).
@@ -179,10 +179,10 @@ class ControlServer:
         self._sock.settimeout(0.5)
         os.chmod(self.path, 0o600)
 
-        # v0.6.6 — guarantee the socket file gets unlinked even if stop()
+        # v0.6.6 - guarantee the socket file gets unlinked even if stop()
         # never runs (e.g. `kill <tui-pid>`). Without this, the next
         # `woys status` / `woys toggle` finds a stale path that exists()
-        # but refuses connect — the test_send_command_when_no_server case.
+        # but refuses connect - the test_send_command_when_no_server case.
         atexit.register(self._unlink_path)
         if signal.getsignal(signal.SIGTERM) in (signal.SIG_DFL, signal.SIG_IGN):
             signal.signal(signal.SIGTERM, _exit_on_signal)
@@ -246,11 +246,11 @@ def send_command(cmd: str, timeout: float = 30.0) -> str:
     """
     path = control_socket_path()
     if not path.exists():
-        return "ERR control socket not found — TUI not running?"
+        return "ERR control socket not found - TUI not running?"
     # B34 / corr-022: retry briefly on ConnectionRefusedError. The TUI's
     # bind → listen → settimeout sequence has a ~50 ms window where
     # `path.exists()` is True but `connect()` refuses. A client racing
-    # TUI startup hit this consistently before; 3 attempts × 100 ms
+    # TUI startup hit this consistently before; 3 attempts x 100 ms
     # absorbs the race without slowing down the truly-stale-socket path
     # noticeably.
     last_err: BaseException | None = None
@@ -269,8 +269,8 @@ def send_command(cmd: str, timeout: float = 30.0) -> str:
             last_err = e
             break
     if isinstance(last_err, FileNotFoundError):
-        return "ERR control socket stale — TUI not running?"
-    return "ERR control socket refused — TUI not accepting connections?"
+        return "ERR control socket stale - TUI not running?"
+    return "ERR control socket refused - TUI not accepting connections?"
 
 
 def submit_and_wait(
@@ -279,14 +279,14 @@ def submit_and_wait(
     poll_interval: float = 0.05,
     overall_timeout: float = 30.0,
 ) -> str:
-    """Helper — issue a slow command, parse the `OK job=<id>` reply, poll
+    """Helper - issue a slow command, parse the `OK job=<id>` reply, poll
     `JOB <id>` until done/error/timeout. Returns the final JOB reply line.
     """
     submit_reply = send_command(cmd, timeout=5.0)
     if not submit_reply.startswith("OK"):
         return submit_reply
     if "job=" not in submit_reply:
-        # Synchronous handler — no JOB protocol involved.
+        # Synchronous handler - no JOB protocol involved.
         return submit_reply
     jid = submit_reply.split("job=", 1)[1].split()[0]
     deadline = time.time() + overall_timeout
