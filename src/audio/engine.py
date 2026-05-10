@@ -2361,7 +2361,7 @@ class RealtimeEngine:
         """v0.6.4 - refuse to start if `cfg.sink_name` isn't a loaded
         PipeWire sink.
 
-        Without this guard, `pw-cat --target=…` and `pacat --device=…`
+        Without this guard, `pw-cat --target=...` and `pacat --device=...`
         treat the named sink as a hint: if it's missing, the session
         manager silently routes the stream to the *default* sink
         (typically laptop speakers). The engine's playback subprocess
@@ -2369,8 +2369,16 @@ class RealtimeEngine:
         voice plays out of the speakers instead of the virtual mic.
         See docs/10-monitor-leak-diag.md for the full forensic trail.
 
-        If `pactl` itself is unavailable or hangs, we skip the check
-        rather than refusing to start (best-effort guard).
+        v0.14.0 (Lens 9 / Lens 17 / Lens 19 / C014): pre-v0.14.0 the
+        function silently skipped the check on three error paths
+        (FileNotFoundError -> pactl missing; TimeoutExpired -> daemon
+        slow; nonzero rc -> pactl itself errored). Skipping re-opens
+        the v0.6.4 routing-to-laptop-speakers bug exactly when the
+        environment is most likely to be misconfigured. v0.14.0 hard-
+        fails on each: clearer than letting the engine start and serve
+        silence to the wrong sink. If a user really has no pactl, they
+        should set `sink_name=""` (skip-sink-check mode -- not yet
+        implemented; flagged for v0.14.x as an explicit opt-out).
         """
         try:
             result = subprocess.run(
@@ -2379,10 +2387,27 @@ class RealtimeEngine:
                 text=True,
                 timeout=5,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "pactl is not on PATH; cannot verify PipeWire sink presence. "
+                "Install pipewire-pulse (provides pactl) or use a system with "
+                "PulseAudio compatibility -- woys requires pactl for sink-load "
+                "verification. Refusing to start rather than risk routing audio "
+                "to the wrong sink."
+            ) from e
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                "pactl `list short sinks` timed out after 5s. PipeWire daemon "
+                "may be unresponsive (mid-restart, hung). Refusing to start "
+                "rather than skip the sink-load check. Try `systemctl --user "
+                "restart pipewire pipewire-pulse wireplumber` and re-run."
+            ) from e
         if result.returncode != 0:
-            return
+            raise RuntimeError(
+                f"pactl `list short sinks` exited {result.returncode}. "
+                f"stderr: {result.stderr.strip()[:200] or '<empty>'}. "
+                f"Refusing to start without verified sink presence."
+            )
         loaded = [line.split("\t")[1] for line in result.stdout.splitlines() if "\t" in line]
         if self.cfg.sink_name not in loaded:
             raise RuntimeError(
