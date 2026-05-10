@@ -173,8 +173,23 @@ class ControlServer:
         with contextlib.suppress(OSError):
             self.path.unlink(missing_ok=True)
 
-        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._sock.bind(str(self.path))
+        # v0.14.0 (Lens 6 / Lens 12 / C211): set restrictive umask
+        # AROUND the bind so the socket file is created with mode 0600
+        # atomically. Pre-v0.14.0 the bind created the file with the
+        # process's default umask (typically 0644 or 0664), then
+        # `os.chmod(..., 0o600)` ran AFTER -- a race window between
+        # bind and chmod where a co-resident attacker on the same UID's
+        # XDG_RUNTIME_DIR could connect to the socket before the
+        # restrictive mode landed. Setting umask 0077 makes the bind
+        # create the file as 0600 directly; the explicit chmod stays
+        # as a belt-and-braces guarantee on filesystems that don't
+        # honor umask on AF_UNIX sockets.
+        prior_umask = os.umask(0o077)
+        try:
+            self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self._sock.bind(str(self.path))
+        finally:
+            os.umask(prior_umask)
         self._sock.listen(4)
         self._sock.settimeout(0.5)
         os.chmod(self.path, 0o600)
