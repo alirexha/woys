@@ -11,6 +11,169 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.14.2] — 2026-05-10 — filter-chain rewrite: collapse the chain into one PipeWire-native module, eliminate intermediate sinks/monitors
+
+Apps now see exactly TWO woys input sources: `woys-by-alirexha` (the
+RNNoise-cleaned daily driver, only non-internal description) and
+`woys-mic` (description `_internal-raw-bypass`, the foundation source).
+The intermediate sinks `woys-mic-clean` and `woys-mic-rnnoise-bridge`
+plus their auto-monitors - five extra dropdown rows in v0.14.1 - are
+gone. Verified live on PipeWire 1.6.4: `pactl list short sources`
+returns a 6-row list with only those two woys entries (the others are
+the user's HyperX hardware mic + system audio output monitors).
+
+### How it works
+
+Replaces the v0.13.x..v0.14.1 four-module pactl chain with a single
+`libpipewire-module-filter-chain` configured via a conf file at
+`~/.config/pipewire/pipewire.conf.d/99-woys-chain.conf`. The filter-
+chain has:
+
+- `capture.props` (Stream/Input/Audio, `target.object = "woys-mic"`,
+  `node.passive = true`) - pulls from woys-mic, NOT pulse-visible
+  because Stream/* nodes are not enumerated by pulse-protocol.
+- A LADSPA RNNoise filter inside `filter.graph`.
+- `playback.props` with `media.class = Audio/Source` - this is the
+  one node libpulse exposes, named `woys-by-alirexha`.
+
+`media.class` empirically determines pulse visibility (verified by
+`pw-dump` against the live system): `Audio/Source` and `Audio/Sink`
+appear in `pactl list short sources`; `Stream/Input/Audio` and
+`Stream/Output/Audio` do not, regardless of `node.virtual`,
+`node.passive`, or `object.register=false`. v0.14.1 had three
+Audio/Sink modules each adding a sink + a monitor source, plus two
+remap-sources - eight pulse-visible woys rows. v0.14.2 keeps only the
+foundational `woys-mic` (Audio/Source) and the new `woys-by-alirexha`
+(Audio/Source from playback.props) - two rows.
+
+### Persistence
+
+PipeWire reads `~/.config/pipewire/pipewire.conf.d/` at every daemon
+startup, so the filter-chain auto-loads on every login. The
+v0.13.2..v0.14.1 systemd unit `woys-chain.service` is no longer
+needed and `setup()` removes it during the upgrade. The conf file IS
+the persistence mechanism in v0.14.2; if it's present, the chain is
+on, period.
+
+### Trade-offs (the cost of doing this right)
+
+- **Chain toggle requires a PipeWire daemon restart.** `woys chain
+  setup` and `woys chain teardown` run `systemctl --user restart
+  pipewire pipewire-pulse wireplumber`, which causes a 1-2 second
+  audio glitch across the whole desktop. Apps with open sources
+  briefly lose them. Acceptable because users keep the chain on
+  permanently and toggle ~never; the v0.14.1 model offered runtime
+  pactl unload at the cost of leaving five extra dropdown rows.
+- **`module-filter-chain` is not dynamically loadable** via `pactl
+  load-module` ("No such entity") nor `pw-cli load-module` ("Could
+  not load module") - both verified empirically. The conf-file +
+  daemon-restart approach is the only way to get filter-chain into
+  a running PipeWire.
+- **The legacy systemd unit gets cleaned up automatically** during
+  `setup()` to prevent it firing the v0.14.1 module-load flow at the
+  next login alongside the new conf-loaded filter-chain. Users who
+  depended on `systemctl --user is-active woys-chain.service` for
+  monitoring will see "not-found"; use `woys chain status` instead.
+
+### Fallback path
+
+If `/usr/lib/pipewire-0.3/libpipewire-module-filter-chain.so` is
+missing (extremely old PipeWire, not seen on any modern distro),
+`setup()` prints a warning and falls back to the v0.14.1 module-based
+pactl chain. The v0.14.1 code lives intact in private `_legacy_*`
+helpers so the fallback is a real working path, not a stub. Tested:
+`test_setup_falls_back_when_filter_chain_unavailable` and
+`test_legacy_setup_loads_audio_sink_class_and_mono_chain` keep both
+paths from bitrotting.
+
+### Hard ceiling
+
+`WoysSink.monitor` (the engine output sink's auto-monitor) and
+`woys-mic` itself (Audio/Source needed for the engine pipeline) will
+always be pulse-visible. v0.14.2 marks them with `_internal-` in
+their descriptions so any app that renders descriptions (pavucontrol,
+Telegram, Discord, KDE Volume Mixer) shows them as plumbing. Apps
+that enumerate by name only will still see all 6 rows. This is a
+libpulse limit, not a woys limit.
+
+### Added
+
+- `chain.filter_chain_supported()` - existence probe for the .so.
+- `chain._render_conf(plugin_path)` - pure conf-content generator,
+  parameterised on plugin path (some distros put the LADSPA shim in
+  /usr/local/lib or /usr/lib64 instead of /usr/lib/ladspa/).
+- `chain._restart_pipewire_stack()` - encapsulates the systemctl
+  restart of pipewire + pipewire-pulse + wireplumber.
+- `chain._wait_for_user_facing_source()` - polls pactl up to 8s
+  after the restart for `woys-by-alirexha` to appear; warns (does
+  not fail) if it doesn't, since the conf is in place either way.
+- `chain._ensure_woys_mic_loaded()` - re-arms `woys-mic.service`
+  after the pipewire restart (`Requires=pipewire-pulse.socket` only
+  triggers stops, not starts).
+- `chain._cleanup_legacy_systemd_unit()` - removes the v0.13.2..
+  v0.14.1 woys-chain.service when present.
+
+### Changed
+
+- `chain.setup()` is now the v0.14.2 filter-chain path with v0.14.1
+  fallback. The v0.14.1 module-loading code is preserved as private
+  `_legacy_setup()` / `_legacy_unload_chain_modules()`.
+- `chain.teardown()` removes the conf, restarts pipewire, also
+  unloads any leftover v0.14.1 modules a previous setup loaded, and
+  cleans up the legacy systemd unit.
+- `chain.status()` now reports mode (filter-chain conf present? legacy
+  modules loaded?) and lists the conf path. The v0.14.1
+  `_user_facing_sources` filter and "user-facing input devices apps
+  will display" section are unchanged.
+- `chain.enable()` / `chain.disable()` are thin wrappers around
+  `setup()` / `teardown()` - the v0.13.2..v0.14.1 systemd-unit
+  install/uninstall is gone. Kept as CLI commands so existing muscle
+  memory and docs keep working; print a v0.14.2 explainer.
+
+### Tests
+
+23 chain tests (was 17 in v0.14.1):
+
+- `_render_conf` content: target.object, mono, internal markers,
+  Audio/Source playback, passive capture, custom plugin path.
+- `filter_chain_supported()`: .so present / .so missing.
+- `setup()`: writes conf, restarts pipewire, relabels woys-mic,
+  rolls back conf on restart failure, falls back to v0.14.1 when
+  filter-chain unavailable, hard-fails when LADSPA plugin missing.
+- `teardown()`: removes conf + restarts, also unloads legacy
+  modules even when no conf is present.
+- `_legacy_setup()` direct test pins the v0.14.1 fallback against
+  bitrot.
+- v0.14.1 visibility filter (`_user_facing_sources`,
+  `_is_user_facing_description`) carried over with extra coverage
+  for `Monitor of _internal-rnnoise-filter`.
+- `XDG_CONFIG_HOME` honoured by both `_systemd_unit_path()` and
+  `_conf_file_path()`.
+
+### Verified live (CachyOS, PipeWire 1.6.4)
+
+- `pactl list short sources` woys rows: `woys-by-alirexha` +
+  `woys-mic` only. Five v0.14.1 rows (`woys-mic-clean.monitor`,
+  `woys-mic-rnnoise-bridge.monitor`, plus the three sinks
+  themselves) gone.
+- `pactl list sources` descriptions: `woys-by-alirexha` is the only
+  non-`_internal-` entry. `WoysSink.monitor` description is `Monitor
+  of _internal-woys-engine-output`; `woys-mic` description is
+  `_internal-raw-bypass`.
+- `pw-cli ls Node`: `_internal-woys-chain-capture` is
+  `Stream/Input/Audio` (not pulse-visible);
+  `output.filter-chain-N-M` (LADSPA filter wrapper) is
+  `Stream/Output/Audio` (not pulse-visible); `woys-by-alirexha` is
+  `Audio/Source`.
+- `pw-link -l`: `woys-mic:capture_FL ->
+  _internal-woys-chain-capture:input_MONO` confirms the
+  filter-chain pulls from woys-mic. `woys-by-alirexha` is the chain
+  output, available to consumers.
+- Legacy `~/.config/systemd/user/woys-chain.service` removed by
+  setup() during the live test.
+- 189 fast tests pass (166 prior + 23 chain), ruff + format + mypy
+  --strict clean.
+
 ## [0.14.1] — 2026-05-10 — single-default chain visibility: relabel woys-mic and intermediates so apps show one daily-driver option
 
 When the RNNoise chain is active (`woys chain setup`), apps that show
