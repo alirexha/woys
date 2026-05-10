@@ -861,6 +861,12 @@ class EngineStats:
     # Latest nvidia-smi -lgc / -rgc result message; surfaced in
     # `woys diag` so apply / revert failures are visible.
     gpu_clock_lock_last_message: str = ""
+    # v0.14.0 (Lens 17 / Lens 19 / C019): True iff the most recent
+    # `nvidia-smi -rgc` failed (sudo revoked, driver flicker). The next
+    # engine.start() inspects this flag and attempts a fresh -rgc before
+    # applying a new lock; otherwise the GPU stays locked across
+    # sessions with only `last_error` (easily clobbered) as evidence.
+    gpu_clock_lock_revert_failed: bool = False
 
     # v0.11.0 - track the helper's last-known exit cause(s) so the
     # watchdog's "respawned" message doesn't clobber the original
@@ -2142,6 +2148,13 @@ class RealtimeEngine:
         if self._gc_was_enabled_before_start:
             gc.disable()
 
+        # v0.14.0 (Lens 17 / C010): always install signal handlers, even
+        # when clock lock is disabled. SIGTERM / SIGINT used to kill the
+        # process immediately on default config -- now they coordinate a
+        # clean engine.stop() (drains writer queue, releases ORT
+        # sessions, terminates inference subprocess).
+        self._install_signal_handlers()
+
         # v0.11.0 - apply GPU clock lock at the start of engine activity.
         # Done BEFORE session loading so cuDNN warmup runs at the locked
         # boost clock (avoids retuning under post-lock-application clock
@@ -2828,9 +2841,21 @@ class RealtimeEngine:
 
     def _apply_gpu_clock_lock(self) -> None:
         """v0.11.0 - apply nvidia-smi -lgc <floor>,<ceiling>. Hard-fails
-        the engine start on any unexpected output / exit code. Also
-        installs a SIGTERM/SIGINT handler so kill / Ctrl-C reverts the
-        lock before the process exits."""
+        the engine start on any unexpected output / exit code.
+
+        v0.14.0 (Lens 17 / Lens 19 / C019): if the previous session's
+        revert failed (`gpu_clock_lock_revert_failed=True`), attempt a
+        fresh -rgc before applying the new lock. Without this, a stuck
+        lock from a prior session compounds with the new -lgc and the
+        GPU stays at boost-clocks indefinitely.
+        """
+        if self.stats.gpu_clock_lock_revert_failed:
+            ok, msg = self._run_nvidia_smi(["-rgc"], timeout=4.0)
+            if ok:
+                self.stats.gpu_clock_lock_revert_failed = False
+            self.stats.gpu_clock_lock_last_message = (f"recovery -rgc on prior failure: {msg}")[
+                :200
+            ]
         floor, ceiling = self._resolve_clock_lock_range()
         ok, msg = self._run_nvidia_smi(["-lgc", f"{floor},{ceiling}"])
         self.stats.gpu_clock_lock_last_message = msg[:200]
@@ -2849,56 +2874,91 @@ class RealtimeEngine:
         self.stats.gpu_clock_lock_floor_mhz = floor
         self.stats.gpu_clock_lock_ceiling_mhz = ceiling
 
-        # Best-effort signal handler so SIGTERM / SIGINT revert the lock.
-        # SIGKILL cannot be caught - documented in docs/22-gpu-clock-lock.md.
-        # Only install handlers if we're on the main thread (signal.signal
-        # raises ValueError otherwise; engine.start() runs in caller's thread
-        # which is typically main but might not be in tests).
-        if threading.current_thread() is threading.main_thread():
-            for sig in (signal.SIGTERM, signal.SIGINT):
-                # Some environments (Textual TUI inside async loop) don't
-                # let us install handlers; that's fine, engine.stop() will
-                # still revert on the normal exit path.
-                with contextlib.suppress(OSError, ValueError):
-                    self._prior_signal_handlers[sig] = signal.signal(
-                        sig, self._signal_handler_revert_lock
-                    )
+    def _install_signal_handlers(self) -> None:
+        """v0.14.0 (Lens 17 / C010): always install SIGTERM/SIGINT handlers
+        at engine.start, regardless of clock-lock state. Pre-v0.14.0 the
+        handler was installed only inside `_apply_gpu_clock_lock`; with
+        the default `gpu_anti_jitter_mode="off"` config, signal-delivered
+        death used Python's default (terminate immediately) and orphaned
+        the inference subprocess + leaked the writer queue.
+
+        Only install on the main thread (signal.signal raises ValueError
+        otherwise). Prior handlers (Textual's, CLI's) are saved and
+        re-installed by `_revert_gpu_clock_lock` on clean stop OR by the
+        signal handler itself before re-raising.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            return
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            # Some environments (Textual TUI inside async loop) don't
+            # let us install handlers; that's fine, engine.stop() still
+            # cleans up on the normal exit path.
+            with contextlib.suppress(OSError, ValueError):
+                self._prior_signal_handlers[sig] = signal.signal(
+                    sig, self._signal_handler_revert_lock
+                )
 
     def _revert_gpu_clock_lock(self) -> None:
         """v0.11.0 - call nvidia-smi -rgc and restore prior signal
         handlers. Idempotent (safe to call multiple times); a second call
-        when the lock isn't active just no-ops."""
-        if not self.stats.gpu_clock_lock_active:
-            return
-        ok, msg = self._run_nvidia_smi(["-rgc"], timeout=4.0)
-        self.stats.gpu_clock_lock_last_message = msg[:200]
-        # Mark inactive whether or not the call succeeded - we don't want a
-        # second engine start to try to "re-revert" on a stale state. If the
-        # call failed, the user sees the error in last_message + last_error.
-        self.stats.gpu_clock_lock_active = False
-        if not ok:
-            self.stats.last_error = (
-                f"nvidia-smi -rgc failed at engine stop: {msg}. "
-                f"Run `sudo nvidia-smi -rgc` manually to release the lock."
-            )
+        when the lock isn't active just no-ops.
 
-        # Restore prior signal handlers.
+        v0.14.0 (Lens 17 / Lens 19 / C019): track revert success in a
+        separate `gpu_clock_lock_revert_failed` flag. Pre-v0.14.0 the
+        function set `gpu_clock_lock_active=False` whether or not -rgc
+        succeeded, so a sudo-revoked failure left the GPU locked but the
+        engine flagged it as released. Next start saw "fresh state" and
+        applied a new lock on top of the stale one. The new flag lets
+        `_apply_gpu_clock_lock` detect and recover.
+        """
+        if self.stats.gpu_clock_lock_active:
+            ok, msg = self._run_nvidia_smi(["-rgc"], timeout=4.0)
+            self.stats.gpu_clock_lock_last_message = msg[:200]
+            if ok:
+                self.stats.gpu_clock_lock_active = False
+                self.stats.gpu_clock_lock_revert_failed = False
+            else:
+                # Keep gpu_clock_lock_active=True so the next start
+                # detects a stale lock and attempts recovery -rgc; set
+                # the dedicated failure flag so it isn't ambiguous.
+                self.stats.gpu_clock_lock_revert_failed = True
+                self.stats.last_error = (
+                    f"nvidia-smi -rgc failed at engine stop: {msg}. "
+                    f"Next engine.start() will retry; or run "
+                    f"`sudo nvidia-smi -rgc` manually."
+                )
+
+        # Restore prior signal handlers (whether or not -rgc succeeded -
+        # signal handlers should always go back to caller's pre-engine
+        # state on stop).
         for sig, prior in self._prior_signal_handlers.items():
             with contextlib.suppress(OSError, ValueError):
                 signal.signal(sig, prior)
         self._prior_signal_handlers.clear()
 
     def _signal_handler_revert_lock(self, signum: int, frame: object) -> None:
-        """SIGTERM / SIGINT handler that reverts the GPU clock lock and
-        re-raises the default action so the process still exits cleanly.
-        Best-effort: a SIGKILL bypasses this entirely."""
-        # Don't let cleanup errors mask the original signal.
+        """SIGTERM / SIGINT handler that coordinates clean shutdown.
+        Best-effort: a SIGKILL bypasses this entirely.
+
+        v0.14.0 (Lens 8 / Lens 17 / C005): the pre-v0.14.0 handler did
+        `signal.signal(signum, SIG_DFL)` AFTER `_revert_gpu_clock_lock`
+        restored the prior (Textual / CLI) handler -- the SIG_DFL clobber
+        undid the just-restored handler and bypassed Textual's clean-
+        shutdown chain. Now the handler:
+          1. Sets `_stop_event` so the engine thread exits the run loop
+             cleanly (drains pacat, releases ORT sessions).
+          2. Reverts the clock lock if held (no-op otherwise).
+          3. Re-raises the signal via `os.kill`. `_revert_gpu_clock_lock`
+             already restored the prior handler; the kernel will deliver
+             the queued signal to that handler after this function
+             returns.
+        """
+        with contextlib.suppress(Exception):
+            self._stop_event.set()
         with contextlib.suppress(Exception):
             self._revert_gpu_clock_lock()
-        # Restore default handler then re-raise so the process exits
-        # the way the user asked.
-        with contextlib.suppress(OSError, ValueError):
-            signal.signal(signum, signal.SIG_DFL)
+        # Re-raise. `_revert_gpu_clock_lock` already restored the prior
+        # handler; kernel will deliver this signal to that handler.
         os.kill(os.getpid(), signum)
 
     def _torch_keepalive_loop(self) -> None:

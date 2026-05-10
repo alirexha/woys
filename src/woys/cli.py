@@ -631,6 +631,25 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
         engine_cfg.rvc_model = rvc_path
 
     eng = RealtimeEngine(engine_cfg)
+
+    # v0.14.0 (Lens 12 / Lens 17 / C217): install SIGINT/SIGTERM handler
+    # BEFORE eng.start(). Pre-v0.14.0 the handler was installed AFTER
+    # start() returned, so a Ctrl-C during the multi-second warmup
+    # (cuDNN tune + clock-lock + subprocess spawn) hit Python's default
+    # handler and killed the process without engine.stop() -- leaking
+    # GPU clock lock + orphaning inference subprocess. Engine itself
+    # also installs its own clock-lock-revert handler in start(); the
+    # engine handler chains to this one via the prior-handler
+    # mechanism (see RealtimeEngine._signal_handler_revert_lock).
+    stop = {"now": False}
+
+    def _on_sigint(signum: int, _frame: object) -> None:
+        del signum
+        stop["now"] = True
+
+    _signal.signal(_signal.SIGINT, _on_sigint)
+    _signal.signal(_signal.SIGTERM, _on_sigint)
+
     print("starting engine...")
     eng.start()
     # v0.11.0 - surface anti-jitter mode + clock lock state so the
@@ -661,15 +680,6 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
         f"engine running. child_pid={eng.stats.child_pid} "
         f"rvc_output_sr={eng._rvc_output_sr} active_embedder={eng.active_embedder}"
     )
-
-    stop = {"now": False}
-
-    def _on_sigint(signum: int, _frame: object) -> None:
-        del signum
-        stop["now"] = True
-
-    _signal.signal(_signal.SIGINT, _on_sigint)
-    _signal.signal(_signal.SIGTERM, _on_sigint)
 
     # v0.8.0-rc4 - capture child_pid + last_error BEFORE eng.stop()
     # since stop() clears them as part of subprocess teardown. We

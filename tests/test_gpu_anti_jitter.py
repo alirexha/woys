@@ -335,10 +335,16 @@ def test_revert_gpu_clock_lock_calls_rgc_when_active() -> None:
     assert eng.stats.gpu_clock_lock_active is False
 
 
-def test_revert_gpu_clock_lock_logs_failure_but_marks_inactive() -> None:
-    """If -rgc fails for any reason, we still flip active=False so a
-    subsequent engine restart doesn't try to "re-revert". The error is
-    surfaced via last_error so the user can run -rgc manually."""
+def test_revert_gpu_clock_lock_failure_keeps_active_and_flags_revert_failed() -> None:
+    """v0.14.0 (Lens 17 / Lens 19 / C019): if -rgc fails (sudo revoked,
+    driver flicker), keep `gpu_clock_lock_active=True` AND set the new
+    `gpu_clock_lock_revert_failed=True` flag. Pre-v0.14.0 the function
+    flipped active=False whether or not -rgc succeeded -- a sudo-revoked
+    failure left the GPU locked but the engine flagged it as released,
+    so the next engine.start() applied a fresh -lgc on top of the stale
+    lock with no recovery path. The new flag lets _apply_gpu_clock_lock
+    detect the stale lock and run a recovery -rgc before -lgc.
+    """
     eng = _mk_engine(
         gpu_clock_lock_enabled=True,
         gpu_clock_lock_floor_mhz=1845,
@@ -346,10 +352,36 @@ def test_revert_gpu_clock_lock_logs_failure_but_marks_inactive() -> None:
     )
     with patch.object(type(eng), "_run_nvidia_smi", return_value=(True, "All done.")):
         eng._apply_gpu_clock_lock()
+    assert eng.stats.gpu_clock_lock_active is True
+
     with patch.object(type(eng), "_run_nvidia_smi", return_value=(False, "exit=1: oh no")):
         eng._revert_gpu_clock_lock()
-    assert eng.stats.gpu_clock_lock_active is False
+    # Active stays True so the next start sees the stale lock.
+    assert eng.stats.gpu_clock_lock_active is True
+    # New flag tells the apply path to retry -rgc before -lgc.
+    assert eng.stats.gpu_clock_lock_revert_failed is True
+    # last_error still surfaces the failure to the user.
     assert "nvidia-smi -rgc failed" in (eng.stats.last_error or "")
+
+
+def test_revert_gpu_clock_lock_success_clears_revert_failed_flag() -> None:
+    """v0.14.0: a successful -rgc clears both `active` and the
+    `revert_failed` flag (e.g. user re-grants sudo and engine.stop()
+    runs cleanly)."""
+    eng = _mk_engine(
+        gpu_clock_lock_enabled=True,
+        gpu_clock_lock_floor_mhz=1845,
+        gpu_clock_lock_ceiling_mhz=1845,
+    )
+    with patch.object(type(eng), "_run_nvidia_smi", return_value=(True, "All done.")):
+        eng._apply_gpu_clock_lock()
+    # Simulate a previous failed revert leaving the flag stuck:
+    eng.stats.gpu_clock_lock_revert_failed = True
+
+    with patch.object(type(eng), "_run_nvidia_smi", return_value=(True, "All done.")):
+        eng._revert_gpu_clock_lock()
+    assert eng.stats.gpu_clock_lock_active is False
+    assert eng.stats.gpu_clock_lock_revert_failed is False
 
 
 # ---- Torch keepalive fallback paths -----------------------------------------
