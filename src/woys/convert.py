@@ -217,6 +217,10 @@ def convert_pth_to_onnx(
     output_path = Path(output_path).resolve()
 
     meta = _probe_pth_metadata(pth_path, trust_pickle=trust_pickle)
+    # v0.14.0 (Lens 6 / C015): consent state captured here, used by
+    # `_gated_torch_load` (defined below) to gate the unsafe load that
+    # _export2onnx performs internally.
+    pth_already_consented = _user_trusts_pickle(trust_pickle)
     print(
         f"[convert] {pth_path.name}: "
         f"type={meta.modelType.split('.')[-1]} sr={meta.samplingRate} "
@@ -256,8 +260,44 @@ def convert_pth_to_onnx(
         kwargs.setdefault("opset_version", opset)
         return original_export(*args, **kwargs)
 
+    # v0.14.0 (Lens 6 / C015): the pickle gate in _safe_torch_load gates
+    # _probe_pth_metadata, but upstream's _export2onnx (line 61 in
+    # src/server/voice_changer/RVC/onnxExporter/export2onnx.py) calls
+    # torch.load(input_model, map_location="cpu") with NO weights_only
+    # arg. On torch < 2.6 the default is weights_only=False, which
+    # executes arbitrary pickle code on import (CVE class). Without this
+    # patch, woys probed the file safely, asked for consent, then loaded
+    # it unsafely anyway during the export step.
+    #
+    # We monkey-patch torch.load for the duration of _export2onnx with
+    # the same `_safe_torch_load`-style gate. Trust state is determined
+    # by whether _probe_pth_metadata was called with trust_pickle=True
+    # (it had to be, otherwise we'd never have reached this point with
+    # a non-weights_only-loadable .pth). The flag is captured by
+    # `pth_already_consented` from the calling scope below.
+    original_torch_load: Any = torch.load
+
+    def _gated_torch_load(*args: Any, **kwargs: Any) -> Any:
+        # First try weights_only=True if not already specified.
+        if "weights_only" not in kwargs:
+            try:
+                return original_torch_load(*args, weights_only=True, **kwargs)
+            except Exception as safe_err:
+                # The upstream caller wants weights_only=False semantics.
+                # Allow only with already-granted consent.
+                if not pth_already_consented:
+                    raise RuntimeError(
+                        "[security] _export2onnx attempted unsafe torch.load "
+                        f"on {args[0] if args else '<?>'} but no consent was "
+                        f"granted. Re-run with --yes-i-trust-the-pickle, or "
+                        f"set {_TRUST_PICKLE_ENV}=1."
+                    ) from safe_err
+                return original_torch_load(*args, weights_only=False, **kwargs)
+        return original_torch_load(*args, **kwargs)
+
     try:
         torch.onnx.export = _export_with_opset
+        torch.load = _gated_torch_load
         _export2onnx(
             str(pth_path),
             str(output_path),
@@ -267,6 +307,7 @@ def convert_pth_to_onnx(
         )
     finally:
         torch.onnx.export = original_export
+        torch.load = original_torch_load
 
     if not output_path.exists():
         raise RuntimeError(f"export silently failed - {output_path} not created")
