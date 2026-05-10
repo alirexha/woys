@@ -137,7 +137,21 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
     api = HfApi()
     info = api.repo_info(repo)
     siblings = getattr(info, "siblings", None) or []
-    # B25 / sec-009: build a name → expected SHA map from the HF API. lfs files
+    # v0.14.0 (Lens 6 / C125): pin the download to the commit SHA we
+    # observed at repo_info time. Pre-v0.14.0 hf_hub_download() ran
+    # without `revision=`, so it could resolve to whatever the HF
+    # service called "latest" at the moment of each per-file call --
+    # different from the commit we built `lfs_sha_by_name` from. A
+    # coordinated push between repo_info() and hf_hub_download() would
+    # have shipped a tampered file with a freshly-rebuilt SHA in the
+    # service-side metadata, defeating the local sha256 verify.
+    pinned_revision = getattr(info, "sha", None)
+    if pinned_revision is None:
+        # Fallback: if HfApi doesn't surface a commit sha (older
+        # huggingface_hub versions), defer to the repo's main branch
+        # but warn that the SHA verify is the only line of defense.
+        pinned_revision = "main"
+    # B25 / sec-009: build a name -> expected SHA map from the HF API. lfs files
     # have a `lfs` blob with `sha256`; small (non-lfs) files surface their git
     # blob_id in `blob_id` (which is *not* SHA256 but *is* a stable content
     # hash that detects mid-flight tampering). We verify lfs SHAs hard, treat
@@ -156,7 +170,7 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
     models_dir.mkdir(parents=True, exist_ok=True)
     landed: list[Path] = []
     for rfn in entries:
-        cached = hf_hub_download(repo_id=repo, filename=rfn)
+        cached = hf_hub_download(repo_id=repo, filename=rfn, revision=pinned_revision)
         # B25: verify SHA256 of the cache file against the HF API's reported
         # value. If the cache was tampered with after hf_hub_download wrote
         # it, this catches it; legitimate upstream rehashes invalidate the
