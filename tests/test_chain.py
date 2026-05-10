@@ -81,6 +81,14 @@ class _PactlRouter:
         return _ok()
 
 
+def _patch_relabel_noop() -> Any:
+    """v0.14.1 - chain.setup/teardown call audio.pipewire.relabel_source.
+    Tests that don't care about the relabel itself stub it out so the
+    pipewire module isn't required and pactl's source-state assumptions
+    aren't tripped by an extra unload+reload pair."""
+    return patch("audio.pipewire.relabel_source")
+
+
 def test_setup_loads_audio_sink_class_and_mono_chain() -> None:
     """v0.13.2 routing fix + v0.13.3 friendly-naming topology. Regression guard
     for: media.class=Audio/Sink, channels=1 throughout, and a user-facing
@@ -93,6 +101,7 @@ def test_setup_loads_audio_sink_class_and_mono_chain() -> None:
     with (
         patch.object(chain.Path, "is_file", lambda self: True),
         patch.object(chain.subprocess, "run", side_effect=router),
+        _patch_relabel_noop(),
     ):
         rc = chain.setup()
 
@@ -105,23 +114,37 @@ def test_setup_loads_audio_sink_class_and_mono_chain() -> None:
     # 1. Null-sink: must be Audio/Sink (NOT Audio/Source/Virtual - that
     #    was the v0.13.0 bug). Description is the _internal- marker so
     #    users see "this isn't the source you want" in the dropdown.
+    #    v0.14.1: also carries node.passive=true (PipeWire-native hint
+    #    that this is plumbing) and session.suspend-timeout-seconds=0.
+    null_sink_props = next((a for a in null_sink if a.startswith("sink_properties=")), "")
     assert "module-null-sink" in null_sink
     assert "media.class=Audio/Sink" in null_sink
     assert f"sink_name={chain.SINK_FINAL}" in null_sink
     assert "channels=1" in null_sink
-    assert f"sink_properties=device.description={chain.DESC_FINAL_SINK}" in null_sink
+    assert f"device.description={chain.DESC_FINAL_SINK}" in null_sink_props
+    assert "node.passive=true" in null_sink_props, (
+        f"v0.14.1: null-sink must have node.passive=true; got {null_sink_props!r}"
+    )
+    assert "session.suspend-timeout-seconds=0" in null_sink_props, (
+        f"v0.14.1: null-sink must have session.suspend-timeout-seconds=0; got {null_sink_props!r}"
+    )
     assert chain.DESC_FINAL_SINK.startswith("_internal-"), (
         "internal sink description must be marked clearly"
     )
 
     # 2. LADSPA-sink: mono, sink_master points at woys-mic-clean,
     #    plugin label is the mono variant, also tagged as internal.
+    #    v0.14.1: also carries node.passive=true.
+    ladspa_props = next((a for a in ladspa_sink if a.startswith("sink_properties=")), "")
     assert "module-ladspa-sink" in ladspa_sink
     assert f"sink_master={chain.SINK_FINAL}" in ladspa_sink
     assert f"sink_name={chain.SINK_BRIDGE}" in ladspa_sink
     assert "label=noise_suppressor_mono" in ladspa_sink
     assert "channels=1" in ladspa_sink
-    assert f"sink_properties=device.description={chain.DESC_BRIDGE}" in ladspa_sink
+    assert f"device.description={chain.DESC_BRIDGE}" in ladspa_props
+    assert "node.passive=true" in ladspa_props, (
+        f"v0.14.1: ladspa-sink must have node.passive=true; got {ladspa_props!r}"
+    )
     assert chain.DESC_BRIDGE.startswith("_internal-")
 
     # 3. Loopback: feeds woys-mic into the bridge, mono.
@@ -200,6 +223,7 @@ def test_setup_unloads_stale_chain_before_loading() -> None:
     with (
         patch.object(chain.Path, "is_file", lambda self: True),
         patch.object(chain.subprocess, "run", side_effect=router),
+        _patch_relabel_noop(),
     ):
         chain.setup()
 
@@ -229,6 +253,7 @@ def test_setup_rolls_back_when_ladspa_load_fails() -> None:
     with (
         patch.object(chain.Path, "is_file", lambda self: True),
         patch.object(chain.subprocess, "run", side_effect=router),
+        _patch_relabel_noop(),
     ):
         rc = chain.setup()
 
@@ -292,9 +317,169 @@ def test_disable_no_unit_still_unloads_modules() -> None:
     with (
         patch.object(chain, "_systemd_unit_path", return_value=fake_unit_path),
         patch.object(chain.subprocess, "run", side_effect=router),
+        _patch_relabel_noop(),
     ):
         rc = chain.disable()
     assert rc == 0
     fake_unit_path.unlink.assert_not_called()
     unload_ids = [c[2] for c in router.calls if c[:2] == ["pactl", "unload-module"]]
     assert {"50", "51", "52", "53"} <= set(unload_ids)
+
+
+# v0.14.1 - single-default visibility ----------------------------------------
+
+
+def test_setup_relabels_woys_mic_to_internal_raw_bypass() -> None:
+    """v0.14.1 promise: when chain is active, woys-mic shows up to apps
+    as `_internal-raw-bypass` (description), so users see only
+    `woys-by-alirexha` as a non-internal woys option in their picker.
+    The source NAME `woys-mic` is preserved for back-compat."""
+    router = _PactlRouter(
+        sources="1\twoys-mic\tdummy-driver\t1\tIDLE\n",
+        modules="",
+    )
+    with (
+        patch.object(chain.Path, "is_file", lambda self: True),
+        patch.object(chain.subprocess, "run", side_effect=router),
+        patch("audio.pipewire.relabel_source") as mock_relabel,
+    ):
+        rc = chain.setup()
+    assert rc == 0
+    mock_relabel.assert_called_once()
+    args, kwargs = mock_relabel.call_args
+    # Description is the chain-active constant; passive=True is set so
+    # PipeWire-native consumers see the node as plumbing.
+    from audio.pipewire import SOURCE_DESC_CHAIN_ACTIVE
+
+    assert args == (SOURCE_DESC_CHAIN_ACTIVE,) or kwargs.get("description") == (
+        SOURCE_DESC_CHAIN_ACTIVE
+    )
+    assert kwargs.get("passive") is True
+
+
+def test_setup_succeeds_even_when_relabel_fails() -> None:
+    """The relabel is cosmetic - if it fails (e.g. woys-mic isn't
+    loaded), the chain still works. Setup must NOT roll back the chain
+    just because the relabel raised; users would lose the actual
+    RNNoise filter for a label-only failure."""
+    router = _PactlRouter(
+        sources="1\twoys-mic\tdrv\t1\tIDLE\n",
+        modules="",
+    )
+    with (
+        patch.object(chain.Path, "is_file", lambda self: True),
+        patch.object(chain.subprocess, "run", side_effect=router),
+        patch("audio.pipewire.relabel_source", side_effect=RuntimeError("boom")),
+    ):
+        rc = chain.setup()
+    assert rc == 0
+
+
+def test_teardown_restores_woys_mic_default_description() -> None:
+    """v0.14.1 promise: after teardown, woys-mic is back to
+    `woys-no-cleanup` so users without the chain see a sensible
+    daily-driver label."""
+    router = _PactlRouter(modules="")
+    with (
+        patch.object(chain.subprocess, "run", side_effect=router),
+        patch("audio.pipewire.relabel_source") as mock_relabel,
+    ):
+        rc = chain.teardown()
+    assert rc == 0
+    mock_relabel.assert_called_once()
+    args, kwargs = mock_relabel.call_args
+    from audio.pipewire import SOURCE_DESC
+
+    assert args == (SOURCE_DESC,) or kwargs.get("description") == SOURCE_DESC
+    assert kwargs.get("passive") is False
+
+
+def test_user_facing_sources_filters_internal_descriptions() -> None:
+    """v0.14.1 - parsing `pactl list sources` output. Sources with
+    descriptions starting with `_internal-` are plumbing; everything
+    else is user-facing. Used by `chain.status()` to render the
+    'apps will display' section."""
+    sample = """\
+Source #95
+\tState: RUNNING
+\tName: woys-mic
+\tDescription: _internal-raw-bypass
+\tDriver: PipeWire
+Source #337
+\tState: RUNNING
+\tName: woys-mic-clean.monitor
+\tDescription: Monitor of _internal-clean-sink
+\tDriver: PipeWire
+Source #354
+\tState: RUNNING
+\tName: woys-by-alirexha
+\tDescription: woys-by-alirexha
+\tDriver: PipeWire
+Source #58
+\tState: RUNNING
+\tName: alsa_input.usb-HyperX_QuadCast.analog-stereo
+\tDescription: HyperX QuadCast 2 S
+\tDriver: PipeWire
+"""
+    rows = chain._user_facing_sources(sample)
+    names = [name for name, _ in rows]
+    descs = dict(rows)
+
+    # woys-mic is hidden (description starts with `_internal-`).
+    assert "woys-mic" not in names
+    # woys-by-alirexha is the user-facing chain endpoint.
+    assert "woys-by-alirexha" in names
+    assert descs["woys-by-alirexha"] == "woys-by-alirexha"
+    # Real hardware mic comes through as user-facing too.
+    assert "alsa_input.usb-HyperX_QuadCast.analog-stereo" in names
+
+    # Crucial: only ONE woys* source should be user-facing when chain
+    # is active. This is the test that fails if a regression makes
+    # `_internal-` markers get dropped somewhere.
+    woys_user_facing = [n for n in names if "woys" in n]
+    assert woys_user_facing == ["woys-by-alirexha"], (
+        f"expected exactly one user-facing woys source, got {woys_user_facing}"
+    )
+
+
+def test_user_facing_sources_filters_monitor_of_internal() -> None:
+    """Pipewire-pulse auto-derives `.monitor` source descriptions as
+    `Monitor of <sink description>`. When the sink is `_internal-...`,
+    the monitor's description becomes `Monitor of _internal-...` and
+    apps render it that way. The `_user_facing_sources` filter must
+    catch this case too (matches by `contains _internal-`, not
+    `startswith _internal-`)."""
+    sample = """\
+Source #1
+\tName: foo.monitor
+\tDescription: Monitor of _internal-clean-sink
+Source #2
+\tName: real-mic
+\tDescription: Real Microphone
+"""
+    rows = chain._user_facing_sources(sample)
+    names = [name for name, _ in rows]
+    assert "foo.monitor" not in names, (
+        "v0.14.1: Monitor of _internal-... must be filtered out as plumbing"
+    )
+    assert "real-mic" in names
+
+
+def test_user_facing_sources_empty_input() -> None:
+    assert chain._user_facing_sources("") == []
+
+
+def test_is_user_facing_description() -> None:
+    """The single-source-of-truth predicate. Used by status() and
+    indirectly by `_user_facing_sources`. Pin the rules:
+    - Descriptions starting with `_internal-` are plumbing.
+    - Descriptions containing `_internal-` anywhere are plumbing
+      (catches `Monitor of _internal-...`).
+    - Real device names and `woys-by-alirexha` are user-facing.
+    """
+    assert chain._is_user_facing_description("woys-by-alirexha") is True
+    assert chain._is_user_facing_description("HyperX QuadCast 2 S") is True
+    assert chain._is_user_facing_description("woys-no-cleanup") is True
+    assert chain._is_user_facing_description("_internal-raw-bypass") is False
+    assert chain._is_user_facing_description("_internal-clean-sink") is False
+    assert chain._is_user_facing_description("Monitor of _internal-clean-sink") is False

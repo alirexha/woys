@@ -49,6 +49,22 @@ SOURCE_NAME = "woys-mic"
 SINK_DESC = "_internal-woys-engine-output"
 SOURCE_DESC = "woys-no-cleanup"
 
+# v0.14.1 - description applied to woys-mic when the RNNoise chain is
+# active (chain.setup() reloads the remap-source with this). Apps that
+# show descriptions then see only `woys-by-alirexha` as a non-internal
+# option in their input picker; users who explicitly want raw bypass
+# can still pick `woys-mic` by exact name. chain.teardown() reverts
+# back to SOURCE_DESC.
+#
+# Hard limit: pulseaudio compat (libpulse, used by pavucontrol /
+# Telegram / Discord / KDE Volume Mixer) enumerates ALL sources
+# regardless of node.passive / node.virtual / object.register=false.
+# No property hides a node from pactl listings - we tested. The
+# `_internal-` description prefix is the only signal those apps will
+# render to a user. node.passive=true is set anyway, for any future
+# PipeWire-native consumer that does respect it.
+SOURCE_DESC_CHAIN_ACTIVE = "_internal-raw-bypass"
+
 # v0.6.5 - pre-rename source name. Probe / teardown still recognise it so
 # v0.6.4-and-earlier users can be cleanly upgraded on next `woys pw setup`.
 # Safe to remove in a future major when no in-the-wild install can have it.
@@ -298,3 +314,62 @@ class VirtualMic:
                 f"failed to load remap-source: {out.stderr.strip() or out.stdout.strip()}"
             )
         return int(out.stdout.strip())
+
+
+def relabel_source(description: str, *, passive: bool) -> None:
+    """v0.14.1 - reload the woys-mic remap-source with a different description.
+
+    Used by chain.setup() / chain.teardown() to swap woys-mic between
+    "daily driver" labelling (`woys-no-cleanup`, no passive flag) and
+    "raw bypass while chain is active" labelling
+    (`_internal-raw-bypass`, node.passive=true). The source NAME stays
+    `woys-mic` so apps that pin by exact name keep working - only the
+    user-visible description changes.
+
+    No-op if woys-mic isn't loaded (e.g. caller forgot `woys pw setup`).
+    Hard-fails on reload errors so the caller knows the relabel didn't
+    take effect; chain.setup() catches and rolls back.
+
+    Description must be whitespace-free - pactl on pipewire-pulse splits
+    `source_properties=...` values on whitespace before the proplist
+    parser sees them. A description containing a space gets silently
+    truncated. Hyphens substitute fine.
+    """
+    if " " in description or "\t" in description or "\n" in description:
+        raise PipeWireError(
+            f"description {description!r} contains whitespace - pactl will truncate "
+            "it; use hyphens instead"
+        )
+
+    state = get_state()
+    if state.source_module_id is None:
+        return  # no woys-mic to relabel; not an error
+
+    # Unload the old remap-source. Apps consuming it will briefly see the
+    # source vanish, then a new one with the same NAME reappear under a
+    # different description. Loopbacks loaded by chain.py auto-rebind to
+    # the same name on next setup, so no explicit chain restart needed.
+    unload = _run_pactl(["unload-module", str(state.source_module_id)])
+    if unload.returncode != 0:
+        raise PipeWireError(f"failed to unload remap-source for relabel: {unload.stderr.strip()}")
+
+    # Reload with the new description. node.passive=true marks the node
+    # as plumbing for PipeWire-native consumers; pulseaudio compat
+    # ignores it but the property doesn't hurt.
+    props = f"device.description={description}"
+    if passive:
+        props += " node.passive=true"
+    args = [
+        "load-module",
+        "module-remap-source",
+        f"master={SINK_NAME}.monitor",
+        f"source_name={SOURCE_NAME}",
+        f"source_properties={props}",
+        "object.linger=false",
+    ]
+    out = _run_pactl(args)
+    if out.returncode != 0:
+        raise PipeWireError(
+            f"failed to reload remap-source with description={description!r}: "
+            f"{out.stderr.strip() or out.stdout.strip()}"
+        )
