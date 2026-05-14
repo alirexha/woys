@@ -890,7 +890,48 @@ def main(argv: list[str] | None = None) -> int:
     # MUST run before any Textual import. See `_prewarm_mp_resource_tracker`.
     _prewarm_mp_resource_tracker()
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv)  # argparse SystemExit on bad args is intentional
+    # review F-merged-022 (P1): top-level guard so the most common
+    # first-run failures (missing model, PipeWire not set up, broken CUDA
+    # EP) reach a non-developer as one actionable stderr line + exit 1, not
+    # a raw Python traceback. WOYS_DEBUG=1 preserves the traceback for devs.
+    # Bug-class exceptions (KeyError/TypeError/...) are NOT in the caught
+    # tuple, so they still surface as tracebacks and get reported.
+    import os
+    import subprocess as _sp
+
+    from audio.pipewire import PipeWireError
+
+    try:
+        return _dispatch(parser, args)
+    except KeyboardInterrupt:
+        print("\ninterrupted.", file=sys.stderr)
+        return 130
+    except (PipeWireError, OSError, RuntimeError, _sp.SubprocessError) as e:
+        if os.environ.get("WOYS_DEBUG") == "1":
+            raise
+        print(f"error: {e}", file=sys.stderr)
+        if isinstance(e, FileNotFoundError):
+            print(
+                "  -> run `woys models download`, or check rvc_model in ~/.config/woys/config.toml",
+                file=sys.stderr,
+            )
+        elif isinstance(e, PipeWireError):
+            print("  -> run `woys pw setup` (or `woys pw status` to inspect)", file=sys.stderr)
+        elif "CUDA" in str(e) or "ExecutionProvider" in str(e):
+            print(
+                "  -> run `woys info` to check the ONNX Runtime CUDA execution provider",
+                file=sys.stderr,
+            )
+        print("  (set WOYS_DEBUG=1 for the full traceback)", file=sys.stderr)
+        return 1
+
+
+def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    """Command dispatch. review F-merged-022: split out of `main()` so
+    `main()` can wrap the whole dispatch in a single top-level guard while
+    leaving `parser.parse_args` (whose `SystemExit` is intentional) outside
+    it."""
     # `woys` with no subcommand launches the TUI with autostart - same as
     # `woys run --autostart`. Helpful for "type the app name to open it"
     # ergonomics. `woys --help` and `woys --version` still work because
