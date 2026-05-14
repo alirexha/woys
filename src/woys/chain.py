@@ -107,8 +107,24 @@ def _systemd_unit_path() -> Path:
     return base / "systemd" / "user" / SYSTEMD_UNIT_NAME
 
 
+def _c_locale_env() -> dict[str, str]:
+    """review F-15-05: env for parsing subprocesses. pactl / pw-link /
+    systemctl output is localised; our parsers key off literal English
+    tokens (`Description: `, `Source #`, ...), so on a non-English `$LANG`
+    every parse silently misses and `woys chain status` shows zero devices
+    with no error. Forcing `LC_ALL=C` keeps the output English."""
+    return {**os.environ, "LC_ALL": "C"}
+
+
 def _pactl(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["pactl", *args], capture_output=True, text=True, timeout=5, check=False)
+    return subprocess.run(
+        ["pactl", *args],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+        env=_c_locale_env(),
+    )
 
 
 def _systemctl(*args: str) -> subprocess.CompletedProcess[str]:
@@ -118,6 +134,7 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess[str]:
         text=True,
         timeout=5,
         check=False,
+        env=_c_locale_env(),
     )
 
 
@@ -228,7 +245,12 @@ def _alsa_leak_links() -> list[str]:
     if not pwlink:
         return []
     out = subprocess.run(
-        [pwlink, "-l"], capture_output=True, text=True, timeout=3, check=False
+        [pwlink, "-l"],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+        env=_c_locale_env(),  # review F-15-05: English-token parsing
     ).stdout
     leaks: list[str] = []
     section = ""

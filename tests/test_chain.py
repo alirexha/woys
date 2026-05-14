@@ -543,3 +543,20 @@ def test_chain_unit_template_has_execstartpost_check() -> None:
 
     src = inspect.getsource(chain.enable)
     assert "ExecStartPost=" in src and "chain status --check" in src
+
+
+def test_pactl_wrapper_forces_c_locale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """review F-15-05: chain._pactl must run pactl under LC_ALL=C so
+    `woys chain status`'s English-token parsers work on any locale."""
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(chain.subprocess, "run", fake_run)
+    chain._pactl("info")
+
+    env = captured.get("env")
+    assert env is not None, "chain._pactl must pass an env= override"
+    assert env.get("LC_ALL") == "C"  # type: ignore[union-attr]

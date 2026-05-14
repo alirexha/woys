@@ -208,3 +208,29 @@ def test_engine_no_warning_when_default_sink_is_a_real_device(
     eng._warn_if_default_sink_hijacked()
 
     assert not eng.stats.last_error
+
+
+def test_run_pactl_forces_c_locale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """review F-15-05: `_run_pactl` must run pactl under `LC_ALL=C`.
+
+    pactl output is localised; the parsers key off English tokens
+    (`Description: `, ...), so on a non-English `$LANG` every parse
+    silently misses and the device list comes back empty. Pre-fix
+    `_run_pactl` passed no `env=` override.
+    """
+    from audio import pipewire
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(pipewire.shutil, "which", lambda _n: "/usr/bin/pactl")
+    monkeypatch.setattr(pipewire.subprocess, "run", fake_run)
+
+    pipewire._run_pactl(["info"])
+
+    env = captured.get("env")
+    assert env is not None, "_run_pactl must pass an env= override"
+    assert env.get("LC_ALL") == "C"  # type: ignore[union-attr]
