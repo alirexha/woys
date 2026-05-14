@@ -104,13 +104,19 @@ def test_rc4_drift_regression(name: str) -> None:
     assert name in {f.name for f in fields(AppConfig)}
 
 
-# ---- v0.9.0 add-on: forwarding-site drift ------------------------------------
-# B9 + B50 caught the case where AppConfig defaults and EngineConfig defaults
-# diverged. They did NOT catch the case where the explicit `EngineConfig(...)`
-# construction sites in cli.py / app.py forget to forward a USER_VISIBLE field.
-# That's exactly how rc4's `prefer_pw_cat` drift (and v0.9.0-rc1's
-# `prefer_native_pw` drift, caught the same way) became real cuts. AST-walk
-# the source files and assert every site forwards every field.
+# ---- review F-merged-008 / F-01-04: single forwarding path -------------
+# B9 + B50 caught AppConfig/EngineConfig *default* drift. The v0.9.0 add-on
+# AST-walked cli.py / app.py for hand-written `EngineConfig(...)` blocks and
+# checked each forwarded every field -- but its `_NOT_FORWARDED_AT_CONSTRUCTION`
+# exemption list went stale: it exempted `mic_rate` / `sink_rate` (which the
+# TUI *does* forward and the engine *does* consume) and `sink_name` (which
+# both cli sites *did* forward), so the test was green while `woys diag` /
+# `woys engine` silently ran 48 kHz defaults on non-48k hardware (F-01-04).
+#
+# The fix removed all three hand-written blocks in favour of one
+# `app_config_to_engine_config()` helper. These tests now pin (1) that the
+# helper forwards every USER_VISIBLE field, and (2) that no hand-rolled
+# `EngineConfig(...)` block has crept back into cli.py / app.py.
 
 
 def _engine_config_call_kwargs(source: str) -> list[set[str]]:
@@ -131,15 +137,45 @@ def _engine_config_call_kwargs(source: str) -> list[set[str]]:
     return out
 
 
-# Fields that are intentionally not forwarded by callers (they use the
-# EngineConfig default; the user can't tune them via config.toml).
-# Keep this list tight - anything here is a deliberate exception, not
-# a forgotten plumb.
-_NOT_FORWARDED_AT_CONSTRUCTION = {
-    "mic_rate",
-    "sink_rate",
-    "sink_name",
-}
+def test_app_config_to_engine_config_forwards_every_user_visible_field() -> None:
+    """The single forwarding helper must carry *every* USER_VISIBLE field
+    from AppConfig to EngineConfig.
+
+    This is the F-merged-008 guarantee: add a field to `EngineConfig` +
+    `USER_VISIBLE_ENGINE_FIELDS` + `AppConfig` and it reaches every entry
+    point with no other edit -- because the helper iterates the tuple. A
+    field the helper drops shows up here as a default-vs-sentinel mismatch
+    (F-01-04 was exactly `mic_rate` / `sink_rate` being dropped).
+    """
+    from audio.engine import USER_VISIBLE_ENGINE_FIELDS
+    from tui.config import AppConfig, app_config_to_engine_config
+
+    cfg = AppConfig()
+    # Mutate each field to a value distinct from its default so a dropped
+    # field is visible as a default-vs-sentinel mismatch.
+    sentinels: dict[str, object] = {}
+    for name in USER_VISIBLE_ENGINE_FIELDS:
+        cur = getattr(cfg, name)
+        if isinstance(cur, bool):  # bool before int -- bool is an int subclass
+            new: object = not cur
+        elif isinstance(cur, int):
+            new = cur + 7
+        elif isinstance(cur, float):
+            new = cur + 1.5
+        elif isinstance(cur, str):
+            new = cur + "-sentinel"
+        else:
+            new = cur
+        sentinels[name] = new
+        setattr(cfg, name, new)
+
+    engine_cfg = app_config_to_engine_config(cfg)
+
+    for name, expected in sentinels.items():
+        assert getattr(engine_cfg, name) == expected, (
+            f"app_config_to_engine_config dropped the user-visible field {name!r} "
+            f"(F-merged-008 / F-01-04 regression)"
+        )
 
 
 @pytest.mark.parametrize(
@@ -149,28 +185,16 @@ _NOT_FORWARDED_AT_CONSTRUCTION = {
         REPO / "src" / "tui" / "app.py",
     ],
 )
-def test_engine_config_construction_forwards_user_visible_fields(
-    source_path: Path,
-) -> None:
-    """Every `EngineConfig(...)` call in cli.py / app.py must explicitly
-    forward every USER_VISIBLE field that's expected to be plumbed (i.e.
-    not in `_NOT_FORWARDED_AT_CONSTRUCTION`). This catches the rc4-class
-    drift bug at the construction site, not just the default-value layer.
+def test_no_hand_rolled_engine_config_in_cli_or_app(source_path: Path) -> None:
+    """cli.py and app.py must construct `EngineConfig` *only* through
+    `app_config_to_engine_config()` -- never a hand-written `EngineConfig(...)`
+    block. A hand-rolled block is how every historical forwarding-drift bug
+    (rc4 `prefer_pw_cat`, rc1 `prefer_native_pw`, F-01-04 `mic_rate`/
+    `sink_rate`) became real.
     """
-    from audio.engine import USER_VISIBLE_ENGINE_FIELDS
-
-    expected_fields = set(USER_VISIBLE_ENGINE_FIELDS) - _NOT_FORWARDED_AT_CONSTRUCTION
-
-    src = source_path.read_text()
-    call_kwarg_sets = _engine_config_call_kwargs(src)
-    if not call_kwarg_sets:
-        pytest.skip(f"no EngineConfig() calls found in {source_path.name}")
-
-    for i, kwargs in enumerate(call_kwarg_sets):
-        missing = expected_fields - kwargs
-        assert not missing, (
-            f"{source_path.name}: EngineConfig() call #{i + 1} is missing "
-            f"forwarded fields: {sorted(missing)}\n"
-            f"This is the v0.9.0-rc1 prefer_native_pw drift class - every "
-            f"user-visible field must be plumbed at every construction site."
-        )
+    calls = _engine_config_call_kwargs(source_path.read_text())
+    assert calls == [], (
+        f"{source_path.name}: found {len(calls)} direct EngineConfig(...) "
+        f"construction(s) -- use app_config_to_engine_config() instead so "
+        f"every USER_VISIBLE field is forwarded from one place."
+    )
