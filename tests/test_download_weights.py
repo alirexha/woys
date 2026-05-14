@@ -96,3 +96,83 @@ def test_print_hashes_does_not_crash_on_missing_cache(
     monkeypatch.setattr(download_weights, "CACHE", nonexistent)
     rc = download_weights.main(["--print-hashes"])
     assert rc == 0
+
+
+# ---- review F-merged-003: integrity gate must be real + fail-closed ----
+
+
+class _FakeResponse:
+    """Minimal stand-in for `urllib.request.urlopen(...)`'s context manager."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._pos = 0
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        return False
+
+    def read(self, n: int = -1) -> bytes:
+        end = self._pos + n if n and n > 0 else len(self._data)
+        chunk = self._data[self._pos : end]
+        self._pos += len(chunk)
+        return chunk
+
+
+def test_sha256_table_is_populated_for_every_foundation_weight(download_weights) -> None:
+    """F-merged-003: the table used to ship EMPTY, making the SHA256 check
+    dead code. Every weight in WEIGHTS must now have a pinned hash."""
+    missing = set(download_weights.WEIGHTS) - set(download_weights.WEIGHTS_SHA256)
+    assert not missing, f"WEIGHTS_SHA256 is missing entries for: {missing}"
+    for name, h in download_weights.WEIGHTS_SHA256.items():
+        assert len(h) == 64 and all(c in "0123456789abcdef" for c in h), (
+            f"{name}: not a sha256 hex digest: {h!r}"
+        )
+
+
+def test_fetch_raises_on_sha_mismatch(download_weights, tmp_path, monkeypatch) -> None:
+    """A download whose bytes do not match the pinned SHA256 must raise and
+    leave no file behind. Pre-fix (empty table) verification was skipped and
+    `fetch()` renamed the corrupt `.part` into place -- no raise."""
+    monkeypatch.setattr(
+        download_weights.urllib.request,
+        "urlopen",
+        lambda _url, timeout=0: _FakeResponse(b"corrupted not-the-real-weight bytes"),
+    )
+    dest = tmp_path / "rmvpe_wrapped.onnx"  # a name that IS in WEIGHTS_SHA256
+    assert "rmvpe_wrapped.onnx" in download_weights.WEIGHTS_SHA256
+
+    with pytest.raises(RuntimeError, match="SHA256 mismatch"):
+        download_weights.fetch("http://example/x", dest, force=True)
+    assert not dest.exists(), "the corrupt .part must not be renamed into place"
+
+
+def test_fetch_fail_closed_on_missing_hash_entry(download_weights, tmp_path, monkeypatch) -> None:
+    """A foundation weight with no SHA256 entry must be a hard error, not a
+    silent unverified install -- fail-open -> fail-closed."""
+    monkeypatch.setattr(
+        download_weights.urllib.request,
+        "urlopen",
+        lambda _url, timeout=0: _FakeResponse(b"some bytes"),
+    )
+    dest = tmp_path / "unlisted_weight.onnx"  # deliberately NOT in WEIGHTS_SHA256
+    assert "unlisted_weight.onnx" not in download_weights.WEIGHTS_SHA256
+
+    with pytest.raises(RuntimeError, match="no SHA256 entry"):
+        download_weights.fetch("http://example/x", dest, force=True)
+    assert not dest.exists()
+
+
+def test_fetch_skip_verify_bypasses_the_gate(download_weights, tmp_path, monkeypatch) -> None:
+    """--skip-verify is the explicit, documented escape hatch -- it must
+    still install (the gate is fail-closed, not un-bypassable)."""
+    monkeypatch.setattr(
+        download_weights.urllib.request,
+        "urlopen",
+        lambda _url, timeout=0: _FakeResponse(b"whatever bytes"),
+    )
+    dest = tmp_path / "unlisted_weight.onnx"
+    download_weights.fetch("http://example/x", dest, force=True, skip_verify=True)
+    assert dest.exists()
