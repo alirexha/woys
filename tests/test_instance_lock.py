@@ -64,6 +64,45 @@ def test_concurrent_acquire_raises_busy(fake_runtime_dir: Path) -> None:
         cm1.__exit__(None, None, None)
 
 
+def test_run_tui_acquires_instance_lock(
+    fake_runtime_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """review F-merged-002 (P0): `woys run` -- the TUI entry point --
+    MUST acquire the single-instance lock.
+
+    Pre-fix the lock was wired only into `woys engine` (cmd_engine);
+    `run_tui` constructed and ran WoysApp unconditionally, so two
+    `woys run` instances both bound the control socket and wrote into
+    WoysSink (the reproduced double-converted-audio corruption).
+
+    Regression test: with the lock already held, run_tui must return exit
+    code 2 *without* constructing WoysApp. On pre-fix code run_tui ignores
+    the held lock and reaches WoysApp(...), tripping the AssertionError.
+    """
+    import tui.app as app_mod
+    from tui.config import AppConfig
+
+    # Isolate from the user's real config; keep the test hermetic.
+    monkeypatch.setattr(app_mod, "load_config", lambda: AppConfig())
+
+    constructed: list[object] = []
+
+    def _fake_woys_app(**kwargs: object) -> object:
+        constructed.append(kwargs)
+        raise AssertionError(
+            "WoysApp was constructed even though the instance lock is held - "
+            "run_tui did not acquire the lock (F-merged-002 regression)"
+        )
+
+    monkeypatch.setattr(app_mod, "WoysApp", _fake_woys_app)
+
+    with acquire_instance_lock():
+        rc = app_mod.run_tui()
+
+    assert rc == 2
+    assert constructed == [], "run_tui must reject the busy lock before building WoysApp"
+
+
 def test_xdg_unset_falls_back_to_tmp(monkeypatch: pytest.MonkeyPatch) -> None:
     """No XDG_RUNTIME_DIR -> /tmp/woys-{uid}/instance.lock. The lock
     is still acquirable; cleans up after the test."""
