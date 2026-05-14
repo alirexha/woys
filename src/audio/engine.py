@@ -1613,6 +1613,15 @@ class RealtimeEngine:
         # Probed `model_sr` per voice path so we don't redo the probe each
         # swap. Keys are resolved Paths.
         self._rvc_sr_cache: dict[Path, int] = {}
+        # v0.6.7 - stateful per-(src,dst) resamplers. Created in `_run_loop`
+        # before the first chunk, replaced when the model output rate
+        # changes during hot-swap. See `docs/11-microcuts-bug.md`.
+        # review F-merged-011: this init used to sit as dead code after
+        # a `return` inside the `inference_subprocess_pid` property, so the
+        # attributes did not exist until `_run_loop` ran -- any earlier
+        # access (`_maybe_swap_model`, `reload_rvc`) raised AttributeError.
+        self._resampler_in: _StreamResampler | None = None
+        self._resampler_out: _StreamResampler | None = None
 
     # ---- B23 / quality-019: public read-accessors ---------------------------
     # cli.py used to reach into `engine._player_backend`, `engine._inf_client`
@@ -1635,12 +1644,6 @@ class RealtimeEngine:
             return None
         pid = self._inf_client._handles.proc.pid
         return int(pid) if pid is not None else None
-
-        # v0.6.7 - stateful per-(src,dst) resamplers. Created in `_run_loop`
-        # before the first chunk, replaced when the model output rate
-        # changes during hot-swap. See `docs/11-microcuts-bug.md`.
-        self._resampler_in: _StreamResampler | None = None
-        self._resampler_out: _StreamResampler | None = None
 
     # ---- model loading ------------------------------------------------------
 
