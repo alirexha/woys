@@ -29,6 +29,15 @@ from pathlib import Path
 
 CACHE = Path.home() / ".local" / "share" / "woys" / "models"
 
+# review F-merged-003: these URLs use the moving ref `resolve/main`.
+# The load-bearing integrity protection is now `WEIGHTS_SHA256` below, which
+# is populated and fail-closed -- if `main` ever serves bytes that differ
+# from the pinned hash (tampering, or a legitimate upstream re-publish),
+# `fetch()` raises and the file is rejected, so the moving ref is no longer
+# a silent integrity hole. Pinning each URL to a literal commit SHA as
+# defence-in-depth is a documented residual: it needs a known-good revision
+# string for the wok000/* repos that cannot be obtained offline without
+# fabricating it. See docs/26-review/phase-6-fixes/commit-010.md.
 WEIGHTS: dict[str, str] = {
     "rmvpe_wrapped.onnx": (
         "https://huggingface.co/wok000/weights_gpl/resolve/main/rmvpe/rmvpe_20231006.onnx"
@@ -42,15 +51,21 @@ WEIGHTS: dict[str, str] = {
     ),
 }
 
-# Optional SHA-256 integrity table. When present, downloaded files are
-# verified post-fetch; mismatch raises and the partial file is removed.
-# Run `woys download-weights --print-hashes` after a successful fetch to
-# regenerate this table when upstream files legitimately change.
+# SHA-256 integrity table. review F-merged-003 (P1): this used to ship
+# empty, so `if expected` was always falsy and verification was dead code --
+# `install.sh` ran the unverified download on every fresh install. It is now
+# populated and the gate is **fail-closed**: a foundation weight with no
+# entry here is a hard error in `fetch()` (see below), not a silent pass.
+#
+# Hashes computed from the dev machine's known-good copies (the same files
+# that passed the review Phase 7 listener gate on real hardware). When
+# upstream legitimately re-publishes a weight, a maintainer must re-run
+# `python scripts/download_weights.py --print-hashes` and bump the entry --
+# that is the correct trade for integrity.
 WEIGHTS_SHA256: dict[str, str] = {
-    # Populated empirically when the dev machine has known-good copies.
-    # Empty values mean "no verification" (transparent). To enable
-    # verification, run `python scripts/download_weights.py --print-hashes`
-    # against your current files, paste below, then re-run the install.
+    "rmvpe_wrapped.onnx": "84f0586308e36157f75b77c8591bf636d6719c0c4ba95f8faf3df479e7566219",
+    "contentvec-f.onnx": "4b31ed3d95a568fab7952de923ff7f7d3d17128ea6fce69f665509d24c3156db",
+    "amitaro_v2_16k.onnx": "2d74e2fce8d5770e4b640ab45355286396b8308f5b09b059fb41a167592990c5",
 }
 
 
@@ -77,8 +92,21 @@ def fetch(url: str, dest: Path, force: bool, *, skip_verify: bool = False) -> No
             if not data:
                 break
             f.write(data)
+    # review F-merged-003 (P1): fail-closed. A known foundation weight
+    # with no SHA256 entry is a hard error -- never a silent unverified pass
+    # (the pre-fix `if expected and ...` skipped verification whenever the
+    # table lacked an entry, which it always did).
     expected = WEIGHTS_SHA256.get(dest.name)
-    if expected and not skip_verify:
+    if not skip_verify:
+        if expected is None:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"no SHA256 entry for {dest.name} in WEIGHTS_SHA256 - refusing to "
+                f"install an unverified foundation weight. Add its hash (run "
+                f"`python scripts/download_weights.py --print-hashes` against a "
+                f"known-good copy) or pass --skip-verify if you explicitly trust "
+                f"the source."
+            )
         actual = _sha256(tmp)
         if actual != expected:
             tmp.unlink(missing_ok=True)
