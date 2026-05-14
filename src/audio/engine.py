@@ -1654,6 +1654,22 @@ class RealtimeEngine:
         # cosine sim 0.75 vs fp32 - only auto-promoted if explicitly requested.
         cv_path = self._auto_pick_fp16(self.cfg.contentvec_model, allow=False)
         rmvpe_path = self._auto_pick_fp16(self.cfg.rmvpe_model, allow=True)
+        rvc_path = Path(self.cfg.rvc_model)
+
+        # review F-CX2-04: fail with a clear, typed error naming the
+        # missing file *before* handing the path to ONNX Runtime, which
+        # otherwise raises an opaque ORT-internal exception far from the
+        # cause. This also makes the top-level traceback guard
+        # (F-merged-022) a clean typed catch rather than an error-string
+        # heuristic. Only paths whose session still needs loading are
+        # checked, so an already-loaded session is unaffected.
+        for label, path, needed in (
+            ("contentvec model", cv_path, self._cv is None),
+            ("rmvpe model", rmvpe_path, self._rmvpe is None),
+            ("rvc model", rvc_path, self._rvc is None),
+        ):
+            if needed and not path.exists():
+                raise FileNotFoundError(f"{label} not found at {path}")
 
         if self._cv is None:
             self._cv = _make_session(
