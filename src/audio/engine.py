@@ -1589,6 +1589,10 @@ class RealtimeEngine:
         # on the user manually running `nvidia-smi -rgc`, documented in
         # docs/22-gpu-clock-lock.md.
         self._prior_signal_handlers: dict[int, Any] = {}
+        # review F-merged-010 (P0): which signal (if any) triggered
+        # shutdown. Set by the async-signal-safe handler; also a re-entrancy
+        # guard so a repeated SIGTERM/SIGINT doesn't redo the handler work.
+        self._signal_received: int | None = None
         # Watchdog signal: writer flips this on BrokenPipe so the watchdog
         # respawns immediately instead of waiting for its next poll tick.
         self._pacat_dead_event = threading.Event()
@@ -3066,6 +3070,20 @@ class RealtimeEngine:
                     sig, self._signal_handler_revert_lock
                 )
 
+    def _restore_prior_signal_handlers(self) -> None:
+        """Re-install the SIGTERM/SIGINT handlers that were active before
+        the engine started (Textual's, the CLI's).
+
+        review F-merged-010 (P0): split out of `_revert_gpu_clock_lock`
+        so the signal handler can restore handlers without also triggering
+        the `sudo nvidia-smi` fork. Fast and fork-free -- safe to call from
+        the signal handler itself.
+        """
+        for sig, prior in self._prior_signal_handlers.items():
+            with contextlib.suppress(OSError, ValueError):
+                signal.signal(sig, prior)
+        self._prior_signal_handlers.clear()
+
     def _revert_gpu_clock_lock(self) -> None:
         """v0.11.0 - call nvidia-smi -rgc and restore prior signal
         handlers. Idempotent (safe to call multiple times); a second call
@@ -3078,6 +3096,13 @@ class RealtimeEngine:
         engine flagged it as released. Next start saw "fresh state" and
         applied a new lock on top of the stale one. The new flag lets
         `_apply_gpu_clock_lock` detect and recover.
+
+        review F-merged-010 / F-cx1-new-C: the `sudo nvidia-smi -rgc`
+        call here forks a subprocess and can block up to its timeout. It is
+        therefore called only on a normal stack -- from `stop()` -- never
+        from the signal handler. The bound is `subprocess.run(timeout=...)`
+        inside `_run_nvidia_smi`: a hung nvidia-smi cannot wedge teardown
+        past that 4 s.
         """
         if self.stats.gpu_clock_lock_active:
             ok, msg = self._run_nvidia_smi(["-rgc"], timeout=4.0)
@@ -3099,34 +3124,46 @@ class RealtimeEngine:
         # Restore prior signal handlers (whether or not -rgc succeeded -
         # signal handlers should always go back to caller's pre-engine
         # state on stop).
-        for sig, prior in self._prior_signal_handlers.items():
-            with contextlib.suppress(OSError, ValueError):
-                signal.signal(sig, prior)
-        self._prior_signal_handlers.clear()
+        self._restore_prior_signal_handlers()
 
     def _signal_handler_revert_lock(self, signum: int, frame: object) -> None:
         """SIGTERM / SIGINT handler that coordinates clean shutdown.
         Best-effort: a SIGKILL bypasses this entirely.
 
-        v0.14.0 (Lens 8 / Lens 17 / C005): the pre-v0.14.0 handler did
-        `signal.signal(signum, SIG_DFL)` AFTER `_revert_gpu_clock_lock`
-        restored the prior (Textual / CLI) handler -- the SIG_DFL clobber
-        undid the just-restored handler and bypassed Textual's clean-
-        shutdown chain. Now the handler:
-          1. Sets `_stop_event` so the engine thread exits the run loop
-             cleanly (drains pacat, releases ORT sessions).
-          2. Reverts the clock lock if held (no-op otherwise).
-          3. Re-raises the signal via `os.kill`. `_revert_gpu_clock_lock`
-             already restored the prior handler; the kernel will deliver
-             the queued signal to that handler after this function
-             returns.
+        review F-merged-010 (P0): the pre-fix handler called
+        `_revert_gpu_clock_lock()` inline, which forks `sudo nvidia-smi`
+        and can block the main thread up to 4 s -- async-signal-unsafe
+        work run on every SIGTERM/SIGINT. A Ctrl-C could hang the process
+        and, if it landed mid-`subprocess.run`, deadlock. The handler now
+        does only fast, fork-free work:
+          1. Record the signal (also a re-entrancy guard for a repeated
+             SIGTERM/SIGINT).
+          2. Set `_stop_event` so the engine threads exit their loops
+             cleanly (drain pacat, release ORT sessions).
+          3. Restore the prior (Textual / CLI) signal handlers.
+          4. Re-raise via `os.kill` so that prior handler runs the rest of
+             the shutdown.
+        The GPU clock-lock revert -- the unsafe part -- now happens on a
+        normal stack in `stop()` via `_revert_gpu_clock_lock()`. It is
+        idempotent, and `_apply_gpu_clock_lock` recovers a stale lock on
+        the next start if a hard kill skips `stop()` entirely.
+
+        v0.14.0 (Lens 8 / Lens 17 / C005) note retained: restoring the
+        prior handler *before* re-raising (rather than a `SIG_DFL` clobber)
+        is what keeps Textual's / the CLI's clean-shutdown chain intact.
         """
-        with contextlib.suppress(Exception):
-            self._stop_event.set()
-        with contextlib.suppress(Exception):
-            self._revert_gpu_clock_lock()
-        # Re-raise. `_revert_gpu_clock_lock` already restored the prior
-        # handler; kernel will deliver this signal to that handler.
+        if self._signal_received is not None:
+            # A second signal arrived while we were mid-handler. The prior
+            # handler is (being) restored; just re-raise and let it take
+            # over -- don't redo _stop_event / handler-restore work.
+            os.kill(os.getpid(), signum)
+            return
+        self._signal_received = signum
+        self._stop_event.set()
+        self._restore_prior_signal_handlers()
+        # Re-raise. The prior handler is now installed; the kernel delivers
+        # this signal to it. The clock-lock revert runs later, on a normal
+        # stack, in stop().
         os.kill(os.getpid(), signum)
 
     def _torch_keepalive_loop(self) -> None:
