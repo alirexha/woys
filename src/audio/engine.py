@@ -1748,6 +1748,11 @@ class RealtimeEngine:
         is bulletproof: feed a known-length input, count output samples.
 
         Costs ~20 ms once at session load. Worth it.
+
+        review F-merged-016 (P1): raises `RuntimeError` if the probe
+        fails or yields an unrecognised rate -- it never silently guesses,
+        because a wrong output rate pitch-shifts the entire session and
+        poisons `_rvc_sr_cache`.
         """
         assert self._rvc is not None
         # Feed a 1 s feats window (50 frames after 2x upsample = 100 frames),
@@ -1772,18 +1777,36 @@ class RealtimeEngine:
         }
         try:
             out = self._rvc.run(["audio"], feed)[0]
-        except Exception:
-            # Probe failed (model likely doesn't take pitch/pitchf - nono variant).
-            # Fall back to 16 kHz; the engine will still work, just possibly chipmunk.
-            return 16_000
+        except Exception as e:
+            # review F-merged-016 (P1): re-raise -- do NOT silently
+            # return 16 kHz. CX2 corrected the original "nono variant"
+            # framing: `_infer` builds an *identical* pitch-bearing feed
+            # dict, so a genuinely pitchless model would crash there on
+            # every chunk -- it cannot produce the silent-chipmunk symptom.
+            # The realistic trigger is a transient GPU/cuDNN/shape error on
+            # the cold first pass, where swallowing and assuming 16 kHz
+            # poisons `_rvc_sr_cache` forever and plays the whole session
+            # ~16 semitones off with no `last_error` and no counter.
+            raise RuntimeError(
+                f"failed to probe the RVC model's output sample rate: "
+                f"{type(e).__name__}: {e}. The engine cannot run without a "
+                f"known output rate (a wrong guess pitch-shifts the whole "
+                f"session), so this aborts start visibly. Retry, or check "
+                f"`woys info` / the GPU state."
+            ) from e
         n_out = int(np.asarray(out).size)
         # Output for 1 s of feats input ≈ 1 s of audio at the model rate.
         # Round to the nearest known RVC training rate.
         for sr in (16_000, 22_050, 24_000, 32_000, 40_000, 44_100, 48_000):
             if abs(n_out - sr) < sr * 0.05:
                 return sr
-        # Unknown rate - best effort, treat the raw count as Hz.
-        return n_out
+        # review F-merged-016: an unrecognised rate is a second silent
+        # guess -- raise instead of treating the raw sample count as Hz.
+        raise RuntimeError(
+            f"RVC model probe produced {n_out} samples for a 1 s input, which "
+            f"matches no known RVC training rate (16/22.05/24/32/40/44.1/48 "
+            f"kHz). Refusing to guess the output rate."
+        )
 
     def _cached_rvc_sr(self, path: Path) -> int:
         """Probe and remember the model's output sample rate.
