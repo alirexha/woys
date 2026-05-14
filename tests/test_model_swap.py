@@ -96,6 +96,32 @@ def test_resamplers_initialized_in_constructor() -> None:
     assert eng._resampler_out is None
 
 
+def test_ensure_sessions_raises_clean_filenotfound_for_missing_model(
+    tmp_path: Path,
+) -> None:
+    """review F-CX2-04: a missing model file must raise a typed
+    `FileNotFoundError` naming the path.
+
+    Pre-fix `_ensure_sessions` handed the path straight to ONNX Runtime,
+    which raised an opaque ORT-internal exception far from the cause --
+    so `pytest.raises(FileNotFoundError)` does not catch it and this test
+    errors. Post-fix the existence pre-check raises before any session is
+    built (fast, no GPU)."""
+    from audio.engine import EngineConfig, RealtimeEngine
+
+    missing = tmp_path / "no_such_voice.onnx"
+    eng = RealtimeEngine(
+        EngineConfig(
+            rvc_model=missing,
+            contentvec_model=missing,
+            rmvpe_model=missing,
+        )
+    )
+    with pytest.raises(FileNotFoundError) as exc:
+        eng._ensure_sessions()
+    assert str(missing) in str(exc.value), "the error must name the missing path"
+
+
 def test_request_model_swap_replaces_rvc_session() -> None:
     """`request_model_swap` queues; `_maybe_swap_model` picks it up + replaces
     the ORT session. We call _maybe_swap_model directly here to avoid
