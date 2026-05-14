@@ -2297,6 +2297,13 @@ class RealtimeEngine:
         # sessions, terminates inference subprocess).
         self._install_signal_handlers()
 
+        # review F-08-06 (2nd half): warn (do not fail) if the system
+        # default sink is the woys sink the engine writes into -- the
+        # v0.14.2 desktop-audio hijack. The systemd units catch this at
+        # boot via `chain status --check`; this covers the window between
+        # boot and `woys run`.
+        self._warn_if_default_sink_hijacked()
+
         # v0.11.0 - apply GPU clock lock at the start of engine activity.
         # Done BEFORE session loading so cuDNN warmup runs at the locked
         # boost clock (avoids retuning under post-lock-application clock
@@ -2498,6 +2505,30 @@ class RealtimeEngine:
         # may have already reverted, in which case this is a no-op.
         with contextlib.suppress(Exception):
             self._revert_gpu_clock_lock()
+
+    def _warn_if_default_sink_hijacked(self) -> None:
+        """review F-08-06 (2nd half): one-shot check at engine start.
+
+        If the system default sink is the woys sink the engine writes into,
+        all *desktop* audio is being routed into woys plumbing instead of
+        the speakers (the v0.14.2 hijack). That is a system-routing problem,
+        not an engine fault -- the engine still converts voice fine -- so
+        this WARNS (records `stats.last_error`, surfaced by `woys diag` and
+        the TUI) rather than refusing to start.
+
+        Best-effort: `get_default_sink()` returns '' on any pactl error, so
+        a probe failure is a silent no-op here -- the load-bearing sink
+        check is `_assert_sink_loaded`, which hard-fails.
+        """
+        from audio.pipewire import get_default_sink
+
+        default_sink = get_default_sink()
+        if default_sink and default_sink == self.cfg.sink_name:
+            self.stats.last_error = (
+                f"system default sink is {default_sink!r} -- the woys sink the "
+                f"engine writes into. Desktop audio is being routed into woys "
+                f"plumbing; run `pactl set-default-sink <your-speakers>` to fix."
+            )
 
     def _assert_sink_loaded(self) -> None:
         """v0.6.4 - refuse to start if `cfg.sink_name` isn't a loaded

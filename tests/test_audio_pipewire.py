@@ -173,3 +173,38 @@ def test_relabel_source_succeeds_when_reload_ok(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(pipewire, "_run_pactl", fake_run_pactl)
     pipewire.relabel_source("woys-no-cleanup", passive=False)  # must not raise
     assert len(load_calls) == 1, "happy path must not issue a rollback load-module"
+
+
+# ---- review F-08-06 (2nd half): default-sink hijack probe ------------
+
+
+def test_engine_warns_when_default_sink_is_woys_sink(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the system default sink is the woys sink the engine writes into,
+    desktop audio is hijacked (the v0.14.2 class). `start()`'s probe must
+    record a `last_error` warning -- not hard-fail, the engine still
+    converts voice fine."""
+    from audio import engine
+
+    eng = engine.RealtimeEngine(engine.EngineConfig())
+    monkeypatch.setattr("audio.pipewire.get_default_sink", lambda: eng.cfg.sink_name)
+
+    eng._warn_if_default_sink_hijacked()
+
+    assert eng.stats.last_error, "a hijacked default sink must set last_error"
+    assert eng.cfg.sink_name in eng.stats.last_error
+
+
+def test_engine_no_warning_when_default_sink_is_a_real_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A normal default sink (real speakers) must not trip the probe."""
+    from audio import engine
+
+    eng = engine.RealtimeEngine(engine.EngineConfig())
+    monkeypatch.setattr(
+        "audio.pipewire.get_default_sink", lambda: "alsa_output.pci-0000_00_1f.3.analog-stereo"
+    )
+
+    eng._warn_if_default_sink_hijacked()
+
+    assert not eng.stats.last_error
