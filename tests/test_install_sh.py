@@ -33,3 +33,30 @@ def test_prereqs_and_venv_build_run_before_destructive_migration() -> None:
     assert venv_build < migrate_pos, (
         "the venv + deps build must complete before the destructive migration"
     )
+
+
+def test_pinned_requirements_install_before_editable_no_deps_package() -> None:
+    """review F-19-03: install the pinned dependency closure
+    (requirements.txt) first, then the woys package with `--no-deps`.
+
+    Pre-fix it was `pip install -e .` then `pip install -r
+    requirements.txt` -- an order-dependent double-install where the second
+    command silently re-resolved the first, and the slow torch + ORT-GPU
+    step was paid twice.
+    """
+    req_install = INSTALL_SH.index("pip install --python")
+    # The line that installs the editable package.
+    editable_install = INSTALL_SH.index('-e "$REPO_DIR"')
+
+    assert req_install < editable_install, (
+        "requirements.txt (the pinned closure) must be installed before `-e .`"
+    )
+    # The editable install must be --no-deps so it doesn't re-resolve the
+    # dependency set requirements.txt just pinned.
+    editable_line = next(
+        ln for ln in INSTALL_SH.splitlines() if '-e "$REPO_DIR"' in ln and "pip install" in ln
+    )
+    assert "--no-deps" in editable_line, (
+        "the editable `-e .` install must pass --no-deps -- requirements.txt "
+        "owns the dependency set"
+    )
