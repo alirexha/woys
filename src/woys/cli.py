@@ -150,7 +150,16 @@ def build_parser() -> argparse.ArgumentParser:
     chain_sub = chain_p.add_subparsers(dest="chain_cmd", required=True, metavar="ACTION")
     chain_sub.add_parser("setup", help="load the RNNoise chain (one-shot)")
     chain_sub.add_parser("teardown", help="unload the RNNoise chain")
-    chain_sub.add_parser("status", help="show chain modules + ALSA-leak self-check")
+    chain_status_p = chain_sub.add_parser(
+        "status", help="show chain modules + ALSA-leak self-check"
+    )
+    chain_status_p.add_argument(
+        "--check",
+        action="store_true",
+        help="run only the health assertions (woys-mic present, system default "
+        "sink is not a woys null-sink, no ALSA leak links) and exit non-zero on "
+        "failure; wired as ExecStartPost by the systemd units (F-08-06)",
+    )
     chain_sub.add_parser(
         "enable",
         help="install systemd user unit so the chain auto-loads on every login",
@@ -1023,7 +1032,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         if args.chain_cmd == "teardown":
             return chain_teardown()
         if args.chain_cmd == "status":
-            return chain_status()
+            return chain_status(args.check)
         if args.chain_cmd == "enable":
             return chain_enable()
         if args.chain_cmd == "disable":

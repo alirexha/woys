@@ -490,3 +490,56 @@ def test_is_user_facing_description() -> None:
     assert chain._is_user_facing_description("_internal-raw-bypass") is False
     assert chain._is_user_facing_description("_internal-clean-sink") is False
     assert chain._is_user_facing_description("Monitor of _internal-clean-sink") is False
+
+
+# ---- review F-08-06: `woys chain status --check` health gate ----------
+# These pin _health_check's logic by monkeypatching the three probes it
+# runs. The check is wired as ExecStartPost into both systemd units so a
+# broken-audio chain shows `failed`, not a green `active (exited)`.
+
+
+def test_health_check_passes_when_plumbing_is_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(chain, "_source_present", lambda name: True)
+    monkeypatch.setattr(chain, "_default_sink", lambda: "alsa_output.real-speakers")
+    monkeypatch.setattr(chain, "_alsa_leak_links", lambda: [])
+    assert chain.status(check=True) == 0
+
+
+def test_health_check_fails_when_default_sink_is_woys_null_sink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The load-bearing assertion (CX2's mandatory scope pin): v0.14.2
+    left the system default sink pointed at a woys null-sink, silently
+    routing all desktop audio into woys plumbing. A leak-only check would
+    miss this -- `--check` must catch it."""
+    monkeypatch.setattr(chain, "_source_present", lambda name: True)
+    monkeypatch.setattr(chain, "_default_sink", lambda: chain.SINK_FINAL)
+    monkeypatch.setattr(chain, "_alsa_leak_links", lambda: [])
+    assert chain.status(check=True) == 1
+
+
+def test_health_check_fails_when_woys_mic_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(chain, "_source_present", lambda name: False)
+    monkeypatch.setattr(chain, "_default_sink", lambda: "alsa_output.real-speakers")
+    monkeypatch.setattr(chain, "_alsa_leak_links", lambda: [])
+    assert chain.status(check=True) == 1
+
+
+def test_health_check_fails_on_alsa_leak(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(chain, "_source_present", lambda name: True)
+    monkeypatch.setattr(chain, "_default_sink", lambda: "alsa_output.real-speakers")
+    monkeypatch.setattr(chain, "_alsa_leak_links", lambda: ["filter-chain -> alsa_output.hw"])
+    assert chain.status(check=True) == 1
+
+
+def test_chain_unit_template_has_execstartpost_check() -> None:
+    """The generated woys-chain.service must run `chain status --check` as
+    ExecStartPost so a broken chain turns the unit `failed`."""
+    import inspect
+
+    src = inspect.getsource(chain.enable)
+    assert "ExecStartPost=" in src and "chain status --check" in src
