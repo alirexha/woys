@@ -380,13 +380,28 @@ class WoysApp(App[int]):
         if self.engine.stats.running:
             self.engine.stop()
             self.notify("engine stopped", severity="information", timeout=2)
-        else:
-            self._start_engine()
+        elif self._start_engine():
             self.notify("engine starting (cudnn warmup ~2s)", severity="information", timeout=2)
 
-    def _start_engine(self) -> None:
+    def _start_engine(self) -> bool:
+        """Start the engine. Returns True on success, False if start failed
+        (the failure is surfaced via `notify()` + `stats.last_error`).
+
+        review F-merged-022 (P1): `engine.start()` can raise on common
+        first-run failures -- missing model (`FileNotFoundError`), a broken
+        CUDA EP (`CpuFallbackError` <: `RuntimeError`), a missing PipeWire
+        sink (`PipeWireError`). Pre-fix that propagated out of `on_mount`
+        (a raw traceback crashing the TUI mount) or out of the toggle
+        action. This mirrors the `on_mount` `VirtualMic` handler exactly.
+        """
         self.engine.cfg.f0_up_key = int(self.pitch)
-        self.engine.start()
+        try:
+            self.engine.start()
+        except (PipeWireError, OSError, RuntimeError) as e:
+            self.engine.stats.last_error = f"engine start: {e}"
+            self.notify(f"engine start failed: {e}", severity="error", timeout=8)
+            return False
+        return True
 
     def action_pitch_up(self) -> None:
         self.pitch = int(self.pitch) + 1
