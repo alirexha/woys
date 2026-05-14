@@ -25,6 +25,8 @@
 #   ./install.sh              # full install
 #   ./install.sh --skip-models  # don't pre-fetch ONNX weights (~1 GiB)
 #   ./install.sh --no-systemd   # don't register the user service
+#   ./install.sh --allow-cpu    # proceed without an NVIDIA GPU (unsupported:
+#                               # realtime RVC is not viable on CPU)
 
 set -euo pipefail
 
@@ -38,12 +40,14 @@ UV_BIN="${UV_BIN:-$HOME/.local/bin/uv}"
 
 SKIP_MODELS=0
 NO_SYSTEMD=0
+ALLOW_CPU=0
 for arg in "$@"; do
     case "$arg" in
     --skip-models) SKIP_MODELS=1 ;;
     --no-systemd)  NO_SYSTEMD=1 ;;
+    --allow-cpu)   ALLOW_CPU=1 ;;
     -h|--help)
-        sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
+        sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
         exit 0
         ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -64,7 +68,19 @@ fail() { printf '\n[install] error: %s\n' "$*" >&2; exit 1; }
 say "checking host…"
 command -v pactl >/dev/null   || fail "pactl missing — install pipewire-pulse"
 pactl info | grep -q PipeWire || fail "PipeWire not running (pactl info reports something else)"
-command -v nvidia-smi >/dev/null || say "  warn: nvidia-smi missing — engine will fall back to CPU"
+# review F-19-16 / F-15-06: hard-fail on a missing NVIDIA GPU. The
+# pre-fix `say "warn: ... fall back to CPU"` advertised a CPU fallback
+# that does not exist — ONNX Runtime CUDA-EP sessions do not silently
+# become CPU sessions, and realtime RVC on CPU is not viable. --allow-cpu
+# is the explicit, documented opt-out for users who understand that.
+if ! command -v nvidia-smi >/dev/null; then
+    if [ "$ALLOW_CPU" -eq 1 ]; then
+        say "  warn: nvidia-smi missing — proceeding with --allow-cpu (UNSUPPORTED;"
+        say "        realtime RVC is not viable on CPU, expect continuous underruns)"
+    else
+        fail "nvidia-smi not found — woys requires an NVIDIA GPU (ONNX Runtime CUDA EP); realtime RVC on CPU is not viable. Re-run with --allow-cpu to override."
+    fi
+fi
 
 # Install uv if absent.
 if [ ! -x "$UV_BIN" ]; then
@@ -226,6 +242,22 @@ if ! "$LINK" --version >/dev/null 2>&1; then
 fi
 INSTALLED_VERSION="$("$LINK" --version 2>/dev/null | head -1)"
 
+# review F-19-16: verify ALL THREE foundation weights, not just
+# amitaro. A non-`--skip-models` install that is missing any of them is
+# broken — fail rather than print a reassuring summary.
+MODELS_DIR="$APP_HOME/models"
+MISSING_MODELS=""
+for m in rmvpe_wrapped.onnx contentvec-f.onnx amitaro_v2_16k.onnx; do
+    [ -f "$MODELS_DIR/$m" ] || MISSING_MODELS="${MISSING_MODELS}${m} "
+done
+if [ "$SKIP_MODELS" -eq 1 ]; then
+    MODELS_STATUS="skipped (--skip-models; run scripts/download_weights.py later)"
+elif [ -n "$MISSING_MODELS" ]; then
+    fail "install incomplete — missing foundation weights: ${MISSING_MODELS}(run scripts/download_weights.py)"
+else
+    MODELS_STATUS="all 3 foundation weights present"
+fi
+
 # ---- summary -----------------------------------------------------------------
 
 cat <<EOF
@@ -234,7 +266,7 @@ cat <<EOF
 
   launcher : $LINK   ($INSTALLED_VERSION)
   venv     : $VENV
-  models   : $APP_HOME/models   ($([ -f "$APP_HOME/models/amitaro_v2_16k.onnx" ] && echo present || echo missing))
+  models   : $MODELS_DIR   ($MODELS_STATUS)
   service  : $SYSTEMD_USER_DIR/woys-mic.service
 
   next steps:

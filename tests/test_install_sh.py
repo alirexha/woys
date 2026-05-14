@@ -60,3 +60,26 @@ def test_pinned_requirements_install_before_editable_no_deps_package() -> None:
         "the editable `-e .` install must pass --no-deps -- requirements.txt "
         "owns the dependency set"
     )
+
+
+def test_install_sh_hard_fails_on_missing_nvidia_smi() -> None:
+    """review F-19-16 / F-15-06: a missing NVIDIA GPU must hard-fail
+    unless --allow-cpu is explicitly passed -- not warn-and-continue,
+    advertising an ONNX-Runtime CPU "fallback" that does not exist."""
+    # The pre-fix warn-and-continue line must be gone.
+    assert "engine will fall back to CPU" not in INSTALL_SH, (
+        "the misleading 'fall back to CPU' warning must be removed"
+    )
+    # The nvidia-smi block must hard-fail, gated on the --allow-cpu opt-out.
+    start = INSTALL_SH.index("command -v nvidia-smi")
+    block = INSTALL_SH[start : INSTALL_SH.index("\n\n", start)]
+    assert "fail " in block, "a missing nvidia-smi must call fail()"
+    assert "ALLOW_CPU" in block, "the hard-fail must be gated on --allow-cpu"
+    assert "--allow-cpu) " in INSTALL_SH, "--allow-cpu must be a parsed flag"
+
+
+def test_install_sh_verifies_all_three_foundation_weights() -> None:
+    """review F-19-16: the install must verify ALL three foundation
+    weights, not just amitaro_v2_16k.onnx."""
+    for weight in ("rmvpe_wrapped.onnx", "contentvec-f.onnx", "amitaro_v2_16k.onnx"):
+        assert weight in INSTALL_SH, f"install.sh must verify the {weight} foundation weight"
