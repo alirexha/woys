@@ -216,3 +216,27 @@ def test_set_pdeathsig_kills_child_when_parent_dies() -> None:
         with contextlib.suppress(ProcessLookupError):
             os.kill(grandchild_pid, signal.SIGKILL)  # cleanup before failing
         pytest.fail("grandchild survived parent death -- PR_SET_PDEATHSIG not armed")
+
+
+# ---- review F-14-05: stop() releases in-process ONNX sessions --------
+
+
+def test_stop_releases_in_process_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`stop()` must drop the `_cv` / `_rmvpe` / `_rvc` session references
+    and evict the RVC pool, so in-process mode does not accumulate VRAM
+    across start/stop cycles. Pre-fix `stop()` left the sessions referenced
+    and never called `evict_all()` (which had no caller at all)."""
+    eng = engine.RealtimeEngine(engine.EngineConfig())
+    # Simulate sessions having been loaded (the in-process path).
+    eng._cv = object()  # type: ignore[assignment]
+    eng._rmvpe = object()  # type: ignore[assignment]
+    eng._rvc = object()  # type: ignore[assignment]
+    evicted: list[bool] = []
+    monkeypatch.setattr(eng._rvc_pool, "evict_all", lambda: evicted.append(True))
+
+    eng.stop(timeout=0.1)
+
+    assert eng._cv is None and eng._rmvpe is None and eng._rvc is None, (
+        "stop() must drop the ONNX session references"
+    )
+    assert evicted == [True], "stop() must evict the RVC session pool"

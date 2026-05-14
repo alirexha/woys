@@ -2569,6 +2569,19 @@ class RealtimeEngine:
             self._inf_client = None
             self.stats.child_pid = None
 
+        # review F-14-05 (P1): release the in-process ONNX sessions
+        # before the gc.collect() below. Pre-fix `stop()` tore down the
+        # inference subprocess but never dropped `_cv`/`_rmvpe`/`_rvc` or
+        # evicted the RVC pool (`evict_all()` had no caller), so in-process
+        # mode accumulated VRAM across start/stop cycles -- and any future
+        # VRAM-target measurement was confounded by the leak. This affects
+        # the in-process path (`inference_subprocess=False`); subprocess
+        # mode frees the sessions by killing the child above.
+        self._cv = None
+        self._rmvpe = None
+        self._rvc = None
+        self._rvc_pool.evict_all()
+
         # v0.7.0-rc7 - restore GC to its prior state and run one
         # collection to free any cyclic references that accumulated
         # during the session. If GC was already disabled before this
