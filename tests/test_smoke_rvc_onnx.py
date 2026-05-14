@@ -74,8 +74,15 @@ def test_rvc_onnx_end_to_end_under_80ms() -> None:
     rmvpe = _make_session(MODELS / "rmvpe_wrapped.onnx")
     rvc = _make_session(MODELS / "amitaro_v2_16k.onnx")
 
-    if "CUDAExecutionProvider" not in rvc.get_providers():
-        pytest.skip("CUDA EP not active on this run; latency target is GPU-only")
+    # review F-merged-001 (P0): this was a `pytest.skip`, which silently
+    # passed the run when CUDA EP failed to bind -- the exact silent-fallback
+    # class the audit hard-fails. On a GPU box (this test is @pytest.mark.gpu)
+    # a CPU-only binding is a real regression: assert, don't skip.
+    assert "CUDAExecutionProvider" in rvc.get_providers(), (
+        f"CUDA EP did not bind for the RVC session (providers="
+        f"{rvc.get_providers()}); realtime RVC is unusable on CPU. Check the "
+        f"onnxruntime-gpu wheel / NVIDIA driver / ort.preload_dlls()."
+    )
 
     is_half = rvc.get_inputs()[0].type != "tensor(float)"
 
