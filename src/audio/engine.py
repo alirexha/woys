@@ -541,6 +541,17 @@ class EngineConfig:
     # sessions take which path.
     use_tensorrt: bool = False
 
+    # review F-merged-001 (P0): when False (default), `_make_session`
+    # hard-fails (CpuFallbackError) if a CUDA EP is installed but ONNX
+    # Runtime bound a model session CPU-only. Realtime RVC on CPU runs
+    # ~10-50x over the chunk-period latency budget -- it is a non-functional
+    # state, not a degraded one -- and the pre-fix silent fallback produced
+    # a working-looking but unusable engine with no error surfaced anywhere.
+    # Set True only to deliberately run CPU-only (e.g. debugging on a
+    # GPU-less box); EngineStats.cpu_fallback_active then reports it.
+    # (Not yet plumbed to config.toml -- that is F-merged-008's job.)
+    allow_cpu_fallback: bool = False
+
     # v0.10.0-rc3 - GPU keep-alive thread to mitigate dynamic-boost
     # variance.
     #
@@ -830,6 +841,12 @@ class EngineStats:
     trt_active_for: dict[str, bool] = field(default_factory=dict)
     trt_init_errors: dict[str, str] = field(default_factory=dict)
 
+    # review F-merged-001 (P0): True if any model session bound
+    # CPU-only. Only reachable when cfg.allow_cpu_fallback is set -- with
+    # the default config `_make_session` raises CpuFallbackError instead.
+    # Surfaced by `woys diag` so a deliberate CPU-only run is visible.
+    cpu_fallback_active: bool = False
+
     # B28 / corr-009: thread priority + affinity warnings. Each entry
     # describes one failure (engine main, writer, child) so a user with
     # multiple priority issues can see all of them, not just the last.
@@ -1020,7 +1037,62 @@ _TRT_ACTIVE_PER_SESSION: dict[str, bool] = {}
 _TRT_INIT_ERRORS: dict[str, str] = {}
 
 
-def _make_session(path: Path, *, use_tensorrt: bool = True) -> ort.InferenceSession:
+class CpuFallbackError(RuntimeError):
+    """review F-merged-001 (P0): ONNX Runtime bound a session CPU-only
+    while a CUDA execution provider was available.
+
+    Realtime RVC on CPU runs ~10-50x over the chunk-period latency budget,
+    so a CPU-bound session is a non-functional state, not a degraded one.
+    Pre-fix `_make_session` appended `CPUExecutionProvider` as an
+    unconditional landing pad and never checked `get_providers()`, so a
+    broken onnxruntime-gpu wheel / NVIDIA driver / missing `preload_dlls()`
+    produced a working-looking but unusable engine with no error anywhere.
+    """
+
+
+def _session_is_cpu_only(sess: ort.InferenceSession) -> bool:
+    """True iff the session's active (first) provider is CPUExecutionProvider."""
+    bound = sess.get_providers()
+    return bool(bound) and bound[0] == "CPUExecutionProvider"
+
+
+def _assert_session_gpu_bound(
+    sess: ort.InferenceSession,
+    path: Path,
+    *,
+    available: list[str],
+    allow_cpu_fallback: bool,
+) -> None:
+    """Hard-fail the silent CUDA->CPU fallback (F-merged-001).
+
+    If a CUDA EP is installed in this ORT build but the session bound
+    CPU-only, raise `CpuFallbackError` -- unless `allow_cpu_fallback` is
+    set, in which case the CPU binding is left in place (the engine records
+    it in `EngineStats.cpu_fallback_active` for `woys diag`).
+
+    When no CUDA EP is present in the build at all, CPU is simply the only
+    option -- that is the environment, not a silent *fallback*, so it is
+    left alone here; the no-GPU condition is surfaced separately by
+    `woys info` (F-merged-013).
+    """
+    if not _session_is_cpu_only(sess):
+        return
+    if "CUDAExecutionProvider" not in available:
+        return
+    if not allow_cpu_fallback:
+        raise CpuFallbackError(
+            f"{path.name}: a CUDA execution provider is installed but ONNX "
+            f"Runtime bound this session CPU-only (providers="
+            f"{sess.get_providers()}). Realtime RVC is unusable on CPU. "
+            f"Check the onnxruntime-gpu wheel, the NVIDIA driver, and that "
+            f"ort.preload_dlls() ran. To deliberately run CPU-only, set "
+            f"EngineConfig.allow_cpu_fallback = True."
+        )
+
+
+def _make_session(
+    path: Path, *, use_tensorrt: bool = True, allow_cpu_fallback: bool = False
+) -> ort.InferenceSession:
     """v0.8.1 - try TensorRT EP first, fall back to CUDA EP per session.
 
     ORT's TRT EP fails session initialization (not just the TRT
@@ -1029,6 +1101,11 @@ def _make_session(path: Path, *, use_tensorrt: bool = True) -> ort.InferenceSess
     catch that failure and rebuild the session with CUDA EP only.
     The fallback is logged to `_TRT_INIT_ERRORS[path.name]` and
     can be surfaced via `EngineStats.trt_active_for` and woys diag.
+
+    review F-merged-001 (P0): the CUDA->CPU fallback is *not* silent.
+    After the session is built, `_assert_session_gpu_bound` raises
+    `CpuFallbackError` if a CUDA EP was available but ORT bound CPU-only,
+    unless `allow_cpu_fallback` is set.
     """
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -1064,9 +1141,19 @@ def _make_session(path: Path, *, use_tensorrt: bool = True) -> ort.InferenceSess
         ]
         try:
             sess = ort.InferenceSession(str(path), sess_options=so, providers=trt_providers)
+            _assert_session_gpu_bound(
+                sess, path, available=available, allow_cpu_fallback=allow_cpu_fallback
+            )
             _TRT_ACTIVE_PER_SESSION[path.name] = True
             _TRT_INIT_ERRORS.pop(path.name, None)
             return sess
+        except CpuFallbackError:
+            # A CpuFallbackError means TRT/CUDA both failed to bind and the
+            # session is CPU-only -- that is the F-merged-001 hard-fail, not
+            # a "TRT couldn't partition the graph" retry condition. Re-raise;
+            # rebuilding with the CUDA-only providers below would just bind
+            # CPU again.
+            raise
         except Exception as e:
             # TRT couldn't parse / partition the graph. Log the
             # reason and retry with CUDA EP only. Common cause:
@@ -1082,6 +1169,9 @@ def _make_session(path: Path, *, use_tensorrt: bool = True) -> ort.InferenceSess
         cuda_providers.append(_cuda_provider_entry())
     cuda_providers.append("CPUExecutionProvider")
     sess = ort.InferenceSession(str(path), sess_options=so, providers=cuda_providers)
+    _assert_session_gpu_bound(
+        sess, path, available=available, allow_cpu_fallback=allow_cpu_fallback
+    )
     _TRT_ACTIVE_PER_SESSION.setdefault(path.name, False)
     return sess
 
@@ -1287,7 +1377,13 @@ class RvcSessionPool:
     `_maybe_swap_model`; tests / TUI may call it from any thread.
     """
 
-    def __init__(self, max_size: int = 4, *, use_tensorrt: bool = True) -> None:
+    def __init__(
+        self,
+        max_size: int = 4,
+        *,
+        use_tensorrt: bool = True,
+        allow_cpu_fallback: bool = False,
+    ) -> None:
         self._cache: dict[Path, ort.InferenceSession] = {}
         self._access_order: list[Path] = []
         self._max_size = max(1, max_size)
@@ -1296,6 +1392,9 @@ class RvcSessionPool:
         # engine constructs the pool with `use_tensorrt=cfg.use_tensorrt`
         # so RVC voice loads share whatever EP path the engine wants.
         self._use_tensorrt = use_tensorrt
+        # review F-merged-001 (P0): RVC voice sessions go through the
+        # same CUDA->CPU silent-fallback hard-fail as cv/rmvpe.
+        self._allow_cpu_fallback = allow_cpu_fallback
 
     def __len__(self) -> int:
         with self._lock:
@@ -1320,7 +1419,11 @@ class RvcSessionPool:
 
         # Cache miss - build outside the lock (slow); other threads can
         # still get cached sessions while we tune.
-        sess = _make_session(key, use_tensorrt=self._use_tensorrt)
+        sess = _make_session(
+            key,
+            use_tensorrt=self._use_tensorrt,
+            allow_cpu_fallback=self._allow_cpu_fallback,
+        )
 
         with self._lock:
             # Another thread may have raced us; if so, drop ours and use theirs.
@@ -1501,6 +1604,7 @@ class RealtimeEngine:
         self._rvc_pool = RvcSessionPool(
             max_size=self.cfg.session_pool_size,
             use_tensorrt=self.cfg.use_tensorrt,
+            allow_cpu_fallback=self.cfg.allow_cpu_fallback,
         )
         # Probed `model_sr` per voice path so we don't redo the probe each
         # swap. Keys are resolved Paths.
@@ -1545,10 +1649,18 @@ class RealtimeEngine:
         rmvpe_path = self._auto_pick_fp16(self.cfg.rmvpe_model, allow=True)
 
         if self._cv is None:
-            self._cv = _make_session(cv_path, use_tensorrt=self.cfg.use_tensorrt)
+            self._cv = _make_session(
+                cv_path,
+                use_tensorrt=self.cfg.use_tensorrt,
+                allow_cpu_fallback=self.cfg.allow_cpu_fallback,
+            )
             self._cv_input_dtype = self._cv.get_inputs()[0].type
         if self._rmvpe is None:
-            self._rmvpe = _make_session(rmvpe_path, use_tensorrt=self.cfg.use_tensorrt)
+            self._rmvpe = _make_session(
+                rmvpe_path,
+                use_tensorrt=self.cfg.use_tensorrt,
+                allow_cpu_fallback=self.cfg.allow_cpu_fallback,
+            )
             self._rmvpe_input_dtype = self._rmvpe.get_inputs()[0].type
         if self._rvc is None:
             self._rvc = self._rvc_pool.get_or_create(self.cfg.rvc_model)
@@ -1560,6 +1672,13 @@ class RealtimeEngine:
         # actually got TRT EP and which fell back to CUDA.
         self.stats.trt_active_for = dict(_TRT_ACTIVE_PER_SESSION)
         self.stats.trt_init_errors = dict(_TRT_INIT_ERRORS)
+        # review F-merged-001 (P0): record whether any model session
+        # bound CPU-only. Only reachable when cfg.allow_cpu_fallback is set --
+        # otherwise `_make_session` raises CpuFallbackError above. Surfaced
+        # by `woys diag` so a deliberate CPU-only run is visible.
+        self.stats.cpu_fallback_active = any(
+            _session_is_cpu_only(s) for s in (self._cv, self._rmvpe, self._rvc) if s is not None
+        )
 
         # Resolve embedder mode. v0.8.0 removed the fairseq path - only "onnx"
         # is supported. Any non-"onnx" value in config is reported and the
