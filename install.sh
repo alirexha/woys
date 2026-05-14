@@ -89,8 +89,15 @@ else
 fi
 
 say "installing woys + runtime deps (long step on fresh installs — torch + ORT-GPU)…"
-"$UV_BIN" pip install --python "$VENV/bin/python" -e "$REPO_DIR" >/dev/null
+# review F-19-03: install the pinned dependency closure
+# (requirements.txt) FIRST, then the woys package itself with --no-deps.
+# Pre-fix this was `pip install -e .` then `pip install -r
+# requirements.txt` -- an order-dependent double-install where the second
+# command silently re-resolved whatever the first installed if the two
+# files diverged, and the slow step (torch + ORT-GPU) was paid twice.
+# requirements.txt is now the single source of what gets installed.
 "$UV_BIN" pip install --python "$VENV/bin/python" -r "$REPO_DIR/requirements.txt" >/dev/null
+"$UV_BIN" pip install --python "$VENV/bin/python" --no-deps -e "$REPO_DIR" >/dev/null
 
 # ---- v0.6.0 migration: vcclient-cachy → woys ---------------------------------
 #
