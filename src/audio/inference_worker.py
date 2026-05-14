@@ -108,6 +108,24 @@ def child_main(
     """
     # No reconstruction needed - Connection objects come through spawn intact.
 
+    # review F-merged-014 (P1): the inference child is a separate
+    # `spawn`ed process -- wire it into the same rotating log file so a
+    # child-side crash is on disk next to the parent's records.
+    try:
+        import logging
+
+        from woys.logsetup import setup_logging
+
+        setup_logging()
+        logging.getLogger("woys.inference-worker").info(
+            "inference child started (pid=%s, parent=%s)", os.getpid(), parent_pid
+        )
+    except Exception as e:
+        # Logging setup is best-effort observability, not the child's core
+        # job -- never let it abort inference. Not silent: the child's
+        # stderr is read by the parent's _stderr_reader_loop.
+        print(f"[inference-worker] logging setup failed: {e}", file=sys.stderr)
+
     # Step 1: open the shared memory regions the parent created.
     try:
         input_shm = shared_memory.SharedMemory(name=input_shm_name)
