@@ -583,21 +583,34 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
     and write into WoysSink simultaneously, producing out-of-phase
     double-converted audio.
     """
+    from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
+
+    print(f"woys engine - {__version__}")
+    # v0.14.0 (C009) used manual __enter__/__exit__ scattered across three
+    # error-path exit sites. review F-merged-002 / F-cx1-new-B: a real
+    # `with` block, so no future early return can leak the lock. The body
+    # is in _cmd_engine_locked so the lock spans the whole run.
+    try:
+        with acquire_instance_lock():
+            return _cmd_engine_locked(seconds, quiet)
+    except InstanceLockBusy as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
+    """Engine-run body; executes while the single-instance lock is held.
+
+    Split out of cmd_engine in the review Phase 6 (F-merged-002 /
+    F-cx1-new-B) so the instance lock is a single `with` block rather
+    than manual __enter__/__exit__ at every exit site.
+    """
     import signal as _signal
     import time as _time
 
     from audio.engine import EngineConfig, RealtimeEngine
     from audio.pipewire import PipeWireError, VirtualMic, get_state
     from tui.config import load_config
-    from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
-
-    print(f"woys engine - {__version__}")
-    try:
-        instance_lock_cm = acquire_instance_lock()
-        instance_lock_cm.__enter__()
-    except InstanceLockBusy as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 2
 
     try:
         VirtualMic().ensure()
@@ -607,11 +620,9 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
                 "error: WoysSink + woys-mic not loaded; run `woys pw setup`",
                 file=sys.stderr,
             )
-            instance_lock_cm.__exit__(None, None, None)
             return 2
     except PipeWireError as e:
         print(f"error: {e}", file=sys.stderr)
-        instance_lock_cm.__exit__(None, None, None)
         return 2
 
     cfg = load_config()
@@ -775,8 +786,6 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
                 f"  player_underruns rate: ~{rate:.1f}/sec "
                 f"({'engine writer jitter likely cause' if rate > 1.0 else 'within normal slack'})"
             )
-        # v0.14.0 (C009): release the instance lock taken at function entry.
-        instance_lock_cm.__exit__(None, None, None)
     return 0
 
 

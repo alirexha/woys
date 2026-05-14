@@ -15,6 +15,7 @@ Keys
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import ClassVar
 
@@ -29,6 +30,7 @@ from audio.engine import DEFAULT_RVC_MODEL
 from audio.pipewire import PipeWireError, VirtualMic
 from tui.config import AppConfig, load_config, save_config
 from tui.control import ControlServer, JobRegistry
+from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
 from woys.profiles import apply_profile, cycle_profile, list_profiles
 
 
@@ -568,8 +570,20 @@ def run_tui(
         cfg.autostart_engine = True
     if monitor is not None:
         cfg.monitor = monitor
-    app = WoysApp(cfg=cfg, no_pw_setup=no_pw_setup)
-    return app.run() or 0
+    # review F-merged-002 (P0): the single-instance lock used to be
+    # wired only into `woys engine`. `woys run` -- the primary entry point,
+    # the one instance_lock.py's own docstring names *first* -- never
+    # acquired it, leaving the documented double-engine WoysSink corruption
+    # (reproduced in Phase 1 F17.7) reachable on the main path. Acquire it
+    # here, before WoysApp.on_mount binds the control socket or calls
+    # VirtualMic().ensure().
+    try:
+        with acquire_instance_lock():
+            app = WoysApp(cfg=cfg, no_pw_setup=no_pw_setup)
+            return app.run() or 0
+    except InstanceLockBusy as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
 
 # v0.13.1 - back-compat alias for the pre-v0.6.0 class name. Several
