@@ -125,7 +125,7 @@ This fork is built on the work of **[w-okada](https://github.com/w-okada)**
 and the original [voice-changer](https://github.com/w-okada/voice-changer)
 project. The portions of this repository under `upstream/` and any code
 within `src/server/` that descends from upstream remain under the original
-MIT license (`upstream/LICENSE`). All original work in `src/woys/`,
+MIT license (full text in `src/server/LICENSE`). All original work in `src/woys/`,
 `src/audio/`, `src/tui/`, `tests/`, `scripts/`, `pkg/`, and `docs/` is the
 proprietary work of Alireza Hamayeli.
 
@@ -142,8 +142,9 @@ This repository contains code under **two distinct licenses**:
 | Top-level configuration & metadata            | **All Rights Reserved**  | Alireza Hamayeli  |
 
 Original-work files are governed by `LICENSE` at the repo root (proprietary,
-all rights reserved). Upstream-derived files are governed by `upstream/LICENSE`
-(MIT). See `NOTICE` for the file-by-file audit trail.
+all rights reserved). Upstream-derived files are MIT-licensed; the full MIT
+text ships in `src/server/LICENSE`. See `NOTICE` for the file-by-file audit
+trail.
 
 No license is granted to copy, modify, distribute, or sublicense the
 original work without prior written permission from the copyright holder.

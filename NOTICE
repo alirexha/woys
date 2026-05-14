@@ -10,7 +10,9 @@ Two licenses apply:
   (A) ORIGINAL WORK         — Copyright (c) 2026 Alireza Hamayeli.
                               All Rights Reserved. Governed by ./LICENSE.
   (B) UPSTREAM-DERIVED      — Copyright (c) 2022 wataru-okada and contributors.
-                              MIT License. Governed by ./upstream/LICENSE.
+                              MIT License. The full MIT text and every
+                              upstream copyright block are reproduced
+                              verbatim in ./src/server/LICENSE.
 
 Whenever a file in (B) is modified inside this repository, the modifications
 remain MIT-licensed; the modifications are not "incorporated into" (A).
@@ -179,12 +181,19 @@ UPSTREAM-DERIVED — Copyright 2022 wataru-okada et al., MIT License
 ----------------------------------------------------------------------
 
 Read-only mirror of the upstream repository (unmodified):
-  upstream/                 — pristine git clone of w-okada/voice-changer
-  upstream/LICENSE          — original MIT license text (DO NOT MODIFY)
+  upstream/                 — pristine git clone of w-okada/voice-changer,
+                              kept locally for reference. It is a nested git
+                              repository and is NOT tracked in this repo, so
+                              it is absent from a fresh clone. The MIT license
+                              text it carries is reproduced verbatim in the
+                              tracked file src/server/LICENSE (DO NOT MODIFY).
 
 Vendored and *trimmed* from upstream (modifications are MIT, attribution
 required if redistributed):
   src/server/               — entire subtree
+  src/server/LICENSE        — MIT license text + all upstream copyright
+                              blocks, carried with the vendored subtree
+  src/server/NOTICE         — description of the trimmed subtree
 
 The src/server/ directory was created by:
   1. Copying upstream/server/ into src/server/.
@@ -199,8 +208,11 @@ The src/server/ directory was created by:
      VoiceChangerManager.py, VoiceChangerV2.py, SampleDownloader.py.
 
 The trimming changes are detailed in CHANGELOG.md under "Phase 1 — Lean Core".
-The original copyright notices on upstream files inside src/server/ are
-preserved where present.
+Individual upstream files inside src/server/ do not all carry per-file
+copyright headers. To satisfy the MIT notice requirement, the full MIT
+license text and every upstream copyright block are carried in
+src/server/LICENSE, with src/server/NOTICE describing the subtree. Any
+per-file copyright header present in an upstream file is left intact.
 
 
 ----------------------------------------------------------------------
