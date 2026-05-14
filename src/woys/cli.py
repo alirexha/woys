@@ -28,7 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="cmd", required=False, metavar="COMMAND")
 
-    sub.add_parser("info", help="print runtime info (CUDA, PipeWire, models)")
+    sub.add_parser(
+        "info", help="print runtime info (ONNX Runtime / CUDA EP, PipeWire, GPU, active model)"
+    )
 
     pw = sub.add_parser("pw", help="manage the persistent PipeWire virtual mic")
     pw_sub = pw.add_subparsers(dest="pw_cmd", required=True, metavar="ACTION")
@@ -207,6 +209,30 @@ def cmd_info() -> int:
 
     print(f"woys {__version__}")
     print(f"  python: {sys.version.split()[0]}")
+
+    # ONNX Runtime + CUDA EP. review F-merged-013: cmd_info used to
+    # print Python/PipeWire/GPU but never import onnxruntime, so a user
+    # whose CUDA EP silently fell back to CPU (the F-merged-001 P0) had no
+    # command that revealed it. `_make_session` now hard-fails that case;
+    # this is where you confirm the GPU inference path is healthy *before*
+    # a run.
+    try:
+        import onnxruntime as ort
+
+        try:
+            ort.preload_dlls()  # required for the CUDA EP -- see LESSONS.md
+        except Exception as e:
+            # Report any preload failure, never hide it (Hard Rule 2).
+            print(f"  ort.preload_dlls() FAILED: {type(e).__name__}: {e}")
+        providers = ort.get_available_providers()
+        cuda_ok = "CUDAExecutionProvider" in providers
+        trt_ok = "TensorrtExecutionProvider" in providers
+        print(f"  onnxruntime: {ort.__version__}")
+        print(f"  CUDAExecutionProvider: {'available' if cuda_ok else 'NOT available'}")
+        print(f"  TensorrtExecutionProvider: {'available' if trt_ok else 'not available'}")
+    except ImportError:
+        print("  onnxruntime: NOT INSTALLED")
+
     pactl = shutil.which("pactl")
     if pactl:
         out = subprocess.run([pactl, "info"], capture_output=True, text=True, timeout=3)
@@ -223,6 +249,17 @@ def cmd_info() -> int:
         )
         if out.returncode == 0:
             print(f"  gpu: {out.stdout.strip()}")
+
+    # Active RVC model -- a missing model is the most common first-run
+    # failure; surface it here rather than as an opaque error mid-start.
+    from tui.config import load_config
+
+    cfg = load_config()
+    if cfg.rvc_model:
+        rp = Path(cfg.rvc_model)
+        print(f"  active rvc model: {rp} ({'present' if rp.exists() else 'MISSING'})")
+    else:
+        print("  active rvc model: (none configured)")
     return 0
 
 
