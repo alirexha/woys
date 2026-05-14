@@ -1,0 +1,20 @@
+src/server/ — vendored subtree NOTICE
+=====================================
+
+This directory is a trimmed, vendored copy of the `server/` tree from
+w-okada/voice-changer (https://github.com/w-okada/voice-changer),
+licensed under the MIT License. The complete upstream MIT license text,
+including every upstream copyright block, is in ./LICENSE next to this
+file.
+
+Non-RVC inference engines and the Mac/Windows code paths were removed
+(~22k LOC). The file-by-file trimming record is in the repository
+CHANGELOG.md under "Phase 1 — Lean Core". No upstream file in this
+subtree was modified beyond that removal; any per-file copyright header
+present in an upstream file is left intact.
+
+This subtree remains MIT-licensed. It is the only MIT-licensed code in
+the woys repository — everything outside src/server/ and upstream/ is
+proprietary under the repository-root ./LICENSE (All Rights Reserved).
+The license boundary is enumerated file-by-file in the repository-root
+./NOTICE.

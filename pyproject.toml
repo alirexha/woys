@@ -96,9 +96,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/woys", "src/server", "src/audio", "src/tui"]
+# src/server/LICENSE + src/server/NOTICE live inside the src/server package
+# and ship in the wheel with it. The repo-root LICENSE + NOTICE are picked
+# up automatically by hatchling's license-file globbing into
+# dist-info/licenses/ (verified in the built wheel).
 
 [tool.hatch.build.targets.sdist]
-include = ["src/", "pkg/", "docs/", "tests/", "README.md", "LICENSE", "CHANGELOG.md"]
+# NOTICE carries the proprietary/MIT license boundary; LICENSE + src/server/
+# (which now includes src/server/LICENSE + src/server/NOTICE under "src/")
+# satisfy the MIT copyright-notice requirement in the distributed artifact.
+include = ["src/", "pkg/", "docs/", "tests/", "README.md", "LICENSE", "NOTICE", "CHANGELOG.md"]
 
 [tool.ruff]
 target-version = "py311"
