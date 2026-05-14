@@ -79,6 +79,23 @@ def test_engine_falls_back_to_default_when_cfg_path_invalid(tmp_path: Path) -> N
 
 
 @pytest.mark.gpu
+def test_resamplers_initialized_in_constructor() -> None:
+    """review F-merged-011: `_resampler_in` / `_resampler_out` must be
+    initialized in `__init__`.
+
+    They used to sit as dead code after a `return` inside the
+    `inference_subprocess_pid` property, so the attributes did not exist
+    until `_run_loop` ran -- any swap-path access (`_maybe_swap_model`,
+    `reload_rvc`) before the run loop raised AttributeError. Pre-fix this
+    test raises AttributeError on the first access; no models needed.
+    """
+    from audio.engine import EngineConfig, RealtimeEngine
+
+    eng = RealtimeEngine(EngineConfig())
+    assert eng._resampler_in is None
+    assert eng._resampler_out is None
+
+
 def test_request_model_swap_replaces_rvc_session() -> None:
     """`request_model_swap` queues; `_maybe_swap_model` picks it up + replaces
     the ORT session. We call _maybe_swap_model directly here to avoid
