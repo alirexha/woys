@@ -26,6 +26,7 @@ no native libpipewire bindings required (pw-python is unmaintained).
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -91,6 +92,15 @@ class VirtualMicState:
         return self.sink_present and self.source_present
 
 
+def _c_locale_env() -> dict[str, str]:
+    """review F-15-05: env for parsing subprocesses. pactl / pw-cli /
+    pw-link output is localised; our parsers key off literal English
+    tokens (`Description: `, `Source #`, ...), so on a non-English
+    `$LANG` every parse silently misses and the device list comes back
+    empty with no error. Forcing `LC_ALL=C` keeps the output English."""
+    return {**os.environ, "LC_ALL": "C"}
+
+
 def _run_pactl(args: list[str]) -> subprocess.CompletedProcess[str]:
     pactl = shutil.which("pactl")
     if pactl is None:
@@ -101,6 +111,7 @@ def _run_pactl(args: list[str]) -> subprocess.CompletedProcess[str]:
         text=True,
         timeout=PACTL_TIMEOUT_S,
         check=False,
+        env=_c_locale_env(),
     )
 
 
@@ -166,6 +177,7 @@ def _destroy_orphan_nodes() -> None:
             text=True,
             timeout=PACTL_TIMEOUT_S,
             check=False,
+            env=_c_locale_env(),  # review F-15-05: English-token parsing
         )
     except subprocess.TimeoutExpired:
         return
