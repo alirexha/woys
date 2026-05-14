@@ -1042,6 +1042,13 @@ def _cuda_provider_entry() -> tuple[str, dict[str, object]]:
 _TRT_ACTIVE_PER_SESSION: dict[str, bool] = {}
 _TRT_INIT_ERRORS: dict[str, str] = {}
 
+# review F-17-10 (P1): cap on consecutive playback-helper respawns
+# that never stay alive. The watchdog used to retry forever (running=True,
+# zero audio). 8 consecutive deaths-without-recovery is unambiguously a
+# broken binary/config, not a transient PipeWire hiccup (a one-off death
+# respawns once and the counter resets on the next healthy tick).
+_PLAYER_RESPAWN_CAP = 8
+
 
 class CpuFallbackError(RuntimeError):
     """review F-merged-001 (P0): ONNX Runtime bound a session CPU-only
@@ -2623,6 +2630,38 @@ class RealtimeEngine:
             return local_hit
         return None
 
+    def _spawn_checked(self, cmd: list[str]) -> subprocess.Popen[bytes]:
+        """Spawn a playback helper and verify it did not die on startup.
+
+        review F-17-10 (P1): `_open_pacat` used to `return
+        subprocess.Popen(...)` with no liveness check. A helper that exits
+        immediately (bad args, missing perms, a built-but-broken
+        `woys-pw-out`) left the watchdog in an infinite 0.5 s-backoff
+        respawn loop with `running=True` and `chunks_processed` climbing
+        while zero audio reached the sink. We now sleep briefly and
+        `poll()`; an immediate exit raises with the helper's stderr so the
+        initial spawn fails the engine loudly and the watchdog's
+        consecutive-failure cap can act.
+        """
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        time.sleep(0.05)
+        rc = proc.poll()
+        if rc is not None:
+            stderr = ""
+            if proc.stderr is not None:
+                with contextlib.suppress(Exception):
+                    stderr = proc.stderr.read().decode("utf-8", "replace").strip()
+            raise RuntimeError(
+                f"playback helper {cmd[0]!r} exited immediately on spawn (rc={rc})"
+                + (f": {stderr[:300]}" if stderr else "")
+            )
+        return proc
+
     def _open_pacat(self) -> subprocess.Popen[bytes]:
         """Spawn the playback subprocess targeting the named virtual sink.
 
@@ -2693,12 +2732,7 @@ class RealtimeEngine:
                 "--quantum=1024",
                 f"--ring-frames={ring_frames}",
             ]
-            return subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
+            return self._spawn_checked(cmd)
 
         if self.cfg.prefer_pw_cat:
             pw_cat = shutil.which("pw-cat")
@@ -2715,12 +2749,7 @@ class RealtimeEngine:
                     f"--latency={self.cfg.output_latency_ms}ms",
                     "-",
                 ]
-                return subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                )
+                return self._spawn_checked(cmd)
 
         pacat = shutil.which("pacat")
         if pacat is None:
@@ -2742,12 +2771,7 @@ class RealtimeEngine:
             "--raw",
             "-v",
         ]
-        return subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        return self._spawn_checked(cmd)
 
     # ---- v0.5.2 writer / watchdog / stderr-reader plumbing ------------------
 
@@ -3381,7 +3405,17 @@ class RealtimeEngine:
         process: opens a replacement under `_pacat_lock`, swaps the handle,
         spawns a fresh stderr reader for the new process, and increments
         `pacat_restarts`. Recovery target ≤ 100 ms.
+
+        review F-17-10 (P1): the respawn loop is capped. Pre-fix a
+        helper that could never stay alive (raised every time, or spawned
+        then died immediately) was retried forever with `running=True` and
+        zero audio. `consecutive_respawns` counts deaths-without-recovery;
+        a healthy tick (`poll() is None`) resets it, so a one-off death
+        costs one respawn and does not accumulate. At the cap the engine
+        stops cleanly with a definitive `last_error` (mirrors the
+        inference circuit breaker).
         """
+        consecutive_respawns = 0
         while not self._stop_event.is_set():
             # Wake immediately if the writer signalled BrokenPipe; otherwise
             # poll on the configured interval.
@@ -3392,12 +3426,26 @@ class RealtimeEngine:
             if proc is None:
                 continue
             if proc.poll() is None:
+                consecutive_respawns = 0  # alive this tick -> healthy, reset the cap
                 continue  # still alive
+            # Dead. Count this respawn attempt; a helper that never stays
+            # alive must not loop forever.
+            consecutive_respawns += 1
+            if consecutive_respawns > _PLAYER_RESPAWN_CAP:
+                self.stats.last_error = (
+                    f"engine stopping: playback helper died and was respawned "
+                    f"{consecutive_respawns - 1}x without staying alive. "
+                    f"Last cause: {self.stats.last_error or 'unknown'}"
+                )
+                self._stop_event.set()
+                return
             # Respawn.
             try:
                 new_proc = self._open_pacat()
             except Exception as e:
-                self.stats.last_error = f"watchdog respawn failed: {type(e).__name__}: {e}"
+                self.stats.last_error = (
+                    f"watchdog respawn failed ({consecutive_respawns}x): {type(e).__name__}: {e}"
+                )
                 # Back off a bit before retrying so we don't spin.
                 time.sleep(0.5)
                 continue
