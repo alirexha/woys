@@ -1290,7 +1290,14 @@ def to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, ND
     f0_mel_max = 1127.0 * np.log(1 + f0_max / 700.0)
     pitch = np.zeros(target_len, dtype=np.float32)
     n = min(len(pitchf), target_len)
-    pitch[-n:] = pitchf[:n]
+    # review F-31-02 (P1): when pitchf is over-length keep the *last*
+    # n frames, not the first. RMVPE and contentvec emit unequal frame
+    # counts, so `pitchf[:n]` temporally scrambled the F0 contour against
+    # the content features -- frame i of the harmonic source corresponded
+    # to a different point in time than frame i of the content. Upstream
+    # keeps the trailing frames (Pipeline.py:288, `pitch[:, -feats_len:]`).
+    # (When pitchf is not over-length, pitchf[-n:] == pitchf[:n].)
+    pitch[-n:] = pitchf[-n:]
     f0_mel = 1127.0 * np.log(1 + pitch / 700.0)
     mask = f0_mel > 0
     f0_mel[mask] = (f0_mel[mask] - f0_mel_min) * 254 / (f0_mel_max - f0_mel_min) + 1
