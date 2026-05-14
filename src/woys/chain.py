@@ -356,24 +356,34 @@ def setup() -> int:
     #    actually carries audio) is already running. We log a warning
     #    and return success, because the chain is functionally fine
     #    even if the cosmetic relabel didn't take.
+    # review F-merged-006: the pre-fix code caught a relabel failure,
+    # printed a stderr "warning", and `return 0` -- so `woys-chain.service`
+    # reported `active` even when (pre-F-merged-006) the relabel had
+    # destroyed woys-mic. `relabel_source` is now atomic (it rolls back, so
+    # woys-mic survives), but a relabel failure is still a daemon-path step
+    # that did not complete: fail loudly with exit 2 so the unit shows
+    # `failed` rather than reporting success on a partially-applied chain.
     try:
         from audio.pipewire import SOURCE_DESC_CHAIN_ACTIVE, relabel_source
     except ImportError as exc:
         print(
             f"[woys chain] internal: cannot import relabel_source ({exc}); "
-            "skipping woys-mic relabel.",
+            "woys-mic relabel did not run.",
             file=sys.stderr,
         )
-    else:
-        try:
-            relabel_source(SOURCE_DESC_CHAIN_ACTIVE, passive=True)
-        except Exception as exc:
-            print(
-                f"[woys chain] warning: woys-mic relabel failed ({exc}). Chain "
-                "still works; apps will show `woys-no-cleanup` as a second "
-                "daily-driver option until next reload.",
-                file=sys.stderr,
-            )
+        return 2
+    try:
+        relabel_source(SOURCE_DESC_CHAIN_ACTIVE, passive=True)
+    except Exception as exc:
+        print(
+            f"[woys chain] woys-mic relabel failed ({exc}). The RNNoise chain "
+            "modules are loaded and woys-mic is intact (relabel_source rolls "
+            "back atomically), but this daemon-path step did not complete -- "
+            "failing with exit 2 so the unit does not report success on a "
+            "partially-applied chain.",
+            file=sys.stderr,
+        )
+        return 2
 
     print(
         "[woys chain] active. Apps that show device descriptions will display\n"
@@ -391,30 +401,37 @@ def teardown() -> int:
 
     # v0.14.1 - restore woys-mic's daily-driver description so users
     # without the chain (or after teardown) see a sensible label.
+    # review F-merged-006: a failed restore is reported via a non-zero
+    # exit, not swallowed as a "warning" + return 0.
+    relabel_failed = False
     try:
         from audio.pipewire import SOURCE_DESC, relabel_source
     except ImportError as exc:
         print(
             f"[woys chain] internal: cannot import relabel_source ({exc}); "
-            "skipping woys-mic restore.",
+            "woys-mic restore did not run.",
             file=sys.stderr,
         )
+        relabel_failed = True
     else:
         try:
             relabel_source(SOURCE_DESC, passive=False)
         except Exception as exc:
             print(
-                f"[woys chain] warning: woys-mic relabel failed ({exc}). "
-                "Run `woys pw teardown && woys pw setup` to restore the "
-                "default description manually.",
+                f"[woys chain] woys-mic relabel-to-default failed ({exc}). The "
+                "chain modules were unloaded and woys-mic is intact "
+                "(relabel_source rolls back atomically) but keeps its "
+                "chain-active description. Run `woys pw teardown && woys pw "
+                "setup` to restore the default label.",
                 file=sys.stderr,
             )
+            relabel_failed = True
 
     if n == 0:
         print("[woys chain] not loaded (nothing to tear down)")
     else:
         print(f"[woys chain] unloaded {n} module(s)")
-    return 0
+    return 1 if relabel_failed else 0
 
 
 def status() -> int:
