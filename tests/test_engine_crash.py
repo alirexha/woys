@@ -13,6 +13,7 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -83,3 +84,62 @@ def test_start_resets_crashed(monkeypatch: pytest.MonkeyPatch) -> None:
 
     eng.start()
     assert eng.stats.crashed is False, "start() must clear a stale crashed flag"
+
+
+# ---- review F-17-10: playback-helper liveness check + respawn cap -----
+
+
+def test_spawn_checked_raises_when_helper_exits_immediately() -> None:
+    """A playback helper that exits immediately on spawn must raise -- not
+    be returned as a dead Popen the watchdog respawns forever."""
+    eng = engine.RealtimeEngine(engine.EngineConfig())
+    with pytest.raises(RuntimeError, match="exited immediately"):
+        eng._spawn_checked(["false"])  # coreutils `false` exits 1 instantly
+
+
+def test_spawn_checked_returns_a_live_proc() -> None:
+    """A helper that stays alive past the poll window is returned normally."""
+    eng = engine.RealtimeEngine(engine.EngineConfig())
+    proc = eng._spawn_checked(["sleep", "10"])
+    try:
+        assert proc.poll() is None  # still alive
+    finally:
+        proc.terminate()
+        proc.wait(timeout=2)
+
+
+def test_watchdog_loop_caps_respawn_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A playback helper that can never respawn must stop the engine after
+    `_PLAYER_RESPAWN_CAP` attempts. Pre-fix the watchdog retried forever
+    (`running=True`, zero audio); pre-fix this test HANGS, and the
+    thread-join timeout turns that hang into a clean failure."""
+    eng = engine.RealtimeEngine(engine.EngineConfig())
+
+    class _DeadProc:
+        returncode = 1
+
+        def poll(self) -> int:
+            return 1  # always dead -> every tick triggers a respawn
+
+    eng._pacat_proc = _DeadProc()  # type: ignore[assignment]
+
+    def _always_fails() -> object:
+        raise RuntimeError("helper permanently broken")
+
+    monkeypatch.setattr(eng, "_open_pacat", _always_fails)
+    # Spin the loop fast: no real waiting.
+    monkeypatch.setattr(eng._pacat_dead_event, "wait", lambda timeout=None: None)
+    monkeypatch.setattr(engine.time, "sleep", lambda *_a: None)
+
+    t = threading.Thread(target=eng._watchdog_loop, daemon=True)
+    t.start()
+    t.join(timeout=5.0)
+    alive = t.is_alive()
+    # Stop the spinner regardless -- matters on pre-fix code where the loop
+    # is uncapped and would otherwise spin hot for the rest of the session.
+    eng._stop_event.set()
+    t.join(timeout=2.0)
+
+    assert not alive, "watchdog did not terminate -- the respawn loop is uncapped"
+    assert eng._stop_event.is_set(), "hitting the cap must set _stop_event"
+    assert eng.stats.last_error and "respawned" in eng.stats.last_error
