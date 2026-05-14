@@ -765,8 +765,14 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
     started_with_subprocess = eng.cfg.inference_subprocess
 
     deadline = _time.perf_counter() + seconds if seconds > 0 else float("inf")
+    # review F-17-06 (P1): the loop must also break when `_run_loop`
+    # exits via an unhandled exception. Pre-fix it checked only
+    # `stop["now"]` / `deadline`, so a crashed worker left this loop
+    # printing frozen `chunks=0` stats for the full --seconds (and, for
+    # --seconds 0, forever).
+    crashed_during_run = False
     try:
-        while not stop["now"] and _time.perf_counter() < deadline:
+        while not stop["now"] and not eng.stats.crashed and _time.perf_counter() < deadline:
             _time.sleep(1.0)
             if not quiet:
                 s = eng.stats
@@ -782,6 +788,7 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
                     f"backend={eng.player_backend or 'unknown'} "
                     f"child_alive={eng._inf_client.is_alive if eng._inf_client else 'n/a'}"
                 )
+        crashed_during_run = eng.stats.crashed
         running_last_error = eng.stats.last_error
     finally:
         print("stopping engine...")
@@ -832,6 +839,17 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
                 f"  player_underruns rate: ~{rate:.1f}/sec "
                 f"({'engine writer jitter likely cause' if rate > 1.0 else 'within normal slack'})"
             )
+    # review F-17-06: exit non-zero on a mid-run crash so the headless
+    # / WM-scripting layer can tell "crashed" from "ran cleanly". `crashed`
+    # (not just `running == False`) is the discriminator -- a clean stop()
+    # also leaves running False.
+    if crashed_during_run:
+        print(
+            "engine CRASHED mid-run -- the realtime worker thread threw an "
+            "unhandled exception (see last_error above). Exiting non-zero.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
