@@ -23,6 +23,7 @@ from typing import Any
 
 import tomli_w
 
+from audio.engine import USER_VISIBLE_ENGINE_FIELDS as _USER_VISIBLE_ENGINE_FIELDS
 from audio.engine import EngineConfig as _EngineConfig
 
 CONFIG_DIR = Path.home() / ".config" / "woys"
@@ -89,6 +90,30 @@ class AppConfig:
         # Stamp the schema version on every fresh AppConfig so round-trips
         # match. The migration in load_config() bumps it on legacy files.
         self._extras.setdefault("config_schema_version", 10)
+
+
+def app_config_to_engine_config(cfg: AppConfig, *, rvc_model: Path | None = None) -> _EngineConfig:
+    """The single AppConfig -> EngineConfig forwarding path.
+
+    review F-merged-008 / F-01-04: this replaces three hand-written,
+    byte-drifting `EngineConfig(...)` blocks (`woys run`, `woys diag`,
+    `woys engine`). It iterates `USER_VISIBLE_ENGINE_FIELDS`, so a new
+    user-tunable field reaches every entry point by being added to that
+    one tuple -- nothing else to edit.
+
+    Before this, the two `cli.py` blocks silently omitted `mic_rate` /
+    `sink_rate` while the TUI forwarded them, so `woys diag` / `woys engine`
+    ran 48 kHz defaults on non-48k hardware (F-01-04).
+
+    `rvc_model` is passed separately: it is Path-typed and resolved by the
+    caller (an empty / missing path falls back to the engine's default).
+    """
+    engine_cfg = _EngineConfig()
+    for name in _USER_VISIBLE_ENGINE_FIELDS:
+        setattr(engine_cfg, name, getattr(cfg, name))
+    if rvc_model is not None:
+        engine_cfg.rvc_model = rvc_model
+    return engine_cfg
 
 
 def load_config(path: Path = CONFIG_FILE) -> AppConfig:

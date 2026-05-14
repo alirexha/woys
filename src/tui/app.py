@@ -26,10 +26,10 @@ from textual.containers import Vertical
 from textual.reactive import reactive
 from textual.widgets import Footer, Header, Label, ProgressBar, Static
 
-from audio import EngineConfig, RealtimeEngine
+from audio import RealtimeEngine
 from audio.engine import DEFAULT_RVC_MODEL
 from audio.pipewire import PipeWireError, VirtualMic
-from tui.config import AppConfig, load_config, save_config
+from tui.config import AppConfig, app_config_to_engine_config, load_config, save_config
 from tui.control import ControlServer, JobRegistry
 from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
 from woys.profiles import apply_profile, cycle_profile, list_profiles
@@ -164,44 +164,12 @@ class WoysApp(App[int]):
             if self.cfg.rvc_model and Path(self.cfg.rvc_model).exists()
             else DEFAULT_RVC_MODEL
         )
+        # review F-merged-008 / F-01-04: one forwarding helper, not a
+        # hand-written EngineConfig(...) block. The helper iterates
+        # USER_VISIBLE_ENGINE_FIELDS, so a new user-tunable field is
+        # forwarded to every entry point by adding it to that one tuple.
         self.engine = engine or RealtimeEngine(
-            EngineConfig(
-                rvc_model=rvc_path,
-                chunk_seconds=self.cfg.chunk_seconds,
-                mic_rate=self.cfg.mic_rate,
-                sink_rate=self.cfg.sink_rate,
-                f0_up_key=self.cfg.f0_up_key,
-                sid=self.cfg.sid,
-                sink_name=self.cfg.sink_name,
-                monitor=self.cfg.monitor,
-                output_latency_ms=self.cfg.output_latency_ms,
-                output_process_time_ms=self.cfg.output_process_time_ms,
-                embedder=self.cfg.embedder,
-                sola_enabled=self.cfg.sola_enabled,
-                sola_crossfade_ms=self.cfg.sola_crossfade_ms,
-                sola_search_ms=self.cfg.sola_search_ms,
-                sola_context_ms=self.cfg.sola_context_ms,
-                input_gain_db=self.cfg.input_gain_db,
-                # v0.7.0-rc4 - these three were on EngineConfig from
-                # v0.6.9 / rc1 but never plumbed through AppConfig, so
-                # user overrides in `config.toml` were silently
-                # ignored. See `docs/16-audit/synthesis.md`.
-                input_gate_dbfs=self.cfg.input_gate_dbfs,
-                input_gate_hysteresis_ms=self.cfg.input_gate_hysteresis_ms,
-                prefer_pw_cat=self.cfg.prefer_pw_cat,
-                prefer_native_pw=self.cfg.prefer_native_pw,
-                prefer_native_pw_buffer_ms=self.cfg.prefer_native_pw_buffer_ms,
-                gpu_keepalive_enabled=self.cfg.gpu_keepalive_enabled,
-                gpu_keepalive_interval_ms=self.cfg.gpu_keepalive_interval_ms,
-                gpu_keepalive_input_len=self.cfg.gpu_keepalive_input_len,
-                gpu_anti_jitter_mode=self.cfg.gpu_anti_jitter_mode,
-                gpu_clock_lock_enabled=self.cfg.gpu_clock_lock_enabled,
-                gpu_clock_lock_floor_mhz=self.cfg.gpu_clock_lock_floor_mhz,
-                gpu_clock_lock_ceiling_mhz=self.cfg.gpu_clock_lock_ceiling_mhz,
-                gpu_clock_lock_floor_offset_mhz=self.cfg.gpu_clock_lock_floor_offset_mhz,
-                gpu_keepalive_torch_stream=self.cfg.gpu_keepalive_torch_stream,
-                gpu_keepalive_torch_interval_ms=self.cfg.gpu_keepalive_torch_interval_ms,
-            )
+            app_config_to_engine_config(self.cfg, rvc_model=rvc_path)
         )
         self.no_pw_setup = no_pw_setup
         self.pitch = self.cfg.f0_up_key

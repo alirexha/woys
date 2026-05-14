@@ -320,9 +320,9 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         return 0
 
     # Lazy import - diag without --no-engine is the only path that needs ORT.
-    from audio.engine import EngineConfig, RealtimeEngine
+    from audio.engine import RealtimeEngine
     from audio.pipewire import PipeWireError, VirtualMic, get_state
-    from tui.config import load_config
+    from tui.config import app_config_to_engine_config, load_config
 
     print("---- pipewire ----")
     try:
@@ -336,42 +336,11 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     print(f"---- engine self-test ({seconds:.1f} s) ----")
     cfg = load_config()
     rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
-    engine_cfg = EngineConfig(
-        f0_up_key=cfg.f0_up_key,
-        sid=cfg.sid,
-        chunk_seconds=cfg.chunk_seconds,
-        sink_name=cfg.sink_name,
-        monitor=cfg.monitor,
-        output_latency_ms=cfg.output_latency_ms,
-        output_process_time_ms=cfg.output_process_time_ms,
-        embedder=cfg.embedder,
-        sola_enabled=cfg.sola_enabled,
-        sola_crossfade_ms=cfg.sola_crossfade_ms,
-        sola_search_ms=cfg.sola_search_ms,
-        sola_context_ms=cfg.sola_context_ms,
-        input_gain_db=cfg.input_gain_db,
-        # v0.7.0-rc4 - pre-rc4 these silently fell back to the
-        # dataclass defaults, so `woys diag` was always running
-        # the rc1+ defaults regardless of what the user had in
-        # `config.toml`. See `docs/16-audit/synthesis.md`.
-        input_gate_dbfs=cfg.input_gate_dbfs,
-        input_gate_hysteresis_ms=cfg.input_gate_hysteresis_ms,
-        prefer_pw_cat=cfg.prefer_pw_cat,
-        prefer_native_pw=cfg.prefer_native_pw,
-        prefer_native_pw_buffer_ms=cfg.prefer_native_pw_buffer_ms,
-        gpu_keepalive_enabled=cfg.gpu_keepalive_enabled,
-        gpu_keepalive_interval_ms=cfg.gpu_keepalive_interval_ms,
-        gpu_keepalive_input_len=cfg.gpu_keepalive_input_len,
-        gpu_anti_jitter_mode=cfg.gpu_anti_jitter_mode,
-        gpu_clock_lock_enabled=cfg.gpu_clock_lock_enabled,
-        gpu_clock_lock_floor_mhz=cfg.gpu_clock_lock_floor_mhz,
-        gpu_clock_lock_ceiling_mhz=cfg.gpu_clock_lock_ceiling_mhz,
-        gpu_clock_lock_floor_offset_mhz=cfg.gpu_clock_lock_floor_offset_mhz,
-        gpu_keepalive_torch_stream=cfg.gpu_keepalive_torch_stream,
-        gpu_keepalive_torch_interval_ms=cfg.gpu_keepalive_torch_interval_ms,
-    )
-    if rvc_path is not None:
-        engine_cfg.rvc_model = rvc_path
+    # review F-merged-008 / F-01-04: one forwarding helper, not a
+    # hand-written EngineConfig(...) block. The pre-fix block here silently
+    # omitted mic_rate / sink_rate, so `woys diag` ran 48 kHz defaults on
+    # non-48k hardware.
+    engine_cfg = app_config_to_engine_config(cfg, rvc_model=rvc_path)
     engine = RealtimeEngine(engine_cfg)
     engine.start()
     try:
@@ -655,9 +624,9 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
     import signal as _signal
     import time as _time
 
-    from audio.engine import EngineConfig, RealtimeEngine
+    from audio.engine import RealtimeEngine
     from audio.pipewire import PipeWireError, VirtualMic, get_state
-    from tui.config import load_config
+    from tui.config import app_config_to_engine_config, load_config
 
     try:
         VirtualMic().ensure()
@@ -674,38 +643,11 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
 
     cfg = load_config()
     rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
-    engine_cfg = EngineConfig(
-        f0_up_key=cfg.f0_up_key,
-        sid=cfg.sid,
-        chunk_seconds=cfg.chunk_seconds,
-        sink_name=cfg.sink_name,
-        monitor=cfg.monitor,
-        output_latency_ms=cfg.output_latency_ms,
-        output_process_time_ms=cfg.output_process_time_ms,
-        embedder=cfg.embedder,
-        sola_enabled=cfg.sola_enabled,
-        sola_crossfade_ms=cfg.sola_crossfade_ms,
-        sola_search_ms=cfg.sola_search_ms,
-        sola_context_ms=cfg.sola_context_ms,
-        input_gain_db=cfg.input_gain_db,
-        input_gate_dbfs=cfg.input_gate_dbfs,
-        input_gate_hysteresis_ms=cfg.input_gate_hysteresis_ms,
-        prefer_pw_cat=cfg.prefer_pw_cat,
-        prefer_native_pw=cfg.prefer_native_pw,
-        prefer_native_pw_buffer_ms=cfg.prefer_native_pw_buffer_ms,
-        gpu_keepalive_enabled=cfg.gpu_keepalive_enabled,
-        gpu_keepalive_interval_ms=cfg.gpu_keepalive_interval_ms,
-        gpu_keepalive_input_len=cfg.gpu_keepalive_input_len,
-        gpu_anti_jitter_mode=cfg.gpu_anti_jitter_mode,
-        gpu_clock_lock_enabled=cfg.gpu_clock_lock_enabled,
-        gpu_clock_lock_floor_mhz=cfg.gpu_clock_lock_floor_mhz,
-        gpu_clock_lock_ceiling_mhz=cfg.gpu_clock_lock_ceiling_mhz,
-        gpu_clock_lock_floor_offset_mhz=cfg.gpu_clock_lock_floor_offset_mhz,
-        gpu_keepalive_torch_stream=cfg.gpu_keepalive_torch_stream,
-        gpu_keepalive_torch_interval_ms=cfg.gpu_keepalive_torch_interval_ms,
-    )
-    if rvc_path is not None:
-        engine_cfg.rvc_model = rvc_path
+    # review F-merged-008 / F-01-04: one forwarding helper, not a
+    # hand-written EngineConfig(...) block. The pre-fix block here silently
+    # omitted mic_rate / sink_rate, so `woys engine` ran 48 kHz defaults on
+    # non-48k hardware.
+    engine_cfg = app_config_to_engine_config(cfg, rvc_model=rvc_path)
 
     # review F-merged-014: log the effective config at startup so a
     # post-mortem can see exactly what the engine ran with.
