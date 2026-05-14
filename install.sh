@@ -53,18 +53,13 @@ done
 say() { printf '\n[install] %s\n' "$*"; }
 fail() { printf '\n[install] error: %s\n' "$*" >&2; exit 1; }
 
-# ---- v0.6.0 migration: vcclient-cachy → woys ---------------------------------
-
-if [ -d "$OLD_APP_HOME" ] || [ -d "$HOME/.config/vcclient-cachy" ] || [ -d "$HOME/.cache/vcclient-cachy" ]; then
-    say "detected an existing vcclient-cachy install — migrating to woys…"
-    PY="$(command -v python3 || command -v python || true)"
-    if [ -z "$PY" ]; then
-        fail "python3 not found — install python before running this script"
-    fi
-    "$PY" "$REPO_DIR/scripts/migrate_to_woys.py" || fail "migration failed"
-fi
-
 # ---- pre-reqs -----------------------------------------------------------------
+#
+# review F-19-05: the destructive vcclient-cachy→woys migration used
+# to run HERE, before the prereq checks and venv build. With `set -e`, a
+# venv-build failure aborted the script with the old install already
+# dismantled and the new one unbuilt — no rollback. The migration block
+# now runs *after* the venv + deps are proven buildable (see below).
 
 say "checking host…"
 command -v pactl >/dev/null   || fail "pactl missing — install pipewire-pulse"
@@ -96,6 +91,18 @@ fi
 say "installing woys + runtime deps (long step on fresh installs — torch + ORT-GPU)…"
 "$UV_BIN" pip install --python "$VENV/bin/python" -e "$REPO_DIR" >/dev/null
 "$UV_BIN" pip install --python "$VENV/bin/python" -r "$REPO_DIR/requirements.txt" >/dev/null
+
+# ---- v0.6.0 migration: vcclient-cachy → woys ---------------------------------
+#
+# review F-19-05: runs only AFTER the prereq checks and the venv +
+# deps build above have all succeeded — so a failed install can never
+# dismantle a working vcclient-cachy setup. The venv python is guaranteed
+# to exist at this point.
+
+if [ -d "$OLD_APP_HOME" ] || [ -d "$HOME/.config/vcclient-cachy" ] || [ -d "$HOME/.cache/vcclient-cachy" ]; then
+    say "detected an existing vcclient-cachy install — migrating to woys…"
+    "$VENV/bin/python" "$REPO_DIR/scripts/migrate_to_woys.py" || fail "migration failed"
+fi
 
 # ---- v0.9.0 native PipeWire helper --------------------------------------------
 
