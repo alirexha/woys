@@ -15,6 +15,7 @@ Keys
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import ClassVar
@@ -32,6 +33,12 @@ from tui.config import AppConfig, load_config, save_config
 from tui.control import ControlServer, JobRegistry
 from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
 from woys.profiles import apply_profile, cycle_profile, list_profiles
+
+# review F-08-09 / F-23-03: `_refresh_stats` ticks at 0.25 s; the
+# widget tree isn't realized for the first couple of seconds. Within this
+# many ticks a render failure is expected and stays silent; after it, a
+# render failure is logged + counted.
+_REFRESH_STARTUP_TICKS = 8
 
 
 class StatusPanel(Static):
@@ -206,6 +213,12 @@ class WoysApp(App[int]):
         # v0.5.0: track the latest swap target so the TUI can show "loading X..."
         # while the swap is in flight (~10 ms cached, ~600 ms cold).
         self._swap_in_flight: str | None = None
+        # review F-08-09 / F-23-03: `_refresh_stats` tick + error
+        # counters. The first few ticks run before the widget tree is
+        # realized (expected, silent); after that a render failure is
+        # logged + counted instead of being swallowed by a bare `pass`.
+        self._refresh_ticks = 0
+        self._refresh_errors = 0
 
     def on_mount(self) -> None:
         if not self.no_pw_setup:
@@ -533,6 +546,19 @@ class WoysApp(App[int]):
 
     def _refresh_stats(self) -> None:
         s = self.engine.stats
+        self._refresh_ticks += 1
+
+        # review F-08-09 / F-23-03: surface a fresh `last_error` to the
+        # user as a toast. This is the *designed* engine-error escalation
+        # path -- it MUST run outside the widget-render `try` below. Pre-fix
+        # it sat inside a blanket `except Exception: pass`, so any widget
+        # hiccup (or an early tick before the tree was realized) silently
+        # swallowed engine errors -- a silent-fallback in the observability
+        # surface itself.
+        if s.last_error and s.last_error != getattr(self, "_last_notified_error", None):
+            self.notify(s.last_error, severity="error", timeout=8)
+            self._last_notified_error = s.last_error
+
         try:
             # "Cold start" heuristic: engine is running but the rolling
             # latency window hasn't stabilized yet - first ~10 chunks at
@@ -564,14 +590,18 @@ class WoysApp(App[int]):
             )
             meter = self.query_one("#meter", ProgressBar)
             meter.update(progress=min(100, int(s.last_input_rms * 4 * 100)))
-
-            # Surface a fresh `last_error` to the user as a toast (not just text).
-            if s.last_error and s.last_error != getattr(self, "_last_notified_error", None):
-                self.notify(s.last_error, severity="error", timeout=8)
-                self._last_notified_error = s.last_error
         except Exception:
-            # Widget tree may not be fully realized yet during early ticks.
-            pass
+            # The widget tree isn't realized during the first few ticks --
+            # that startup window is expected and silent. After it, a
+            # render failure is a real problem: log it + count it, never a
+            # bare `pass` (F-08-09).
+            if self._refresh_ticks > _REFRESH_STARTUP_TICKS:
+                self._refresh_errors += 1
+                logging.getLogger("woys.tui").exception(
+                    "stats refresh failed (tick %d, %d total refresh errors)",
+                    self._refresh_ticks,
+                    self._refresh_errors,
+                )
 
 
 def run_tui(
