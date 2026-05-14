@@ -1,0 +1,70 @@
+# Minimal CI — review F-19-04.
+#
+# Before this workflow every gate in the project notes (ruff, format, mypy --strict,
+# pytest, shellcheck) was honor-system manual; the cross-examination found
+# that absence is *why* so many other findings accumulated unobserved.
+#
+# This pipeline enforces the exact commands the project notes documents. It does not
+# attempt GPU/PipeWire/loopback coverage — those tests carry the `slow`,
+# `gpu`, `pipewire`, `audio_loopback`, `real_audio` markers and are excluded
+# by `-m "not slow"`. Certifying the hardware path is F-merged-034, not this.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.11
+      - run: uv sync --frozen
+      - name: ruff check
+        run: uv run ruff check src/ scripts/ tests/
+      - name: ruff format --check
+        run: uv run ruff format --check src/ scripts/ tests/
+      - name: mypy --strict
+        run: uv run mypy --strict src/woys/ src/audio/ src/tui/
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.11
+      - run: uv sync --frozen
+      - name: pytest (fast — hardware-gated tests are `slow`-marked and skipped)
+        run: uv run pytest -m "not slow"
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # shellcheck is preinstalled on ubuntu-latest runners. `-S error` keeps
+      # this gate minimal — error-level only; the warning-level installer
+      # hardening sweep is a separate workstream (F-19-07/10/12-17).
+      - name: shellcheck installers
+        run: shellcheck -S error install.sh uninstall.sh
+
+  deps-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      # requirements.txt must be the exact `uv pip compile` output of
+      # pyproject.toml. NOTE: this gate is expected RED until F-merged-004
+      # (commit-029) regenerates requirements.txt — it currently still pins
+      # the removed `dasbus`. A red result here is the gate working, not a
+      # broken pipeline.
+      - name: requirements.txt is in sync with pyproject.toml
+        run: |
+          uv pip compile pyproject.toml -o requirements.txt --quiet
+          git diff --exit-code requirements.txt
