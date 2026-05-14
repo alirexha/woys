@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -706,6 +707,10 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
     if rvc_path is not None:
         engine_cfg.rvc_model = rvc_path
 
+    # review F-merged-014: log the effective config at startup so a
+    # post-mortem can see exactly what the engine ran with.
+    logging.getLogger("woys.engine-cli").info("effective engine config: %r", engine_cfg)
+
     eng = RealtimeEngine(engine_cfg)
 
     # v0.14.0 (Lens 12 / Lens 17 / C217): install SIGINT/SIGTERM handler
@@ -916,8 +921,17 @@ def _prewarm_mp_resource_tracker() -> None:
 def main(argv: list[str] | None = None) -> int:
     # MUST run before any Textual import. See `_prewarm_mp_resource_tracker`.
     _prewarm_mp_resource_tracker()
+    # review F-merged-014 (P1): configure the rotating file log before
+    # anything else, so every `getLogger("woys.*")` call (hotkey, control,
+    # the guard below, ...) lands in $XDG_STATE_HOME/woys/woys.log instead
+    # of Python's lastResort stderr, which Textual hijacks.
+    from woys.logsetup import setup_logging
+
+    log_file = setup_logging()
+    logger = logging.getLogger("woys.cli")
     parser = build_parser()
     args = parser.parse_args(argv)  # argparse SystemExit on bad args is intentional
+    logger.info("woys %s starting -- argv=%s -- log=%s", __version__, sys.argv[1:], log_file)
     # review F-merged-022 (P1): top-level guard so the most common
     # first-run failures (missing model, PipeWire not set up, broken CUDA
     # EP) reach a non-developer as one actionable stderr line + exit 1, not
@@ -937,6 +951,9 @@ def main(argv: list[str] | None = None) -> int:
     except (PipeWireError, OSError, RuntimeError, _sp.SubprocessError) as e:
         if os.environ.get("WOYS_DEBUG") == "1":
             raise
+        # Route the operational error through the log file too -- the
+        # stderr line is ephemeral, the log is the post-mortem record.
+        logger.error("operational error (%s): %s", type(e).__name__, e)
         print(f"error: {e}", file=sys.stderr)
         if isinstance(e, FileNotFoundError):
             print(
