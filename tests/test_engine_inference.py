@@ -140,6 +140,23 @@ def test_pitch_coarse_short_input_right_aligned() -> None:
     assert (coarse[:3] == 1).all()
 
 
+def test_pitch_coarse_overlength_keeps_trailing_frames() -> None:
+    """review F-31-02: an over-length pitchf must keep its *last*
+    target_len frames, matching upstream `Pipeline.py:288`
+    (`pitch[:, -feats_len:]`). Pre-fix it kept the *first* target_len
+    frames (`pitchf[:n]`), temporally scrambling the F0 contour against
+    the content features."""
+    target_len = 10
+    # 25 distinct frames so leading vs trailing slices are unambiguous.
+    pitchf = np.arange(1, 26, dtype=np.float32) * 20.0  # 20, 40, ... 500
+    _coarse, pitch = to_pitch_coarse(pitchf, target_len)
+    # `pitch` (the float32 return) must hold the TRAILING target_len frames.
+    np.testing.assert_array_equal(pitch, pitchf[-target_len:])
+    assert not np.array_equal(pitch, pitchf[:target_len]), (
+        "keeping the leading frames is the F-31-02 bug"
+    )
+
+
 @pytest.mark.parametrize("voiced_count", [1, 2, 5, 50])
 def test_pitch_coarse_returns_correct_shapes(voiced_count: int) -> None:
     pitchf = np.full(voiced_count, 220.0, dtype=np.float32)
