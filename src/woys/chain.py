@@ -121,6 +121,12 @@ def _systemctl(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _default_sink() -> str:
+    """The system default sink's name (`pactl get-default-sink`), or '' on error."""
+    out = _pactl("get-default-sink")
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
 def _list_modules() -> list[tuple[str, str, str]]:
     """Return [(id, type, args)] for currently loaded pipewire-pulse modules."""
     out = _pactl("list", "short", "modules").stdout
@@ -434,7 +440,79 @@ def teardown() -> int:
     return 1 if relabel_failed else 0
 
 
-def status() -> int:
+def _health_check() -> int:
+    """review F-08-06: the assertions wired into woys-mic.service and
+    woys-chain.service as `ExecStartPost`. Exits non-zero if the woys audio
+    plumbing is in the broken state the v0.14.2 incident produced -- the
+    only thing that would otherwise catch it is a human noticing dead audio,
+    because the `Type=oneshot` units report `active (exited)` regardless.
+
+    Asserts:
+      (a) the base woys-mic source is present;
+      (b) the system default sink is NOT a woys null-sink -- the v0.14.2
+          hijack routed all desktop audio into woys plumbing; a leak-only
+          check would miss it (CX2's mandatory scope pin);
+      (c) no pw-link rows bridge the chain to ALSA hardware.
+    """
+    ok = True
+
+    if _source_present(SOURCE_RAW):
+        print(f"[woys chain] check: {SOURCE_RAW} source present  OK")
+    else:
+        print(f"[woys chain] check: {SOURCE_RAW} source MISSING  FAIL", file=sys.stderr)
+        ok = False
+
+    # (b) the load-bearing assertion. v0.14.2 left the system default sink
+    # pointed at a woys null-sink, silently sending all desktop audio into
+    # woys plumbing instead of the speakers.
+    woys_sinks = {SINK_FINAL}
+    try:
+        from audio.pipewire import SINK_NAME as _PW_SINK
+
+        woys_sinks.add(_PW_SINK)
+    except ImportError:
+        pass  # pipewire module unavailable; still check the chain's own sink
+    default_sink = _default_sink()
+    if default_sink and default_sink in woys_sinks:
+        print(
+            f"[woys chain] check: system default sink is {default_sink!r}, a woys "
+            "null-sink -- desktop audio is being routed into woys plumbing  FAIL",
+            file=sys.stderr,
+        )
+        ok = False
+    else:
+        print(
+            f"[woys chain] check: default sink {default_sink or '(unknown)'!r} "
+            "is not a woys null-sink  OK"
+        )
+
+    leaks = _alsa_leak_links()
+    if leaks:
+        print("[woys chain] check: chain audio is reaching ALSA hardware  FAIL", file=sys.stderr)
+        for leak in leaks:
+            print(f"  {leak}", file=sys.stderr)
+        ok = False
+    else:
+        print("[woys chain] check: no ALSA leak links  OK")
+
+    if ok:
+        print("[woys chain] check: PASS")
+        return 0
+    print(
+        "[woys chain] check: FAIL -- run `woys chain disable` and/or "
+        "`woys pw teardown` to clear the broken state, then re-setup.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def status(check: bool = False) -> int:
+    # review F-08-06: `--check` runs only the health assertions and
+    # exits non-zero on failure, so the systemd units' ExecStartPost can
+    # turn a broken-audio chain into a `failed` unit instead of a green
+    # `active (exited)` that hides the v0.14.2 regression class.
+    if check:
+        return _health_check()
     print("[woys chain] modules:")
     matched = False
     for mod_id, mod_type, mod_args in _list_modules():
@@ -534,6 +612,12 @@ Requires=pipewire-pulse.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart={woys_bin} chain setup
+# review F-08-06: assert the chain is actually healthy after setup.
+# A failed ExecStartPost makes the unit `failed` instead of a green
+# `active (exited)` that hides a broken chain (the v0.14.2 class). Note:
+# a failed check leaves the ExecStart modules loaded -- run
+# `woys chain disable` to clear them.
+ExecStartPost={woys_bin} chain status --check
 ExecStop={woys_bin} chain teardown
 
 [Install]

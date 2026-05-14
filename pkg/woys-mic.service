@@ -10,6 +10,11 @@ PartOf=sound.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/bin/env woys pw setup
+# review F-08-06 / F-CX2-02: assert the virtual mic is actually
+# healthy after setup (woys-mic present, system default sink not a woys
+# null-sink, no ALSA leak links). A failed ExecStartPost makes the unit
+# `failed` instead of a green `active (exited)` that hides broken audio.
+ExecStartPost=/usr/bin/env woys chain status --check
 ExecStop=/usr/bin/env woys pw teardown
 # Service is idempotent — restart cleanly on failure.
 Restart=on-failure
