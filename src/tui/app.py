@@ -16,6 +16,7 @@ Keys
 from __future__ import annotations
 
 import logging
+import subprocess
 import sys
 from pathlib import Path
 from typing import ClassVar
@@ -189,13 +190,30 @@ class WoysApp(App[int]):
         self._refresh_errors = 0
 
     def on_mount(self) -> None:
+        # review F-23-06 (P1): a PipeWire-setup failure is BLOCKING.
+        # Pre-fix this recorded an 8 s toast then fell straight through to
+        # autostart -- the app showed a green RUNNING status on a setup
+        # with no woys-mic device (Hard Rule 2: degraded behavior pretending
+        # all is fine, on the product's core function, on the *default*
+        # `woys` invocation). Now: no autostart, and a persistent error on
+        # the status panel (rendered every refresh tick) with the remedy.
+        pw_ok = True
         if not self.no_pw_setup:
             try:
                 VirtualMic().ensure()
-            except PipeWireError as e:
-                self.engine.stats.last_error = f"PipeWire: {e}"
-                self.notify(f"PipeWire: {e}", severity="error", timeout=8)
-        if self.cfg.autostart_engine:
+            except (PipeWireError, OSError, subprocess.SubprocessError) as e:
+                # F-CX6-02: broadened from `PipeWireError` only -- an OSError
+                # / SubprocessError from the pactl shell-out is the same
+                # "virtual mic not loaded" outcome.
+                pw_ok = False
+                msg = (
+                    f"PipeWire setup failed: {e} -- the woys-mic device is NOT "
+                    f"loaded. Fix: run `woys pw setup` (or `woys pw status` to "
+                    f"inspect), then restart. (--no-pw-setup skips this step.)"
+                )
+                self.engine.stats.last_error = msg
+                self.notify(msg, severity="error", timeout=12)
+        if pw_ok and self.cfg.autostart_engine:
             self._start_engine()
         self._control.start()
         self.set_interval(0.25, self._refresh_stats)
