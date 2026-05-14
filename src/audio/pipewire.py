@@ -104,6 +104,17 @@ def _run_pactl(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def get_default_sink() -> str:
+    """The system default sink's name (`pactl get-default-sink`), or '' on
+    error. review F-08-06: used to detect the v0.14.2 hijack where the
+    default sink was left pointed at a woys null-sink."""
+    try:
+        out = _run_pactl(["get-default-sink"])
+    except PipeWireError:
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
 def ensure_pipewire() -> None:
     """Hard-fail with a clear error if the host isn't running PipeWire."""
     out = _run_pactl(["info"])
