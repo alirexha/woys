@@ -651,6 +651,12 @@ class EngineConfig:
 @dataclass
 class EngineStats:
     running: bool = False
+    # review F-17-06 (P1): set True iff `_run_loop` exited via an
+    # *unhandled exception* (not a clean `stop()`). `running` alone cannot
+    # distinguish "the worker crashed" from "someone called stop()", and
+    # exit-code correctness for the headless / WM-scripting path depends on
+    # that distinction.
+    crashed: bool = False
     chunks_processed: int = 0
     last_input_rms: float = 0.0
     last_inference_ms: float = 0.0
@@ -2279,6 +2285,8 @@ class RealtimeEngine:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
+        # review F-17-06: a fresh run starts un-crashed.
+        self.stats.crashed = False
 
         # B55 / corr-025: disable Python GC BEFORE the heavy session-load +
         # warmup steps. Pre-v0.8.0 we ran `gc.disable` after warmup, so any
@@ -3844,6 +3852,11 @@ class RealtimeEngine:
         except Exception as e:
             self.stats.last_error = f"{type(e).__name__}: {e}"
             self.stats.running = False
+            # review F-17-06 (P1): mark this as a crash, not a clean
+            # stop, so the headless `cmd_engine` loop can break + exit
+            # non-zero instead of printing frozen stats for the full
+            # --seconds.
+            self.stats.crashed = True
         finally:
             # v0.5.2: flush SOLA tail through the writer queue, then drain
             # the queue, then tear down the writer/watchdog/stderr threads,
