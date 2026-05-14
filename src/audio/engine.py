@@ -39,6 +39,7 @@ Threading
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import gc
 import os
 import queue
@@ -1048,6 +1049,38 @@ _TRT_INIT_ERRORS: dict[str, str] = {}
 # broken binary/config, not a transient PipeWire hiccup (a one-off death
 # respawns once and the counter resets on the next healthy tick).
 _PLAYER_RESPAWN_CAP = 8
+
+# review F-14-02 (P1): parent-death signal for playback-helper
+# children. Loaded once at import; None off non-glibc-Linux (then the
+# preexec_fn below is a no-op).
+try:
+    _LIBC: ctypes.CDLL | None = ctypes.CDLL("libc.so.6", use_errno=True)
+except OSError:  # pragma: no cover - non-Linux / no glibc
+    _LIBC = None
+_PR_SET_PDEATHSIG = 1  # <sys/prctl.h>
+
+
+def _set_pdeathsig() -> None:
+    """`preexec_fn` for playback-helper spawns: runs in the forked child,
+    before exec, and asks the kernel to send SIGTERM to this process if
+    its parent (the engine) dies.
+
+    review F-14-02: a `kill -9` of the engine used to orphan the
+    playback subprocess, still holding its audio stream. The inference
+    child already self-protects via a `getppid()` poll; the playback
+    helpers did not. Must stay lock-free (one syscall, no imports, no
+    allocation) -- `preexec_fn` runs between fork and exec in a
+    multithreaded process.
+    """
+    if _LIBC is not None:
+        # The bare try/except (vs `contextlib.suppress`) is deliberate:
+        # `suppress` instantiates an object (a malloc); a bare try/except
+        # is allocation-free, which matters in a preexec_fn running
+        # between fork and exec.
+        try:  # noqa: SIM105
+            _LIBC.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM)
+        except Exception:
+            pass
 
 
 class CpuFallbackError(RuntimeError):
@@ -2672,12 +2705,19 @@ class RealtimeEngine:
         `poll()`; an immediate exit raises with the helper's stderr so the
         initial spawn fails the engine loudly and the watchdog's
         consecutive-failure cap can act.
+
+        review F-14-02 (P1): `preexec_fn=_set_pdeathsig` arms the
+        kernel parent-death signal, so a `kill -9` of the engine SIGTERMs
+        the playback helper instead of orphaning it with the audio stream
+        still open. One change covers all three spawn paths (native-pw /
+        pw-cat / pacat) -- they all funnel through here.
         """
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
+            preexec_fn=_set_pdeathsig,  # lock-free single syscall -- see _set_pdeathsig
         )
         time.sleep(0.05)
         rc = proc.poll()
