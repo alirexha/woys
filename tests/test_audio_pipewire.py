@@ -109,3 +109,67 @@ def test_pipewire_error_on_missing_pactl(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(shutil, "which", lambda name: None if name == "pactl" else real_which(name))
     with pytest.raises(PipeWireError, match="pactl"):
         ensure_pipewire()
+
+
+# ---- review F-merged-006: relabel_source must be atomic --------------
+# These are pure unit tests (mocked `_run_pactl` / `_list_modules`); no
+# pipewire daemon is touched, so they are NOT marked `pipewire`.
+
+
+def test_relabel_source_rolls_back_on_reload_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pre-fix `relabel_source` unloaded woys-mic then reloaded with no
+    rollback, so a reload failure left woys-mic *destroyed* while
+    `chain.setup()` reported success (the v0.14.2 bug class). Post-fix a
+    reload failure recreates woys-mic from its captured original args and
+    raises a PipeWireError saying so."""
+    from audio import pipewire
+
+    old_args = (
+        "master=WoysSink.monitor source_name=woys-mic "
+        "source_properties=device.description=woys-no-cleanup object.linger=false"
+    )
+    monkeypatch.setattr(pipewire, "_list_modules", lambda: [(42, "module-remap-source", old_args)])
+    load_calls: list[list[str]] = []
+
+    def fake_run_pactl(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[0] == "unload-module":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[0] == "load-module":
+            load_calls.append(args)
+            # 1st load-module = the relabel attempt -> fail;
+            # 2nd = the rollback -> succeed.
+            if len(load_calls) == 1:
+                return subprocess.CompletedProcess(args, 1, "", "module load failed")
+            return subprocess.CompletedProcess(args, 0, "43", "")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(pipewire, "_run_pactl", fake_run_pactl)
+
+    with pytest.raises(PipeWireError, match="rolled back"):
+        pipewire.relabel_source("_internal-raw-bypass", passive=True)
+
+    assert len(load_calls) == 2, "a rollback load-module must follow the failed relabel"
+    assert any("woys-no-cleanup" in tok for tok in load_calls[1]), (
+        "rollback must recreate woys-mic from its original (captured) args"
+    )
+
+
+def test_relabel_source_succeeds_when_reload_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Happy path: a successful reload returns without raising and without
+    issuing a rollback load-module."""
+    from audio import pipewire
+
+    old_args = (
+        "master=WoysSink.monitor source_name=woys-mic source_properties=x object.linger=false"
+    )
+    monkeypatch.setattr(pipewire, "_list_modules", lambda: [(7, "module-remap-source", old_args)])
+    load_calls: list[list[str]] = []
+
+    def fake_run_pactl(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[0] == "load-module":
+            load_calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "8", "")
+
+    monkeypatch.setattr(pipewire, "_run_pactl", fake_run_pactl)
+    pipewire.relabel_source("woys-no-cleanup", passive=False)  # must not raise
+    assert len(load_calls) == 1, "happy path must not issue a rollback load-module"

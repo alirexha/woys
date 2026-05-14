@@ -357,11 +357,18 @@ def test_setup_relabels_woys_mic_to_internal_raw_bypass() -> None:
     assert kwargs.get("passive") is True
 
 
-def test_setup_succeeds_even_when_relabel_fails() -> None:
-    """The relabel is cosmetic - if it fails (e.g. woys-mic isn't
-    loaded), the chain still works. Setup must NOT roll back the chain
-    just because the relabel raised; users would lose the actual
-    RNNoise filter for a label-only failure."""
+def test_setup_fails_loudly_when_relabel_fails() -> None:
+    """review F-merged-006: a relabel failure is a daemon-path step
+    that did not complete -- `chain.setup()` must report it via exit 2,
+    not swallow it and `return 0`.
+
+    Pre-fix this test asserted `rc == 0` ("setup succeeds even when relabel
+    fails"), which locked in the v0.14.2 bug class: `woys-chain.service`
+    went `active` while a daemon-path mutation had silently not taken (and,
+    before `relabel_source` became atomic, had destroyed woys-mic). The
+    RNNoise chain modules are still loaded and woys-mic is intact
+    (`relabel_source` rolls back atomically) -- but the exit code must make
+    the unit show `failed` so the partial state is visible."""
     router = _PactlRouter(
         sources="1\twoys-mic\tdrv\t1\tIDLE\n",
         modules="",
@@ -372,7 +379,7 @@ def test_setup_succeeds_even_when_relabel_fails() -> None:
         patch("audio.pipewire.relabel_source", side_effect=RuntimeError("boom")),
     ):
         rc = chain.setup()
-    assert rc == 0
+    assert rc == 2
 
 
 def test_teardown_restores_woys_mic_default_description() -> None:

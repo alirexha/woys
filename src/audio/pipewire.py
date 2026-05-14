@@ -341,25 +341,28 @@ def relabel_source(description: str, *, passive: bool) -> None:
             "it; use hyphens instead"
         )
 
-    state = get_state()
-    if state.source_module_id is None:
+    # review F-merged-006: capture the OLD module's full load args
+    # *before* unloading -- that arg string is the rollback recipe. The
+    # pre-fix version unloaded then reloaded with no rollback, so a reload
+    # failure left woys-mic destroyed while chain.setup() still returned 0
+    # (the v0.14.2 bug class: a daemon-path mutation reporting success
+    # while the mic was gone).
+    old_id: int | None = None
+    old_args: str | None = None
+    for mod_id, name, mod_args in _list_modules():
+        if name == "module-remap-source" and f"source_name={SOURCE_NAME}" in mod_args:
+            old_id, old_args = mod_id, mod_args
+            break
+    if old_id is None or old_args is None:
         return  # no woys-mic to relabel; not an error
 
-    # Unload the old remap-source. Apps consuming it will briefly see the
-    # source vanish, then a new one with the same NAME reappear under a
-    # different description. Loopbacks loaded by chain.py auto-rebind to
-    # the same name on next setup, so no explicit chain restart needed.
-    unload = _run_pactl(["unload-module", str(state.source_module_id)])
-    if unload.returncode != 0:
-        raise PipeWireError(f"failed to unload remap-source for relabel: {unload.stderr.strip()}")
-
-    # Reload with the new description. node.passive=true marks the node
-    # as plumbing for PipeWire-native consumers; pulseaudio compat
-    # ignores it but the property doesn't hurt.
+    # Reload args for the NEW description. node.passive=true marks the node
+    # as plumbing for PipeWire-native consumers; pulseaudio compat ignores
+    # it but the property doesn't hurt.
     props = f"device.description={description}"
     if passive:
         props += " node.passive=true"
-    args = [
+    new_args = [
         "load-module",
         "module-remap-source",
         f"master={SINK_NAME}.monitor",
@@ -367,9 +370,32 @@ def relabel_source(description: str, *, passive: bool) -> None:
         f"source_properties={props}",
         "object.linger=false",
     ]
-    out = _run_pactl(args)
-    if out.returncode != 0:
+
+    # woys-mic cannot coexist with a second source of the same name, so the
+    # old module must be unloaded before the new one can load. The window
+    # where woys-mic is absent is brief; the rollback below guarantees the
+    # *end* state on failure is "woys-mic restored", never "destroyed".
+    unload = _run_pactl(["unload-module", str(old_id)])
+    if unload.returncode != 0:
+        raise PipeWireError(f"failed to unload remap-source for relabel: {unload.stderr.strip()}")
+
+    out = _run_pactl(new_args)
+    if out.returncode == 0:
+        return  # relabel succeeded
+
+    # Reload failed -> roll back: recreate the original woys-mic from the
+    # args captured above. `old_args` is the `pactl list short modules`
+    # argument string, which `load-module module-remap-source <args>`
+    # accepts verbatim (the chain's descriptions are whitespace-free).
+    reload_err = out.stderr.strip() or out.stdout.strip()
+    rollback = _run_pactl(["load-module", "module-remap-source", *old_args.split()])
+    if rollback.returncode != 0:
         raise PipeWireError(
-            f"failed to reload remap-source with description={description!r}: "
-            f"{out.stderr.strip() or out.stdout.strip()}"
+            f"relabel to description={description!r} failed ({reload_err}) AND the "
+            f"rollback failed ({rollback.stderr.strip()}) - woys-mic is NOT loaded; "
+            f"run `woys pw teardown && woys pw setup` to restore it"
         )
+    raise PipeWireError(
+        f"relabel to description={description!r} failed ({reload_err}); "
+        f"woys-mic was rolled back to its previous description"
+    )
