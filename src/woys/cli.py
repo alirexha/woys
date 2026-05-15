@@ -131,6 +131,12 @@ def build_parser() -> argparse.ArgumentParser:
     models_sub.add_parser("list", help="show installed voice models")
     dl_p = models_sub.add_parser("download", help="fetch all ONNX models from a HuggingFace repo")
     dl_p.add_argument("repo", help='e.g. "wok000/vcclient_model"')
+    dl_p.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="skip the size-summary [y/N] prompt (scripted / CI use)",
+    )
     use_p = models_sub.add_parser("use", help="set the active RVC model in config.toml")
     use_p.add_argument("name", help="model name (file stem) or absolute path to a .onnx")
 
@@ -143,6 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
     prof_sub.add_parser("list", help="show saved profiles")
     p_del = prof_sub.add_parser("delete", help="remove a saved profile")
     p_del.add_argument("name")
+    p_del.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="skip the [y/N] confirmation prompt (scripted / CI use)",
+    )
     p_exp = prof_sub.add_parser("export", help="write a profile to a shareable .vcprofile file")
     p_exp.add_argument("name")
     p_exp.add_argument("-o", "--output", required=True, help="output .vcprofile path")
@@ -990,7 +1002,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         if args.models_cmd == "list":
             return cli_models_list()
         if args.models_cmd == "download":
-            return cli_models_download(args.repo)
+            return cli_models_download(args.repo, assume_yes=args.yes)
         if args.models_cmd == "use":
             return cli_models_use(args.name)
     if args.cmd == "profile":
@@ -1008,7 +1020,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         if args.profile_cmd == "list":
             return cli_profile_list()
         if args.profile_cmd == "delete":
-            return cli_profile_delete(args.name)
+            return cli_profile_delete(args.name, assume_yes=args.yes)
         if args.profile_cmd == "export":
             from woys.vcprofile import cli_profile_export
 

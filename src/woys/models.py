@@ -269,8 +269,87 @@ def _read_active_model() -> Path | None:
     return None
 
 
-def cli_models_download(repo: str, models_dir: Path = MODELS_DIR) -> int:
+def cli_models_download(
+    repo: str, models_dir: Path = MODELS_DIR, *, assume_yes: bool = False
+) -> int:
+    """Snapshot-download all .onnx models from a HF repo into `models_dir`.
+
+    review F-23-09 (commit-075): pre-fix the command immediately
+    began a multi-hundred-MiB transfer with no warning -- a user on a
+    metered connection or limited disk saw the size only after bytes
+    had already shipped. The size-summary preview queries HfApi once,
+    prints "N file(s), ~X.X GiB", and prompts `[y/N]` before any
+    bytes move. `--yes` skips the prompt for scripted use; non-tty
+    stdin without `--yes` aborts (same policy as `profile delete`).
+    The summary fetch is best-effort -- if the HF API surface lacks
+    file sizes (older `huggingface_hub`), the prompt still fires but
+    the size column shows `?`.
+    """
     print(f"models download from huggingface.co/{repo}:")
+    # ---- size preview -----------------------------------------------------
+    try:
+        from huggingface_hub import HfApi
+    except ImportError as e:
+        print(
+            f"[models] ERROR: huggingface_hub missing - `uv pip install huggingface_hub` ({e})",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        info = HfApi().repo_info(repo)
+    except Exception as e:
+        print(
+            f"[models] ERROR: HfApi.repo_info({repo!r}): {type(e).__name__}: {e}", file=sys.stderr
+        )
+        return 1
+    siblings = getattr(info, "siblings", None) or []
+    preview: list[tuple[str, int | None]] = []
+    for s in siblings:
+        rfn = getattr(s, "rfilename", "")
+        if not rfn.endswith(".onnx"):
+            continue
+        # LFS metadata (`s.lfs.size`) is the authoritative byte count for
+        # the large .onnx files; small non-LFS siblings expose `s.size`
+        # directly. We prefer LFS where available; fall back to `s.size`;
+        # if neither is set the preview shows `?` for that file (the
+        # F-31-01 download still works, just the upfront sum is partial).
+        size: int | None = None
+        lfs = getattr(s, "lfs", None)
+        if lfs is not None:
+            size = getattr(lfs, "size", None)
+        if size is None:
+            size = getattr(s, "size", None)
+        preview.append((rfn, size))
+    if not preview:
+        print(f"[models] ERROR: no .onnx files in {repo}", file=sys.stderr)
+        return 1
+    total_bytes = sum(sz for _, sz in preview if sz is not None)
+    has_unknown = any(sz is None for _, sz in preview)
+    total_mib = total_bytes / (1024 * 1024)
+    suffix = " (+ some unknown)" if has_unknown else ""
+    print(f"  {len(preview)} .onnx file(s), ~{total_mib:.1f} MiB total{suffix}:")
+    for rfn, sz in preview:
+        sz_label = f"{sz / (1024 * 1024):>7.1f} MiB" if sz is not None else "      ? MiB"
+        print(f"    {sz_label}  {rfn}")
+    if not assume_yes:
+        if not sys.stdin.isatty():
+            print(
+                "[models] stdin is not a tty and --yes was not passed -- aborting "
+                "before any bytes ship. Re-run with `--yes` to confirm.",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            ans = input(f"download {len(preview)} file(s)? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[models] cancelled", file=sys.stderr)
+            return 1
+        if ans not in {"y", "yes"}:
+            print("[models] cancelled", file=sys.stderr)
+            return 1
+    # ---- actual download (delegates to download_repo, which re-fetches
+    #      repo_info to pin the SHA -- one extra round-trip, but keeps
+    #      the F-31-01 SHA-pin logic in one place). --------------------
     try:
         files = download_repo(repo, models_dir)
     except Exception as e:

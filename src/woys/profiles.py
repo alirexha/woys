@@ -208,11 +208,43 @@ def cli_profile_list() -> int:
     return 0
 
 
-def cli_profile_delete(name: str) -> int:
+def cli_profile_delete(name: str, *, assume_yes: bool = False) -> int:
+    """Delete a saved profile.
+
+    review F-23-09 (commit-075): irreversible destructive action
+    on user state with no confirmation pre-fix. A typo in the profile
+    name ran straight through. The prompt is interactive `[y/N]` (with
+    `N` as the default so a bare Enter is safe), bypassed by `--yes`
+    for scripted use. Non-tty stdin (pipe, here-doc) is treated as
+    scripted -- reads `yes` from stdin and confirms; if the read
+    returns empty the operation aborts.
+    """
     _ensure_tui_path()
     from tui.config import load_config, save_config
 
     cfg = load_config()
+    # Verify the profile exists before prompting so a typo is rejected
+    # immediately without asking the user to confirm a non-action.
+    bag = _profiles_bag(cfg)
+    if name not in bag:
+        print(f"[profile] no such profile: {name!r}", file=sys.stderr)
+        return 1
+    if not assume_yes:
+        if not sys.stdin.isatty():
+            print(
+                f"[profile] refusing to delete {name!r} -- stdin is not a tty "
+                f"and --yes was not passed. Re-run with `--yes` to confirm.",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            ans = input(f"delete profile {name!r}? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[profile] cancelled", file=sys.stderr)
+            return 1
+        if ans not in {"y", "yes"}:
+            print("[profile] cancelled", file=sys.stderr)
+            return 1
     if not delete_profile(cfg, name):
         print(f"[profile] no such profile: {name!r}", file=sys.stderr)
         return 1
