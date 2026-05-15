@@ -79,7 +79,12 @@ class AppConfig:
     gpu_keepalive_torch_interval_ms: int = _E.gpu_keepalive_torch_interval_ms
     # TUI / app-only settings (not in EngineConfig).
     autostart_engine: bool = False
-    enable_dbus: bool = True  # reserved for future D-Bus wiring (currently unused)
+    # review F-merged-019 (commit-066): the `enable_dbus` field
+    # is dropped. It was reserved for a D-Bus control path that was
+    # rejected in favor of the Unix-domain control socket (see
+    # the project notes "D-Bus is replaced by Unix-domain sockets"). A
+    # dead config field carries the implication that the feature
+    # might land -- it won't.
     enable_evdev_hotkey: bool = False
     evdev_hotkey: str = "ctrl+alt+v"  # only meaningful when enable_evdev_hotkey=True
 
@@ -171,7 +176,6 @@ _FIELD_VALIDATORS: dict[str, _FieldSpec] = {
     "prefer_pw_cat": _FieldSpec(bool),
     "prefer_native_pw": _FieldSpec(bool),
     "autostart_engine": _FieldSpec(bool),
-    "enable_dbus": _FieldSpec(bool),
     "enable_evdev_hotkey": _FieldSpec(bool),
     "gpu_keepalive_enabled": _FieldSpec(bool),
     "gpu_clock_lock_enabled": _FieldSpec(bool),
