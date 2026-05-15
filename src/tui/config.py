@@ -99,6 +99,155 @@ class AppConfig:
         self._extras.setdefault("_user_overrides", [])
 
 
+# --- review F-merged-012 ----------------------------------------------
+# Per-field sane-range / type validator table. Pre-fix `AppConfig(**fields_
+# in)` and `.vcprofile`'s `setattr` loop accepted any TOML value: a
+# `chunk_seconds = "fast"` crashed deep in `_run_loop`; a shared
+# `.vcprofile` with `chunk_seconds = -1` was a DoS. The contrast: the
+# engine hard-fails a bad `embedder` (engine.py:1567-1569). This table
+# extends that pattern to every user-tunable field with a numeric range.
+#
+# - `load_config` (TOML on disk, user-owned): on validation failure,
+#   warn to stderr and reset the field to the AppConfig default. The
+#   user keeps a working config; only the offending field is replaced.
+# - `vcprofile.import_profile` (untrusted artifact, can be downloaded):
+#   on validation failure, raise ValueError naming the field. Refuse
+#   the import entirely -- this is the project's primary threat class.
+
+
+@dataclass(frozen=True)
+class _FieldSpec:
+    """Per-field validation spec for AppConfig / vcprofile values."""
+
+    py_type: type | tuple[type, ...]
+    minimum: float | None = None
+    maximum: float | None = None
+    choices: tuple[Any, ...] | None = None
+
+
+# `bool` <: `int` in Python's type hierarchy, so `isinstance(True, int)`
+# is True. Every numeric spec below pairs `(int, ...)` or `(float, ...)`
+# with an explicit `bool` reject in `validate_field()` so a hand-edited
+# `f0_up_key = true` is refused, not silently coerced.
+_FIELD_VALIDATORS: dict[str, _FieldSpec] = {
+    "rvc_model": _FieldSpec(str),
+    "sink_name": _FieldSpec(str),
+    "embedder": _FieldSpec(str, choices=("onnx",)),
+    "evdev_hotkey": _FieldSpec(str),
+    "gpu_anti_jitter_mode": _FieldSpec(str, choices=("off", "clock_only", "stream_only", "both")),
+    # Numeric -- pitch / speaker / rates.
+    "f0_up_key": _FieldSpec(int, minimum=-24, maximum=24),
+    "sid": _FieldSpec(int, minimum=0, maximum=1000),
+    "mic_rate": _FieldSpec(
+        int, choices=(8000, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000)
+    ),
+    "sink_rate": _FieldSpec(
+        int, choices=(8000, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000)
+    ),
+    # Numeric -- timing / chunking.
+    "chunk_seconds": _FieldSpec(float, minimum=0.01, maximum=2.0),
+    "output_latency_ms": _FieldSpec(int, minimum=10, maximum=5000),
+    "output_process_time_ms": _FieldSpec(int, minimum=1, maximum=5000),
+    # Numeric -- SOLA.
+    "sola_crossfade_ms": _FieldSpec(float, minimum=0.0, maximum=500.0),
+    "sola_search_ms": _FieldSpec(float, minimum=0.0, maximum=500.0),
+    "sola_context_ms": _FieldSpec(float, minimum=0.0, maximum=2000.0),
+    # Numeric -- input gain / gate.
+    "input_gain_db": _FieldSpec(float, minimum=-60.0, maximum=30.0),
+    "input_gate_dbfs": _FieldSpec(float, minimum=-200.0, maximum=0.0),
+    "input_gate_hysteresis_ms": _FieldSpec(float, minimum=0.0, maximum=5000.0),
+    # Numeric -- PipeWire path.
+    "prefer_native_pw_buffer_ms": _FieldSpec(int, minimum=0, maximum=5000),
+    # Numeric -- GPU keepalive / clock lock.
+    "gpu_keepalive_interval_ms": _FieldSpec(int, minimum=1, maximum=10_000),
+    "gpu_keepalive_input_len": _FieldSpec(int, minimum=1, maximum=100_000),
+    "gpu_keepalive_torch_interval_ms": _FieldSpec(int, minimum=1, maximum=10_000),
+    "gpu_clock_lock_floor_mhz": _FieldSpec(int, minimum=0, maximum=5000),
+    "gpu_clock_lock_ceiling_mhz": _FieldSpec(int, minimum=0, maximum=5000),
+    "gpu_clock_lock_floor_offset_mhz": _FieldSpec(int, minimum=-5000, maximum=5000),
+    # Booleans (the dataclass annotation says `bool`; reject everything else).
+    "monitor": _FieldSpec(bool),
+    "sola_enabled": _FieldSpec(bool),
+    "prefer_pw_cat": _FieldSpec(bool),
+    "prefer_native_pw": _FieldSpec(bool),
+    "autostart_engine": _FieldSpec(bool),
+    "enable_dbus": _FieldSpec(bool),
+    "enable_evdev_hotkey": _FieldSpec(bool),
+    "gpu_keepalive_enabled": _FieldSpec(bool),
+    "gpu_clock_lock_enabled": _FieldSpec(bool),
+    "gpu_keepalive_torch_stream": _FieldSpec(bool),
+}
+
+
+def validate_field(name: str, value: Any) -> str | None:
+    """Per-field validator. Returns `None` if `value` is acceptable,
+    otherwise a human error message naming `name` and explaining what
+    is wrong.
+
+    Unknown fields (not in `_FIELD_VALIDATORS`) return `None` so the
+    `_extras` pass-through bag is not gated -- a user adding their
+    own keys to config.toml is allowed.
+    """
+    spec = _FIELD_VALIDATORS.get(name)
+    if spec is None:
+        return None  # unknown field: not gated (pass-through)
+
+    py_type = spec.py_type
+    types_tuple = py_type if isinstance(py_type, tuple) else (py_type,)
+
+    # Python quirk: bool is a subclass of int. Reject bool wherever a
+    # numeric is wanted (or specifically reject non-bool where bool is
+    # wanted), so `f0_up_key = true` is not silently coerced to 1.
+    if bool in types_tuple:
+        if not isinstance(value, bool):
+            return f"{name}: expected bool, got {type(value).__name__} ({value!r})"
+    else:
+        if isinstance(value, bool):
+            return f"{name}: bool used where {types_tuple[0].__name__} expected (got {value!r})"
+        if not isinstance(value, types_tuple):
+            # Accept int where float is wanted (lossless widening); reject
+            # everything else.
+            if py_type is float and isinstance(value, int):
+                value = float(value)
+            else:
+                want = "/".join(t.__name__ for t in types_tuple)
+                return f"{name}: expected {want}, got {type(value).__name__} ({value!r})"
+
+    if spec.choices is not None and value not in spec.choices:
+        choices_display = list(spec.choices)
+        return f"{name}: must be one of {choices_display}, got {value!r}"
+    if spec.minimum is not None and value < spec.minimum:
+        return f"{name}: must be >= {spec.minimum}, got {value!r}"
+    if spec.maximum is not None and value > spec.maximum:
+        return f"{name}: must be <= {spec.maximum}, got {value!r}"
+    return None
+
+
+def _validate_appconfig(cfg: AppConfig, *, source: str = "config") -> None:
+    """Validate every gated field on `cfg`. On a violation, print a
+    stderr warning naming the field + the source (config.toml or
+    .vcprofile or test) and reset the field to the AppConfig default.
+
+    This is the *user-owned* path: a bad value should not lose the
+    whole config -- only the offending field is replaced.
+    """
+    defaults = AppConfig()
+    for name in _FIELD_VALIDATORS:
+        try:
+            value = getattr(cfg, name)
+        except AttributeError:
+            continue
+        err = validate_field(name, value)
+        if err is None:
+            continue
+        default = getattr(defaults, name)
+        print(
+            f"[woys] {source}: invalid {err}; resetting to default {default!r}",
+            file=sys.stderr,
+        )
+        setattr(cfg, name, default)
+
+
 def mark_override(cfg: AppConfig, *keys: str) -> None:
     """Record that the user has explicitly touched these AppConfig fields.
 
@@ -327,6 +476,12 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     # it from `extras` to keep migration logic clear; putting it back
     # here is the canonical write surface.
     cfg._extras["_user_overrides"] = sorted(user_overrides)
+    # review F-merged-012: validate every gated field. Dataclasses
+    # don't enforce annotations at runtime, so a hand-edited
+    # `chunk_seconds = "fast"` lands here as `cfg.chunk_seconds = "fast"`
+    # and would later crash deep in `_run_loop`. The validator names
+    # the field, warns to stderr, and resets to the AppConfig default.
+    _validate_appconfig(cfg, source=str(path))
     if migrated:
         # review F-16-01: announce the migration so a user who set
         # a value and then sees it change has a paper trail. The notice
