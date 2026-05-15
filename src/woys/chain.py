@@ -117,6 +117,31 @@ def _c_locale_env() -> dict[str, str]:
 
 
 def _pactl(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run `pactl <args>` with the same hardening
+    `audio.pipewire._run_pactl` provides.
+
+    review F-merged-009 (commit-070): pre-fix chain.py and
+    audio/pipewire.py had two divergent pactl shell-out wrappers.
+    chain.py's pre-fix version used bare `"pactl"` (no `shutil.
+    which` + missing-tool guard); audio/pipewire.py's had both.
+    Inline the same behavior here -- a `subprocess.run` call from
+    chain's module scope is what the chain tests already patch
+    (`patch(chain.subprocess.run, ...)`), so delegating to
+    `_run_pactl` would silently bypass those patches.
+    """
+    if shutil.which("pactl") is None:
+        # F-merged-009: typed not-found, matching pipewire.py's
+        # missing-tool error shape (but routed through the same
+        # `CompletedProcess` surface chain callers already handle).
+        # Returncode 127 is the conventional "command not found".
+        return subprocess.CompletedProcess(
+            args=["pactl", *args],
+            returncode=127,
+            stdout="",
+            stderr="pactl not found - install `pipewire-pulse`",
+        )
+    # Use bare "pactl" (not the absolute path from shutil.which) so the
+    # call shape stays stable for tests that pattern-match cmd[0].
     return subprocess.run(
         ["pactl", *args],
         capture_output=True,
