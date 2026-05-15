@@ -57,16 +57,16 @@ dependencies = [
     # files; the engine path has no faiss imports.
     "einops>=0.8",
     "soundfile>=0.12",
-    # Server framework -- imported by src/server (vendored upstream); the
-    # wheel ships src/server for the convert path, so these stay runtime
-    # rather than moving to an extra. v0.15+ may extract convert into a
-    # separate subtree and drop these.
-    "fastapi>=0.110,<0.116",
-    "uvicorn[standard]>=0.30",
-    "python-socketio>=5.11",
-    "python-multipart>=0.0.9",
-    "websockets>=12",
-    "pyOpenSSL>=24.0",
+    # review F-19-11 (commit-069): the web stack (fastapi /
+    # uvicorn / python-socketio / python-multipart / websockets /
+    # pyOpenSSL) is imported only by `src/server/` (vendored
+    # upstream) which is only consumed by `woys convert` (.pth ->
+    # .onnx). Pre-fix these were mandatory runtime deps -- 6
+    # packages every user paid for a feature only used at
+    # conversion time. Moved to the `[convert]` optional extra.
+    # `woys convert` surfaces an ImportError → install hint if
+    # the user runs convert without `pip install '.[convert]'`.
+    # (See `[project.optional-dependencies] convert` below.)
     # Utilities
     "huggingface_hub>=0.25",
     "dataclasses-json>=0.6",
@@ -98,6 +98,17 @@ evdev = ["evdev>=1.7"]
 # Optional system-tray icon (KDE Plasma 6 / GNOME via libappindicator).
 # pystray pulls in Pillow + xlib/dbus runtime libs.
 tray = ["pystray>=0.19", "pillow>=10"]
+# review F-19-11 (commit-069): convert-only web stack. Used by
+# the `src/server/` vendored upstream which `woys convert` consumes.
+# Not needed for inference, daily use, or any non-convert path.
+convert = [
+    "fastapi>=0.110,<0.116",
+    "uvicorn[standard]>=0.30",
+    "python-socketio>=5.11",
+    "python-multipart>=0.0.9",
+    "websockets>=12",
+    "pyOpenSSL>=24.0",
+]
 
 [project.scripts]
 # v0.6.0 introduced the `woys` binary (renamed from `vcclient-cachy`). The
