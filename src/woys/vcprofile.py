@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,21 @@ import tomli_w
 
 VCPROFILE_VERSION = 1
 DEFAULT_EXTENSION = ".vcprofile"
+
+# review F-16-08: per-version migration ladder for `.vcprofile`
+# import. Each entry migrates a `raw` TOML dict from key K to K+1.
+# Pre-fix `import_profile` raised on any version mismatch -- a share/
+# interop format breaking hard on its first revision. The reader now
+# walks `meta.format_version + 1 .. VCPROFILE_VERSION` and applies
+# each registered leg with a stderr warning. A missing leg raises a
+# specific "no migration registered for vN -> vN+1" error so a future
+# author knows exactly which entry to add. Receiver-side files newer
+# than `VCPROFILE_VERSION` raise an "upgrade woys" message.
+#
+# The ladder is empty today (v1 is the only released format). The
+# DELIVERABLE for this commit is the mechanism; entries land alongside
+# real format revisions.
+_VCPROFILE_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
 
 def _ensure_path() -> None:
@@ -48,6 +64,81 @@ def _sha256_file(path: Path, chunk: int = 1 << 20) -> str:
                 break
             h.update(block)
     return h.hexdigest()
+
+
+def _migrate_vcprofile_raw(
+    raw: dict[str, Any],
+    *,
+    source: Path | None = None,
+) -> dict[str, Any]:
+    """Walk the `.vcprofile` format-version migration ladder.
+
+    review F-16-08: pre-fix `import_profile` did exact-equality
+    on `meta.format_version` and raised on any mismatch. A share/
+    interop format whose whole purpose is cross-user/cross-version
+    distribution cannot fail-hard on its first revision. The new
+    contract:
+
+    - `format_version > VCPROFILE_VERSION`: refuse with a clear
+      "upgrade woys" message. We cannot safely interpret a future
+      schema (a key could have been renamed, a value semantically
+      reinterpreted) -- the only honest response is "this file was
+      exported by a newer build; upgrade".
+    - `format_version == VCPROFILE_VERSION`: pass through unchanged.
+    - `format_version < VCPROFILE_VERSION`: walk
+      `[version + 1 .. VCPROFILE_VERSION]` and apply each registered
+      migration leg from `_VCPROFILE_MIGRATIONS`. Print a stderr
+      warning per leg so the user knows their import migrated. If a
+      leg is missing, raise -- a future maintainer adding format vN
+      must register the migration for vN-1 -> vN at the same time.
+    - missing `meta.format_version` or non-integer value: raise
+      with a clear message (a malformed .vcprofile is not a version
+      mismatch; we cannot guess which era the file came from).
+
+    The `source` arg is just used in error messages so the user knows
+    which file they passed.
+    """
+    where = f" ({source})" if source is not None else ""
+    meta = raw.get("meta", {})
+    raw_version: object = meta.get("format_version") if isinstance(meta, dict) else None
+    if not isinstance(raw_version, int) or isinstance(raw_version, bool):
+        raise ValueError(
+            f".vcprofile{where} has missing or non-integer "
+            f"meta.format_version (got {raw_version!r}); cannot determine "
+            f"which schema era it was exported from. Expected an integer "
+            f"between 1 and {VCPROFILE_VERSION}."
+        )
+    if raw_version > VCPROFILE_VERSION:
+        raise ValueError(
+            f".vcprofile{where} was exported by a newer build "
+            f"(format_version={raw_version}); this woys understands up to "
+            f"v{VCPROFILE_VERSION}. Upgrade woys to import this file."
+        )
+    if raw_version == VCPROFILE_VERSION:
+        return raw
+    # raw_version < VCPROFILE_VERSION: walk the ladder.
+    migrated = raw
+    for step in range(raw_version, VCPROFILE_VERSION):
+        next_step = step + 1
+        leg = _VCPROFILE_MIGRATIONS.get(step)
+        if leg is None:
+            raise ValueError(
+                f".vcprofile{where} format_version={raw_version} requires "
+                f"a v{step} -> v{next_step} migration that is not registered "
+                f"in `_VCPROFILE_MIGRATIONS`. Re-export from a current woys, "
+                f"or file an issue."
+            )
+        print(
+            f"[profile import] migrating v{step} -> v{next_step}{where}",
+            file=sys.stderr,
+        )
+        migrated = leg(migrated)
+    # Stamp the new version onto the migrated copy so downstream code
+    # treats it as the current schema.
+    meta_out = dict(migrated.get("meta", {}))
+    meta_out["format_version"] = VCPROFILE_VERSION
+    migrated["meta"] = meta_out
+    return migrated
 
 
 def export_profile(name: str, output: Path, *, config_path: Path | None = None) -> Path:
@@ -138,12 +229,7 @@ def import_profile(
     except OSError as e:
         raise ValueError(f"cannot read {path} ({type(e).__name__}: {e})") from e
 
-    if raw.get("meta", {}).get("format_version") != VCPROFILE_VERSION:
-        raise ValueError(
-            f"unsupported .vcprofile format_version "
-            f"{raw.get('meta', {}).get('format_version')!r}; this build expects "
-            f"v{VCPROFILE_VERSION}"
-        )
+    raw = _migrate_vcprofile_raw(raw, source=path)
 
     snap_in = dict(raw.get("profile", {}))
     model_meta = raw.get("model", {})
