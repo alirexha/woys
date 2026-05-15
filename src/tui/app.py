@@ -217,7 +217,7 @@ class WoysApp(App[int]):
                     f"loaded. Fix: run `woys pw setup` (or `woys pw status` to "
                     f"inspect), then restart. (--no-pw-setup skips this step.)"
                 )
-                self.engine.stats.last_error = msg
+                self.engine.record_error(msg)
                 self.notify(msg, severity="error", timeout=12)
         if pw_ok and self.cfg.autostart_engine:
             self._start_engine()
@@ -407,7 +407,7 @@ class WoysApp(App[int]):
         try:
             self.engine.start()
         except (PipeWireError, OSError, RuntimeError) as e:
-            self.engine.stats.last_error = f"engine start: {e}"
+            self.engine.record_error(f"engine start: {e}")
             self.notify(f"engine start failed: {e}", severity="error", timeout=8)
             return False
         return True

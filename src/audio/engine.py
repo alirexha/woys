@@ -710,6 +710,23 @@ class EngineStats:
     # targets that mechanism. Capped at 50 entries.
     tail_chunk_log: list[dict[str, float]] = field(default_factory=list)
     last_error: str | None = None
+    # review F-merged-015: bounded timestamped error history. Pre-
+    # fix `last_error` was a single clobberable string with ~28 write
+    # sites across 6 threads. A real failure cascade (`subprocess died
+    # -> sessions reloading -> pacat respawn failed`) overwrote
+    # `last_error` repeatedly so the user saw only the LAST symptom in
+    # `woys diag`. The acknowledged-but-ungeneralized fix already
+    # existed at engine.py:868 (`helper_exit_reasons`) and the watchdog
+    # used a separate list "rather than clobber last_error wholesale";
+    # this generalizes the pattern to all errors.
+    #
+    # Tuple shape: `(monotonic_ts, thread_name, message)`. `maxlen=20`
+    # is bounded so memory does not grow without limit on a degraded
+    # session. Reads are unlocked (snapshot semantics are OK; the
+    # consumer is `woys diag` / TUI status, not a control-flow path).
+    # Writes go through `RealtimeEngine.record_error()`, which appends
+    # under `_stats_lock` AND mirrors to `last_error` for back-compat.
+    error_history: deque[tuple[float, str, str]] = field(default_factory=lambda: deque(maxlen=20))
 
     # v0.5.2 health counters (Brief §5 - surfaced in TUI + `diag`).
     # xruns: parsed from pacat -v stderr. Closest thing to a true
@@ -1809,7 +1826,7 @@ class RealtimeEngine:
                 f'"onnx". Falling back.'
             )
             print(f"[engine] {msg}")
-            self.stats.last_error = msg
+            self.record_error(msg)
         self.active_embedder = "onnx"
 
     @staticmethod
@@ -2076,7 +2093,7 @@ class RealtimeEngine:
                 # _rvc isn't loaded in subprocess mode, so the legacy path
                 # would fail every chunk. Better to stop and surface the
                 # error than serve silence indefinitely.
-                self.stats.last_error = (
+                self.record_error(
                     f"subprocess swap failed: {e}. Stopping engine - "
                     f"flip `inference_subprocess=false` to fall back to "
                     f"in-process inference."
@@ -2158,7 +2175,7 @@ class RealtimeEngine:
                 )
             except InferenceError as e:
                 # Try one restart. If THAT fails, propagate.
-                self.stats.last_error = f"inference child died ({e}); attempting restart"
+                self.record_error(f"inference child died ({e}); attempting restart")
                 try:
                     self._inf_client.restart()
                     self.stats.child_restarts = self._inf_client.restart_count
@@ -2318,9 +2335,9 @@ class RealtimeEngine:
             self._consecutive_drops += 1
             n = self.stats.dropped_chunks
             if n <= 3:
-                self.stats.last_error = f"inference dropped chunk #{n}: {type(e).__name__}: {e}"
+                self.record_error(f"inference dropped chunk #{n}: {type(e).__name__}: {e}")
             elif n % 100 == 0:
-                self.stats.last_error = (
+                self.record_error(
                     f"inference still dropping chunks (total #{n}): {type(e).__name__}: {e}"
                 )
             # B14 / corr-015: circuit breaker on sustained inference failure.
@@ -2330,7 +2347,7 @@ class RealtimeEngine:
             # transient cuDNN tune but short enough to surface a genuine
             # broken state.
             if self._consecutive_drops >= 50 and not self._stop_event.is_set():
-                self.stats.last_error = (
+                self.record_error(
                     f"engine stopping: {n} consecutive inference failures. "
                     f"Last: {type(e).__name__}: {e}"
                 )
@@ -2612,6 +2629,36 @@ class RealtimeEngine:
         self.stats._recent_inference.clear()
         self.stats._recent_total.clear()
 
+    def record_error(self, msg: str) -> None:
+        """Record an error to the bounded timestamped ring + mirror to
+        `stats.last_error` for back-compat reads.
+
+        review F-merged-015: pre-fix `self.stats.last_error = msg`
+        was the only sink. ~28 write sites across 6 threads clobbered
+        the single string, so a cascading failure left only the LAST
+        symptom visible in `woys diag`. The ring (`error_history`,
+        deque maxlen=20) keeps the most recent 20 entries with
+        timestamps + thread names, so the user can reconstruct the
+        cascade.
+
+        The append + back-compat field write both happen under
+        `_stats_lock` so a concurrent record_error from another thread
+        sees a consistent state. The lock is held for microseconds.
+        """
+        entry = (time.monotonic(), threading.current_thread().name, msg)
+        with self._stats_lock:
+            self.stats.error_history.append(entry)
+            self.stats.last_error = msg
+
+    def recent_errors(self, n: int = 5) -> list[tuple[float, str, str]]:
+        """Return the most recent up-to-`n` error entries from the ring,
+        oldest first. Snapshot semantics: the returned list is a copy;
+        concurrent writers do not see it."""
+        with self._stats_lock:
+            if n >= len(self.stats.error_history):
+                return list(self.stats.error_history)
+            return list(self.stats.error_history)[-n:]
+
     def stop(self, timeout: float = 2.0) -> None:
         # review F-merged-018: lock + idempotence guard.
         # Pre-fix two concurrent stop() callers (signal-handler path +
@@ -2687,7 +2734,7 @@ class RealtimeEngine:
 
         default_sink = get_default_sink()
         if default_sink and default_sink == self.cfg.sink_name:
-            self.stats.last_error = (
+            self.record_error(
                 f"system default sink is {default_sink!r} -- the woys sink the "
                 f"engine writes into. Desktop audio is being routed into woys "
                 f"plumbing; run `pactl set-default-sink <your-speakers>` to fix."
@@ -2998,7 +3045,7 @@ class RealtimeEngine:
                 # teardown noise, not a runtime error worth surfacing.
                 if self._stop_event.is_set():
                     return
-                self.stats.last_error = (
+                self.record_error(
                     f"{self._player_backend or 'player'} write failed "
                     f"({type(e).__name__}); respawning"
                 )
@@ -3106,7 +3153,7 @@ class RealtimeEngine:
                     elif s.startswith("error:"):
                         # Surface the helper's hard-fail message to woys diag.
                         cause = f"native-pw: {s[len('error:') :].strip()}"
-                        self.stats.last_error = cause
+                        self.record_error(cause)
                         # v0.11.0 - also push to helper_exit_reasons so the
                         # watchdog's "respawned" message can't clobber the
                         # cause when the watchdog fires shortly after.
@@ -3142,7 +3189,7 @@ class RealtimeEngine:
         if mode == "both":
             return True, True
         # Unknown value - log to last_error, fall back to off.
-        self.stats.last_error = (
+        self.record_error(
             f"unknown gpu_anti_jitter_mode={mode!r}; expected "
             f"off|keepalive|clock_lock|both. Falling back to off."
         )
@@ -3357,7 +3404,7 @@ class RealtimeEngine:
                 # detects a stale lock and attempts recovery -rgc; set
                 # the dedicated failure flag so it isn't ambiguous.
                 self.stats.gpu_clock_lock_revert_failed = True
-                self.stats.last_error = (
+                self.record_error(
                     f"nvidia-smi -rgc failed at engine stop: {msg}. "
                     f"Next engine.start() will retry; or run "
                     f"`sudo nvidia-smi -rgc` manually."
@@ -3425,14 +3472,14 @@ class RealtimeEngine:
         try:
             import torch
         except ImportError as e:
-            self.stats.last_error = (
+            self.record_error(
                 f"torch import failed; torch keepalive disabled: {e}. "
                 f"Install via `pip install torch` or set gpu_anti_jitter_mode=off."
             )
             return
 
         if not torch.cuda.is_available():
-            self.stats.last_error = (
+            self.record_error(
                 "torch.cuda.is_available() returned False; torch keepalive disabled. "
                 "Check that torch was built with CUDA support and an NVIDIA driver is loaded."
             )
@@ -3442,7 +3489,7 @@ class RealtimeEngine:
             stream = torch.cuda.Stream()  # type: ignore[no-untyped-call]  # torch's Stream stub lacks annotations
             buf = torch.empty(1024, device="cuda", dtype=torch.float32)
         except Exception as e:
-            self.stats.last_error = (
+            self.record_error(
                 f"torch keepalive setup failed; thread exiting: {type(e).__name__}: {e}"
             )
             return
@@ -3470,7 +3517,7 @@ class RealtimeEngine:
                 # absorb the op without blocking; the kernel launch alone
                 # is enough to keep the boost from idling.
             except Exception as e:
-                self.stats.last_error = (
+                self.record_error(
                     f"torch keepalive crash; retiring thread: {type(e).__name__}: {e}"
                 )
                 break
@@ -3594,7 +3641,7 @@ class RealtimeEngine:
             # alive must not loop forever.
             consecutive_respawns += 1
             if consecutive_respawns > _PLAYER_RESPAWN_CAP:
-                self.stats.last_error = (
+                self.record_error(
                     f"engine stopping: playback helper died and was respawned "
                     f"{consecutive_respawns - 1}x without staying alive. "
                     f"Last cause: {self.stats.last_error or 'unknown'}"
@@ -3605,7 +3652,7 @@ class RealtimeEngine:
             try:
                 new_proc = self._open_pacat()
             except Exception as e:
-                self.stats.last_error = (
+                self.record_error(
                     f"watchdog respawn failed ({consecutive_respawns}x): {type(e).__name__}: {e}"
                 )
                 # Back off a bit before retrying so we don't spin.
@@ -3642,7 +3689,7 @@ class RealtimeEngine:
                 self.stats.helper_exit_reasons.append(watchdog_msg)
                 if len(self.stats.helper_exit_reasons) > 10:
                     self.stats.helper_exit_reasons.pop(0)
-            self.stats.last_error = (
+            self.record_error(
                 f"{backend} respawned (restarts={self.stats.player_restarts}); "
                 f"causes={self.stats.helper_exit_reasons[-3:]}"
             )
@@ -3803,7 +3850,7 @@ class RealtimeEngine:
                     )
                     monitor_stream.start()
                 except Exception as e:
-                    self.stats.last_error = f"monitor: {type(e).__name__}: {e}"
+                    self.record_error(f"monitor: {type(e).__name__}: {e}")
                     monitor_stream = None
 
             # v0.7.0-rc4 - input-gate hysteresis state. The gate must
@@ -3980,7 +4027,7 @@ class RealtimeEngine:
                             )
                             monitor_stream.start()
                         except Exception as e:
-                            self.stats.last_error = f"monitor: {type(e).__name__}: {e}"
+                            self.record_error(f"monitor: {type(e).__name__}: {e}")
                             monitor_stream = None
                     elif not self.cfg.monitor and monitor_stream is not None:
                         with contextlib.suppress(Exception):
@@ -4066,7 +4113,7 @@ class RealtimeEngine:
                             self.stats._recent_total
                         )
         except Exception as e:
-            self.stats.last_error = f"{type(e).__name__}: {e}"
+            self.record_error(f"{type(e).__name__}: {e}")
             self.stats.running = False
             # review F-17-06 (P1): mark this as a crash, not a clean
             # stop, so the headless `cmd_engine` loop can break + exit
