@@ -249,13 +249,40 @@ weights downloaded by scripts/download_weights.py at install time:
                                        and huggingface.co/wok000 — see those
                                        repos for the upstream license terms
   contentvec-f.onnx                    huggingface.co/wok000/weights_gpl —
-                                       upstream-licensed; see that repo
+                                       distributed under GPL-3.0 (the
+                                       upstream repo name explicitly
+                                       declares this). See review
+                                       F-cx1-new-D below.
   amitaro_v2_16k.onnx                  huggingface.co/wok000/vcclient_model
                                        (sample voice for smoke testing)
 
 (Older versions also downloaded `hubert_base.pt` for the fairseq embedder
 fallback. The fairseq path was removed in v0.8.0; the embedder is now
 ONNX contentvec exclusively, and `hubert_base.pt` is no longer fetched.)
+
+review F-cx1-new-D (commit-060): the previous wording above
+characterized `contentvec-f.onnx` as merely "upstream-licensed; see
+that repo." That was a Hard Rule 1 understatement: the upstream
+repo name `wok000/weights_gpl` explicitly declares the GPL-3.0
+licensing posture. The correct, explicit statement:
+
+  * `contentvec-f.onnx` is distributed under **GPL-3.0** (per the
+    upstream `weights_gpl` repo's own naming).
+  * woys **never redistributes** this weight; `scripts/
+    download_weights.py` fetches it directly from Hugging Face
+    into the user's local cache. The user retains the GPL-3.0
+    obligations against whoever distributed it to them
+    (Hugging Face).
+  * Any FUTURE woys distribution that *bundles* this file (an
+    install artifact, a Docker image, a Flatpak, etc.) MUST
+    respect GPL-3.0 (source-availability, no proprietary linking
+    of the bundled work, etc.). The current repo's All-Rights-
+    Reserved license for original work does NOT extend to a
+    bundled GPL-3.0 weight.
+
+The same explicit-GPL-3.0 statement is mirrored in `docs/MODELS.md`
+so a maintainer or downstream packager sees the obligation in
+both legal and user-facing surfaces.
 
 End-users who add their own RVC voice models are responsible for the
 licensing of those weights. This repository's license does not grant any
