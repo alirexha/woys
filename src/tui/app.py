@@ -251,10 +251,13 @@ class WoysApp(App[int]):
             self.call_from_thread(apply)
             return f"OK pitch={new}"
         if cmd == "STATUS":
+            from tui.control import PROTOCOL_VERSION
+
             s = self.engine.stats
             model_name = Path(str(self.engine.cfg.rvc_model)).name
             return (
-                f"OK running={s.running} "
+                f"OK proto={PROTOCOL_VERSION} "
+                f"running={s.running} "
                 f"pitch={int(self.pitch)} "
                 f"profile={self._active_profile or '-'} "
                 f"model={model_name} "

@@ -93,6 +93,23 @@ HandlerFn = Callable[[str], str]
 MAX_COMMAND_BYTES = 64 * 1024
 MAX_REPLY_BYTES = 64 * 1024
 
+# review F-merged-020 part 2: protocol version. Bumps on
+# incompatible wire changes (semantic shifts of OK / ERR / JOB, new
+# required fields, framing renegotiation). The STATUS reply stamps
+# `proto=<N>` so a client can read the server's version and degrade
+# gracefully. Pre-fix the docstring reasoned about "older clients" but
+# no version field existed (Hard Rule 1 violation).
+#
+# Wire history:
+#   v1 - 2026-05-15 - newline framing (commit-037a) + JOB protocol +
+#                     ERR-on-failure invariant + STATUS stamps
+#                     `proto=1`. The first version with an explicit
+#                     wire-version contract.
+#
+# When bumping, also update tests/test_control_protocol_version.py
+# so the contract has a paper trail.
+PROTOCOL_VERSION = 1
+
 
 def _recv_line(conn: socket.socket, max_bytes: int = MAX_COMMAND_BYTES) -> str | None:
     """Read from `conn` until a `\\n` byte or `max_bytes` is reached.
