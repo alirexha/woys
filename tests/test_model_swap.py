@@ -235,3 +235,180 @@ def test_cli_models_use_falls_back_to_config_when_no_socket(
     assert rc == 0
     cfg2 = real_load(cfg_path)
     assert cfg2.rvc_model == str(target.resolve())
+
+
+# --- review F-16-07 / F-23-05 ----------------------------------------
+# Pre-fix `cli_models_use` only matched `startswith("ERR control socket
+# not found")` -- so when the TUI was kill -9'd (stale socket) or
+# starting up (connect refused), the user's `woys models use X` was
+# silently dropped. The fix broadens the persist branch to cover all
+# three transport-failure ERR strings + the state=error path + the
+# legacy synchronous-OK path. State=done remains the only branch that
+# does NOT persist (the TUI's own MODEL handler at `tui/app.py:306-328`
+# already writes config in that branch).
+#
+# These tests are self-contained: they synthesize a fake model file in
+# tmp_path so they run on CI without a real ~/.local/share/woys/models
+# library. The existing `test_cli_models_use_falls_back_to_config_when_
+# no_socket` above keeps the integration-style real-model test.
+
+_SOCKET_ERR_STRINGS = [
+    "ERR control socket not found - TUI not running?",  # pre-fix: already matched
+    "ERR control socket stale - TUI not running?",  # pre-fix: dropped on the floor
+    "ERR control socket refused - TUI not accepting connections?",  # pre-fix: same
+]
+
+
+def _stub_models_use(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reply: str,
+) -> tuple[Path, Path]:
+    """Wire `cli_models_use` so it operates in a hermetic tmp_path:
+    - `find_by_name` returns a synthetic onnx Path under tmp_path,
+    - `load_config` / `save_config` read+write a tmp config.toml,
+    - `submit_and_wait` returns `reply` verbatim.
+
+    Returns `(model_path, config_path)`.
+    """
+    from tui.config import AppConfig
+    from tui.config import load_config as real_load
+    from tui.config import save_config as real_save
+
+    fake_model = tmp_path / "fake_voice.onnx"
+    fake_model.write_bytes(b"fake-onnx")
+    cfg_path = tmp_path / "config.toml"
+    real_save(AppConfig(), cfg_path)
+
+    def fake_find(name: str, models_dir: Path = tmp_path) -> Path | None:
+        return fake_model if name == fake_model.stem else None
+
+    def fake_load(*_a: object, **_kw: object) -> AppConfig:
+        return real_load(cfg_path)
+
+    def fake_save(cfg: AppConfig, *_a: object, **_kw: object) -> None:
+        real_save(cfg, cfg_path)
+
+    monkeypatch.setattr("woys.models.find_by_name", fake_find)
+    monkeypatch.setattr("tui.config.load_config", fake_load)
+    monkeypatch.setattr("tui.config.save_config", fake_save)
+    monkeypatch.setattr("woys.models.load_config", fake_load, raising=False)
+    monkeypatch.setattr("woys.models.save_config", fake_save, raising=False)
+    monkeypatch.setattr("tui.control.submit_and_wait", lambda *a, **kw: reply)
+    return fake_model, cfg_path
+
+
+@pytest.mark.parametrize("reply", _SOCKET_ERR_STRINGS)
+def test_cli_models_use_persists_on_every_socket_err_string(
+    reply: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bug-class test. For each of the three ERR strings
+    `tui.control.send_command` can emit, `models use` must persist
+    rvc_model to `config.toml` and exit 0. Pre-fix the `stale` and
+    `refused` cases silently dropped the write."""
+    from tui.config import AppConfig
+    from tui.config import load_config as real_load
+    from woys.models import cli_models_use
+
+    model_path, cfg_path = _stub_models_use(monkeypatch, tmp_path, reply)
+    rc = cli_models_use(model_path.stem)
+
+    assert rc == 0, f"socket ERR reply {reply!r} must still exit 0; got {rc}"
+    cfg2: AppConfig = real_load(cfg_path)
+    assert cfg2.rvc_model == str(model_path.resolve()), (
+        f"socket ERR reply {reply!r} must persist rvc_model to config "
+        f"(F-16-07 bug-class); got {cfg2.rvc_model!r}"
+    )
+
+
+def test_cli_models_use_persists_on_engine_state_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """state=error: the engine actively rejected the swap. Persist the
+    user's intent + exit 1 + name the failure on stderr."""
+    from tui.config import AppConfig
+    from tui.config import load_config as real_load
+    from woys.models import cli_models_use
+
+    reply = "OK job=42 state=error msg=onnx load failed"
+    model_path, cfg_path = _stub_models_use(monkeypatch, tmp_path, reply)
+    rc = cli_models_use(model_path.stem)
+    out = capsys.readouterr()
+
+    assert rc == 1
+    assert "swap failed" in out.err
+    cfg2: AppConfig = real_load(cfg_path)
+    assert cfg2.rvc_model == str(model_path.resolve()), (
+        "state=error must still persist rvc_model (F-16-07)"
+    )
+
+
+def test_cli_models_use_persists_on_legacy_ok_without_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Old synchronous OK reply (no `job=` field) - shouldn't occur
+    post-v0.5.0 but the back-compat branch must persist defensively."""
+    from tui.config import AppConfig
+    from tui.config import load_config as real_load
+    from woys.models import cli_models_use
+
+    reply = "OK swapped"
+    model_path, cfg_path = _stub_models_use(monkeypatch, tmp_path, reply)
+    rc = cli_models_use(model_path.stem)
+
+    assert rc == 0
+    cfg2: AppConfig = real_load(cfg_path)
+    assert cfg2.rvc_model == str(model_path.resolve())
+
+
+def test_cli_models_use_does_not_persist_on_state_done(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """state=done: the TUI's MODEL handler already wrote config under
+    its own save_config. We must NOT re-write here (double-write opens
+    a TOCTOU window against the TUI for unrelated fields). The CLI's
+    in-memory tmp config stays empty (its `_stub_models_use` set
+    rvc_model='')."""
+    from tui.config import AppConfig
+    from tui.config import load_config as real_load
+    from woys.models import cli_models_use
+
+    reply = "OK job=1 state=done elapsed_ms=120"
+    model_path, cfg_path = _stub_models_use(monkeypatch, tmp_path, reply)
+    rc = cli_models_use(model_path.stem)
+
+    assert rc == 0
+    cfg2: AppConfig = real_load(cfg_path)
+    assert cfg2.rvc_model == "", (
+        "state=done is the TUI-handles-persistence branch; the CLI "
+        "must NOT also write (F-16-07 design note)"
+    )
+
+
+def test_cli_models_use_does_not_persist_on_unknown_reply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Unclassified reply: don't persist, surface it. A future engine
+    error class might break the contract; persisting on every reply
+    masks the real failure."""
+    from tui.config import AppConfig
+    from tui.config import load_config as real_load
+    from woys.models import cli_models_use
+
+    reply = "WAT some-future-thing-we-do-not-know-about"
+    model_path, cfg_path = _stub_models_use(monkeypatch, tmp_path, reply)
+    rc = cli_models_use(model_path.stem)
+    out = capsys.readouterr()
+
+    assert rc == 1
+    assert "WAT some-future-thing" in out.err
+    cfg2: AppConfig = real_load(cfg_path)
+    assert cfg2.rvc_model == ""
