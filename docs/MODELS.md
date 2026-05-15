@@ -1,7 +1,7 @@
 # Voice models — finding, converting, swapping
 
 woys ships **no bundled voice models**. The `install.sh` step pulls
-foundation weights (contentvec, RMVPE, hubert) and a single small public RVC
+foundation weights (contentvec, RMVPE) and a single small public RVC
 voice model (`amitaro_v2_16k.onnx`) for the smoke test. Everything else you
 add yourself.
 
