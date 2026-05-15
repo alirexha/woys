@@ -269,6 +269,15 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
     poll `JOB <id>` until the engine worker actually picked up the swap.
     Default overall timeout 30 s (covers cold-cache cudnn-tune of any
     voice; cached swaps complete in < 200 ms).
+
+    review F-16-07 / F-23-05: persistence to `config.toml` is the
+    contract; the running-engine live-apply is best-effort on top. Pre-
+    fix the persistence branch only matched `"ERR control socket not
+    found"`, so the two other ERR-strings `send_command` can emit
+    (`"... stale - TUI not running?"`, `"... refused - TUI not accepting
+    connections?"` -- see `control.py:287, :288`) fell through to the
+    catch-all `return 1` with config untouched. The stale-socket case
+    is the common one (`kill -9`'d TUI leaves the socket file).
     """
     path = find_by_name(name, models_dir)
     if path is None:
@@ -281,32 +290,15 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
     from tui.config import load_config, save_config
     from tui.control import submit_and_wait
 
-    # Try the running engine first. submit_and_wait handles the JOB poll.
-    reply = submit_and_wait(f"MODEL {path.stem}", overall_timeout=30.0)
-    if reply.startswith("OK") and " state=done" in reply:
-        # Pull the elapsed_ms field for a friendlier print.
-        ms = "?"
-        for tok in reply.split():
-            if tok.startswith("elapsed_ms="):
-                ms = tok.split("=", 1)[1]
-                break
-        print(f"[models] hot-swapped → {path.name}  ({ms} ms)")
-        return 0
-    if reply.startswith("OK") and "state=error" in reply:
-        print(f"[models] swap failed: {reply}", file=sys.stderr)
-        return 1
-    if reply.startswith("OK") and "job=" not in reply:
-        # Old synchronous handler - shouldn't happen post-v0.5.0 but keep
-        # backward compat for the rare mixed-version scenario.
-        print(f"[models] hot-swapped → {path.name}")
-        return 0
-    if reply.startswith("ERR control socket not found"):
-        # Engine not running - write config so the next `woys run`
-        # picks it up.
-        # B35 / corr-024: flock the config file across the read+modify+write
-        # window. Two concurrent `woys models use X` calls (e.g. from a
-        # script) both read the same baseline config and one's save can
-        # clobber the other. flock(LOCK_EX) serializes them.
+    def _persist_active_model() -> None:
+        """Write `rvc_model = <resolved path>` to `config.toml` under a
+        cross-process flock.
+
+        B35 / corr-024: flock the config across the read+modify+write
+        window. Two concurrent `woys models use X` calls (e.g. from a
+        script) both read the same baseline config and one's save can
+        clobber the other. flock(LOCK_EX) serializes them.
+        """
         import fcntl
         from collections.abc import Iterator
         from contextlib import contextmanager
@@ -328,8 +320,53 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
             cfg = load_config()
             cfg.rvc_model = str(path.resolve())
             save_config(cfg)
+
+    # Try the running engine first. submit_and_wait handles the JOB poll.
+    reply = submit_and_wait(f"MODEL {path.stem}", overall_timeout=30.0)
+    if reply.startswith("OK") and " state=done" in reply:
+        # Hot-swap succeeded. The TUI's MODEL handler (`tui/app.py`
+        # lines 306-328) already persisted the new rvc_model under its
+        # own save_config, so we do NOT re-write here -- double-writing
+        # creates a TOCTOU window with the TUI for unrelated fields
+        # (the flock only covers our write; the TUI's save is
+        # unsynchronized today).
+        ms = "?"
+        for tok in reply.split():
+            if tok.startswith("elapsed_ms="):
+                ms = tok.split("=", 1)[1]
+                break
+        print(f"[models] hot-swapped → {path.name}  ({ms} ms)")
+        return 0
+    if reply.startswith("OK") and "state=error" in reply:
+        # The engine rejected the swap (e.g., onnx load failed). Persist
+        # the user's intent anyway -- the verdict's prescription is
+        # "every non-state=done branch persists". On the next `woys run`
+        # the user will see the same engine-side error, but at least it
+        # will be reproducible and the config reflects what was asked.
+        _persist_active_model()
+        print(f"[models] swap failed (config still updated): {reply}", file=sys.stderr)
+        return 1
+    if reply.startswith("OK") and "job=" not in reply:
+        # Old synchronous handler - shouldn't happen post-v0.5.0 but
+        # keep backward compat for the rare mixed-version scenario.
+        # The legacy TUI may or may not have persisted; write defensively.
+        _persist_active_model()
+        print(f"[models] hot-swapped → {path.name}")
+        return 0
+    if reply.startswith("ERR control socket"):
+        # All three transport-failure ERR strings land here:
+        #   "ERR control socket not found - TUI not running?"
+        #   "ERR control socket stale - TUI not running?"
+        #   "ERR control socket refused - TUI not accepting connections?"
+        # Pre-fix only the first matched, so the stale/refused cases
+        # silently dropped the user's intent on the floor (F-16-07).
+        _persist_active_model()
         print(f"[models] config updated → {path.name}")
         print("         (engine not running; the next `woys run` will load it)")
         return 0
+    # Unknown reply shape - print verbatim and bail. We do NOT persist
+    # here because the failure mode is unclassified (could be a protocol
+    # bug, a future engine-side rejection class, etc.) and persisting
+    # might mask the real problem.
     print(f"[models] swap reply: {reply}", file=sys.stderr)
     return 1
