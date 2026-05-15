@@ -153,10 +153,12 @@ def test_request_model_swap_replaces_rvc_session() -> None:
     assert first_session is not None
     assert eng.cfg.rvc_model == a
 
-    completion = eng.request_model_swap(b)
-    assert not completion.is_set()
+    req = eng.request_model_swap(b)
+    assert not req.completion.is_set()
+    assert req.error is None
     eng._maybe_swap_model()
-    assert completion.is_set(), "per-call completion event must fire after the swap applies"
+    assert req.completion.is_set(), "per-call completion event must fire after the swap applies"
+    assert req.error is None, "successful swap must leave req.error unset"
     assert eng.cfg.rvc_model == b
     # New ORT session, not the same Python object as before.
     assert eng._rvc is not first_session
@@ -173,13 +175,16 @@ def test_request_model_swap_queues_each_request_per_call_event() -> None:
     from audio.engine import EngineConfig, RealtimeEngine
 
     eng = RealtimeEngine(EngineConfig(chunk_seconds=0.1))
-    e1 = eng.request_model_swap(Path("/tmp/first.onnx"))
-    e2 = eng.request_model_swap(Path("/tmp/second.onnx"))
-    # Two distinct per-call events, neither set yet (engine never
-    # drained the queue).
-    assert e1 is not e2
-    assert not e1.is_set()
-    assert not e2.is_set()
+    r1 = eng.request_model_swap(Path("/tmp/first.onnx"))
+    r2 = eng.request_model_swap(Path("/tmp/second.onnx"))
+    # F-23-17 (commit-076): request_model_swap now returns the
+    # _SwapRequest itself, not the bare Event, so callers can read
+    # `.error` after `.completion.wait()`. Two distinct requests,
+    # neither completion set yet (engine never drained the queue).
+    assert r1 is not r2
+    assert r1.completion is not r2.completion
+    assert not r1.completion.is_set()
+    assert not r2.completion.is_set()
     # Both requests in the queue (no collapse).
     assert eng._swap_queue.qsize() == 2
     assert len(eng._outstanding_swaps) == 2

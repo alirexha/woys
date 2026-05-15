@@ -36,22 +36,27 @@ if str(REPO / "src" / "server") not in sys.path:
     sys.path.insert(0, str(REPO / "src" / "server"))
 
 
-def test_request_model_swap_returns_per_call_event() -> None:
-    """Pin the new API contract: `request_model_swap` returns a
-    `threading.Event`, not None. Two requests return DIFFERENT
-    events (no shared broadcast)."""
+def test_request_model_swap_returns_per_call_request() -> None:
+    """Pin the API contract: F-23-17 (commit-076) widened the return
+    type from `threading.Event` to `_SwapRequest` so callers can
+    read `.error` after `.completion.wait()`. Two requests carry
+    DIFFERENT events (no shared broadcast); the original F-03-02
+    invariant still holds at the event level."""
     from audio import engine
 
     eng = engine.RealtimeEngine(engine.EngineConfig())
-    e1 = eng.request_model_swap(Path("/tmp/a.onnx"))
-    e2 = eng.request_model_swap(Path("/tmp/b.onnx"))
-    assert isinstance(e1, threading.Event)
-    assert isinstance(e2, threading.Event)
-    assert e1 is not e2, (
+    r1 = eng.request_model_swap(Path("/tmp/a.onnx"))
+    r2 = eng.request_model_swap(Path("/tmp/b.onnx"))
+    assert isinstance(r1, engine._SwapRequest)
+    assert isinstance(r2, engine._SwapRequest)
+    assert isinstance(r1.completion, threading.Event)
+    assert isinstance(r2.completion, threading.Event)
+    assert r1 is not r2 and r1.completion is not r2.completion, (
         "F-03-02: each request must return its OWN event; pre-fix "
         "the shared `_swap_done` broadcast released all waiters when "
         "the first swap completed"
     )
+    assert r1.error is None and r2.error is None
 
 
 def test_two_rapid_swaps_both_queue_and_apply_in_order() -> None:
@@ -75,13 +80,13 @@ def test_two_rapid_swaps_both_queue_and_apply_in_order() -> None:
 
     a = Path("/tmp/voiceA.onnx")
     b = Path("/tmp/voiceB.onnx")
-    e1 = eng.request_model_swap(a)
-    e2 = eng.request_model_swap(b)
+    r1 = eng.request_model_swap(a)
+    r2 = eng.request_model_swap(b)
     eng._maybe_swap_model()
 
     assert applied == [a, b], f"both queued swaps must apply, in order; got {applied}"
-    assert e1.is_set()
-    assert e2.is_set()
+    assert r1.completion.is_set()
+    assert r2.completion.is_set()
 
 
 def test_each_completion_event_fires_only_when_its_own_swap_completes() -> None:
@@ -99,22 +104,22 @@ def test_each_completion_event_fires_only_when_its_own_swap_completes() -> None:
 
     eng._apply_one_swap = fake_apply  # type: ignore[method-assign]
 
-    e1 = eng.request_model_swap(Path("/tmp/a.onnx"))
-    e2 = eng.request_model_swap(Path("/tmp/b.onnx"))
+    r1 = eng.request_model_swap(Path("/tmp/a.onnx"))
+    r2 = eng.request_model_swap(Path("/tmp/b.onnx"))
     # Drain ONE at a time by injecting into _apply_one_swap with a
     # gate. The simplest way: pop the first off the queue manually
     # and apply it.
     req_a = eng._swap_queue.get_nowait()
     fake_apply(req_a)
-    assert e1.is_set(), "voice A's event must be set after voice A applies"
-    assert not e2.is_set(), (
+    assert r1.completion.is_set(), "voice A's event must be set after voice A applies"
+    assert not r2.completion.is_set(), (
         "voice B's event must NOT be set yet -- pre-fix the shared "
         "broadcast would falsely release it here"
     )
     # Now apply B.
     req_b = eng._swap_queue.get_nowait()
     fake_apply(req_b)
-    assert e2.is_set()
+    assert r2.completion.is_set()
 
 
 def test_stop_resolves_outstanding_swap_waiters_promptly() -> None:
@@ -128,17 +133,21 @@ def test_stop_resolves_outstanding_swap_waiters_promptly() -> None:
     eng = engine.RealtimeEngine(engine.EngineConfig())
     # Don't actually start the engine; just verify the teardown
     # path resolves outstanding swaps.
-    completion = eng.request_model_swap(Path("/tmp/whatever.onnx"))
-    assert not completion.is_set()
+    req = eng.request_model_swap(Path("/tmp/whatever.onnx"))
+    assert not req.completion.is_set()
 
     t0 = time.monotonic()
     eng.stop(timeout=0.5)
     elapsed = time.monotonic() - t0
 
-    assert completion.is_set(), (
+    assert req.completion.is_set(), (
         "F-13-12: stop() must resolve outstanding swap events so "
         "callers don't park for the full 10s JobRegistry timeout"
     )
+    # F-23-17 (commit-076): a swap resolved by `stop()` must carry an
+    # error so callers know the swap was NOT applied.
+    assert req.error is not None
+    assert "stopped" in str(req.error).lower()
     assert elapsed < 2.0, (
         f"stop() must complete promptly even with pending swaps; got {elapsed:.2f}s"
     )
@@ -154,8 +163,12 @@ def test_request_model_swap_after_stop_resolves_immediately() -> None:
     eng.stop(timeout=0.1)
     # Engine is now stopped (`_stopped == True`).
 
-    completion = eng.request_model_swap(Path("/tmp/late.onnx"))
-    assert completion.is_set(), "swap submitted to a stopped engine must resolve immediately"
+    req = eng.request_model_swap(Path("/tmp/late.onnx"))
+    assert req.completion.is_set(), "swap submitted to a stopped engine must resolve immediately"
+    # F-23-17 (commit-076): the stopped-engine fast-fail must surface
+    # via `req.error` so the TUI can route to record_error.
+    assert req.error is not None
+    assert "stopped" in str(req.error).lower()
 
 
 def test_swap_queue_uses_queue_Queue_not_single_slot() -> None:

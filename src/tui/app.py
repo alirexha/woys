@@ -34,7 +34,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Label, ProgressBar, Static
 
 from audio import RealtimeEngine
-from audio.engine import DEFAULT_RVC_MODEL
+from audio.engine import DEFAULT_RVC_MODEL, _SwapRequest
 from audio.pipewire import PipeWireError, VirtualMic
 from tui.config import (
     AppConfig,
@@ -127,6 +127,50 @@ class HelpScreen(ModalScreen[None]):
     def on_key(self, event: object) -> None:
         _ = event  # any key closes the modal
         self.dismiss(None)
+
+
+class ShutdownScreen(ModalScreen[None]):
+    """review F-23-10 (commit-076): a persistent "shutting down…"
+    overlay so the quit feedback survives the 2-10 s teardown window.
+
+    Pre-fix `action_quit` fired a `notify("shutting down…")` toast then
+    awaited `engine.stop()` via `asyncio.to_thread` (the F-13-03 fix).
+    The toast fades after ~3 s -- mid-teardown the user sees the
+    pre-quit screen still rendered with a "RUNNING" indicator stuck on
+    the last refresh tick, and no signal that the app is intentionally
+    not responding. Pressing `q` again in confusion attempts a second
+    quit; Ctrl-C looks like the app froze.
+
+    A modal screen suppresses BINDINGS on the parent stack and renders
+    a centred box until the app actually exits, so the eyes-only viewer
+    sees a single unambiguous "I'm shutting down" state for the full
+    duration of the teardown. The screen is dismissed automatically
+    when `App.exit()` tears down the screen stack -- no user
+    interaction required.
+    """
+
+    DEFAULT_CSS = """
+    ShutdownScreen { align: center middle; }
+    #shutdown-box {
+        width: 60;
+        max-width: 90%;
+        padding: 1 2;
+        border: thick $warning;
+        background: $surface;
+        content-align: center middle;
+    }
+    """
+
+    TEXT = (
+        "[bold yellow]⚠ shutting down…[/]\n\n"
+        "stopping engine, draining sockets, saving config.\n"
+        "this can take up to ~10 s on a hot RVC session\n"
+        "while the GPU clock-lock reverts.\n\n"
+        "[dim]please wait[/dim]"
+    )
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.TEXT, id="shutdown-box")
 
 
 class StatusPanel(Static):
@@ -453,15 +497,18 @@ class WoysApp(App[int]):
             # swap and waits for the worker to apply it.
             def do_swap() -> None:
                 self._swap_in_flight = new_path.name
-                # review F-03-02: capture the PER-CALL completion
-                # event returned by request_model_swap. Pre-fix the
-                # waiter watched a shared `engine._swap_done`, which
-                # released ALL pending waiters on the FIRST swap to
-                # complete -- so rapid swaps reported false-done.
-                completion_holder: list[threading.Event] = []
+                # review F-03-02 / F-23-17: capture the PER-CALL
+                # `_SwapRequest`. Pre-F-03-02 the waiter watched a
+                # shared `engine._swap_done` which released ALL pending
+                # waiters on the first completion -- rapid swaps
+                # reported false-done. Pre-F-23-17 the request held
+                # only the completion event; a failed swap recorded
+                # nothing the TUI could read, so the user saw "loading
+                # X..." then the old voice with no error.
+                req_holder: list[_SwapRequest] = []
 
                 def apply_main() -> None:
-                    completion_holder.append(self.engine.request_model_swap(new_path))
+                    req_holder.append(self.engine.request_model_swap(new_path))
                     self.cfg.rvc_model = str(new_path.resolve())
                     # v0.5.0: model swap also updates the active profile name
                     # if a profile saved that exact rvc_model exists. This
@@ -472,8 +519,19 @@ class WoysApp(App[int]):
                     save_config(self.cfg)
 
                 self.call_from_thread(apply_main)
-                if completion_holder:
-                    completion_holder[0].wait(timeout=10.0)
+                if req_holder:
+                    req = req_holder[0]
+                    req.completion.wait(timeout=10.0)
+                    # F-23-17: surface a swap *failure* through the
+                    # designed engine-error-escalation surface. The
+                    # TUI's `_refresh_stats` already toasts a new
+                    # `last_error`; the StatusPanel banner names the
+                    # failed target.
+                    if req.error is not None:
+                        self.engine.record_error(
+                            f"model swap to {new_path.name} failed: "
+                            f"{type(req.error).__name__}: {req.error}"
+                        )
                 self._swap_in_flight = None
 
             jid = self._jobs.submit(do_swap)
@@ -483,17 +541,26 @@ class WoysApp(App[int]):
 
             def do_profile() -> None:
                 self._swap_in_flight = target
-                completion_holder: list[threading.Event | None] = []
+                req_holder: list[_SwapRequest | None] = []
 
                 def apply_main() -> None:
-                    completion_holder.append(self._apply_profile_named(target))
+                    req_holder.append(self._apply_profile_named(target))
 
                 self.call_from_thread(apply_main)
-                # review F-03-02: wait on the PER-CALL event the
-                # profile-apply returned (None if the model didn't
-                # change -- in that case there's nothing to wait for).
-                if completion_holder and completion_holder[0] is not None:
-                    completion_holder[0].wait(timeout=10.0)
+                # review F-03-02 / F-23-17: wait on the PER-CALL
+                # request the profile-apply returned (None if the model
+                # didn't change -- in that case there's nothing to wait
+                # for). On failure, route to record_error so the
+                # StatusPanel banner names the failed profile.
+                if req_holder:
+                    req = req_holder[0]
+                    if req is not None:
+                        req.completion.wait(timeout=10.0)
+                        if req.error is not None:
+                            self.engine.record_error(
+                                f"profile {target!r} swap failed: "
+                                f"{type(req.error).__name__}: {req.error}"
+                            )
                 self._swap_in_flight = None
 
             jid = self._jobs.submit(do_profile)
@@ -662,15 +729,26 @@ class WoysApp(App[int]):
 
         def _runner() -> None:
             self._swap_in_flight = next_name
-            completion_holder: list[threading.Event | None] = []
+            req_holder: list[_SwapRequest | None] = []
 
             def apply_main() -> None:
-                completion_holder.append(self._apply_profile_named(next_name))
+                req_holder.append(self._apply_profile_named(next_name))
 
             self.call_from_thread(apply_main)
-            # review F-03-02: wait on the per-call event.
-            if completion_holder and completion_holder[0] is not None:
-                completion_holder[0].wait(timeout=10.0)
+            # review F-03-02 / F-23-17: wait on the per-call
+            # request and check its `.error` after completion so a
+            # swap failure on the cycle key surfaces through the
+            # designed engine-error escalation surface, not into
+            # the JobRegistry status_line nobody reads.
+            if req_holder:
+                req = req_holder[0]
+                if req is not None:
+                    req.completion.wait(timeout=10.0)
+                    if req.error is not None:
+                        self.engine.record_error(
+                            f"profile cycle to {next_name!r} swap failed: "
+                            f"{type(req.error).__name__}: {req.error}"
+                        )
             self._swap_in_flight = None
 
         self._jobs.submit(_runner)
@@ -690,16 +768,18 @@ class WoysApp(App[int]):
                 return name
         return None
 
-    def _apply_profile_named(self, name: str) -> threading.Event | None:
+    def _apply_profile_named(self, name: str) -> _SwapRequest | None:
         """Apply a saved profile to both `self.cfg` and `self.engine`. The
         RVC model swap is queued via `request_model_swap` and takes
         effect at the next chunk boundary.
 
-        Returns the per-call completion event from the model swap (if a
+        Returns the per-call `_SwapRequest` from the model swap (if a
         swap was triggered) or `None` (if the profile didn't change the
-        active model). The PROFILE socket handler waits on the returned
-        event so the JobRegistry reports done only when the swap
-        actually completes. review F-03-02."""
+        active model). The PROFILE socket handler waits on
+        `req.completion` so the JobRegistry reports done only when the
+        swap actually completes, and reads `req.error` so a failed
+        swap routes to `engine.record_error()`. review F-03-02 /
+        F-23-17."""
         if not apply_profile(self.cfg, name):
             self.notify(f"failed to apply profile {name!r}", severity="error", timeout=4)
             return None
@@ -733,9 +813,9 @@ class WoysApp(App[int]):
             if self.cfg.rvc_model and Path(self.cfg.rvc_model).exists()
             else None
         )
-        swap_completion: threading.Event | None = None
+        swap_req: _SwapRequest | None = None
         if new_model is not None and new_model != self.engine.cfg.rvc_model:
-            swap_completion = self.engine.request_model_swap(new_model)
+            swap_req = self.engine.request_model_swap(new_model)
             self.notify(
                 f"profile → {name} (loading {new_model.name}, pitch {self.cfg.f0_up_key:+d})",
                 severity="information",
@@ -748,23 +828,34 @@ class WoysApp(App[int]):
                 timeout=2,
             )
         save_config(self.cfg)
-        return swap_completion
+        return swap_req
 
     def action_save_cfg(self) -> None:
         save_config(self.cfg)
         self.notify("config saved", severity="information")
 
     async def action_quit(self) -> None:
-        """review F-13-03 + F-CX3-02: offload the blocking
-        teardown trio off the event loop so the UI stays responsive
-        until the moment we call `self.exit(0)`. Pre-fix `action_
-        quit` was `async` but called every teardown step
-        synchronously -- the loop blocked for `engine.stop()` (up to
-        ~10 s), `_control.stop()` (~1.5 s join), and `save_config()`
-        (fsync). `asyncio.to_thread` runs each in the default
-        executor; `await` keeps the loop alive for `set_interval`
-        ticks until the trio finishes."""
-        self.notify("shutting down…", severity="information", timeout=10)
+        """review F-13-03 + F-CX3-02 + F-23-10 (commit-076): offload
+        the blocking teardown trio off the event loop AND render a
+        persistent overlay so the user sees something is happening for
+        the full duration of the teardown.
+
+        F-13-03 was the offload (pre-pre-fix the loop blocked for
+        `engine.stop()` up to ~10 s, `_control.stop()` ~1.5 s join, and
+        `save_config()` fsync -- the UI froze with the last refresh
+        tick still rendered "RUNNING"). F-23-10 covers the feedback
+        gap that F-13-03 left open: the F-13-03 `notify("shutting
+        down…")` toast fades in ~3 s, so on a hot session with a 7-9 s
+        clock-lock revert the user still saw a stale RUNNING screen
+        with no signal that the app was intentionally not responding.
+
+        Post-fix: `push_screen(ShutdownScreen())` paints the overlay
+        immediately and stays until `self.exit(0)` tears down the
+        screen stack. The three `asyncio.to_thread` awaits below keep
+        the event loop alive for set_interval ticks (which now render
+        UNDER the modal) until the teardown trio finishes.
+        """
+        self.push_screen(ShutdownScreen())
         await asyncio.to_thread(self.engine.stop)
         await asyncio.to_thread(self._control.stop)
         await asyncio.to_thread(save_config, self.cfg)
