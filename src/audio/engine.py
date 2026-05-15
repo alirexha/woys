@@ -923,7 +923,15 @@ class EngineStats:
     # B28 / corr-009: thread priority + affinity warnings. Each entry
     # describes one failure (engine main, writer, child) so a user with
     # multiple priority issues can see all of them, not just the last.
-    priority_warnings: list[str] = field(default_factory=list)
+    # review F-merged-026 (commit-073): bounded deque. Pre-fix
+    # `list` + bare `.append()` was unbounded -- a long-running
+    # session that hit repeating keepalive / monitor / debug-log
+    # failures would grow this list without limit, slowly eating
+    # memory. The F-merged-015 error-ring pattern (deque maxlen=20)
+    # is the right shape for "rolling diagnostic that bounds itself".
+    # Reads in test_pacat_health iterate the list shape, which
+    # `collections.deque` also supports.
+    priority_warnings: deque[str] = field(default_factory=lambda: deque(maxlen=20))
 
     # v0.10.0-rc3 - GPU keep-alive thread observability. Stays at zero
     # when `gpu_keepalive_enabled=False` (default).
@@ -3590,9 +3598,10 @@ class RealtimeEngine:
                 )
                 debug_fp = os.fdopen(fd, "ab", buffering=0)
             except (OSError, ValueError) as e:
-                self.stats.priority_warnings.append(
-                    f"WOYS_HELPER_STDERR_LOG disabled: {type(e).__name__}: {e}"
-                )
+                with self._stats_lock:
+                    self.stats.priority_warnings.append(
+                        f"WOYS_HELPER_STDERR_LOG disabled: {type(e).__name__}: {e}"
+                    )
                 debug_fp = None
         try:
             for raw in proc.stderr:
@@ -4041,9 +4050,10 @@ class RealtimeEngine:
             for _ in range(2):
                 self._cv.run(["unit12"], {"audio": warm_in})
         except Exception as e:
-            self.stats.priority_warnings.append(
-                f"gpu-keepalive warmup failed: {type(e).__name__}: {e}; thread will exit"
-            )
+            with self._stats_lock:
+                self.stats.priority_warnings.append(
+                    f"gpu-keepalive warmup failed: {type(e).__name__}: {e}; thread will exit"
+                )
             return
 
         # v0.10.0-rc3 - keepalive runs at lower priority than the engine
@@ -4203,11 +4213,13 @@ class RealtimeEngine:
 
         aff_warn = try_set_affinity(self.cfg.cpu_affinity_core, label)
         if aff_warn is not None:
-            self.stats.priority_warnings.append(aff_warn)
+            with self._stats_lock:
+                self.stats.priority_warnings.append(aff_warn)
         if self.cfg.realtime_priority:
             rt_warn = try_set_realtime_priority(label, priority=priority)
             if rt_warn is not None:
-                self.stats.priority_warnings.append(rt_warn)
+                with self._stats_lock:
+                    self.stats.priority_warnings.append(rt_warn)
 
     def _run_loop(self) -> None:
         import sounddevice as sd
