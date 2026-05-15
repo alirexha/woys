@@ -617,7 +617,54 @@ def enable() -> int:
         )
         return 2
 
-    woys_bin = shutil.which("woys") or sys.argv[0]
+    # review F-05-13 (commit-065): resolve + validate the
+    # `woys` binary path before string-interpolating it into a
+    # systemd unit. Pre-fix:
+    #   woys_bin = shutil.which("woys") or sys.argv[0]
+    # had two correctness + security gaps:
+    #   1. A path containing a space (rare but possible -- a venv
+    #      under `~/My Apps/woys/`) blew the systemd ExecStart line
+    #      into a "command + extra arg" parse, breaking the unit on
+    #      every login.
+    #   2. `sys.argv[0]` fallback is caller-controlled (defense-in-
+    #      depth: an attacker with code-exec could prime sys.argv[0]
+    #      to point at a malicious binary that would later be
+    #      executed by systemd on user login).
+    # Fix: resolve to an absolute path, assert it's executable, and
+    # refuse systemd-special characters (whitespace, percent,
+    # newline) -- hard-fail with a clear message rather than write
+    # a broken unit.
+    woys_bin_raw = shutil.which("woys")
+    if woys_bin_raw is None:
+        woys_bin_raw = sys.argv[0]
+    woys_bin_path = Path(woys_bin_raw).resolve()
+    if not woys_bin_path.is_file():
+        print(
+            f"[chain] enable refused: woys binary not found at {woys_bin_path} "
+            f"(resolved from {woys_bin_raw!r}). F-05-13: refusing to write a "
+            f"systemd unit with a broken ExecStart.",
+            file=sys.stderr,
+        )
+        return 2
+    if not os.access(woys_bin_path, os.X_OK):
+        print(
+            f"[chain] enable refused: woys binary at {woys_bin_path} is not "
+            f"executable. F-05-13: refusing to write a broken systemd unit.",
+            file=sys.stderr,
+        )
+        return 2
+    bad_chars = set(str(woys_bin_path)) & set(" \t\n%")
+    if bad_chars:
+        print(
+            f"[chain] enable refused: woys binary path {woys_bin_path!r} "
+            f"contains systemd-special characters ({bad_chars!r}). "
+            f"F-05-13: refusing to write a unit that systemd would parse "
+            f"as `cmd + extra-args`. Reinstall woys at a path without "
+            f"whitespace / `%`.",
+            file=sys.stderr,
+        )
+        return 2
+    woys_bin = str(woys_bin_path)
     unit_path = _systemd_unit_path()
     unit_path.parent.mkdir(parents=True, exist_ok=True)
 
