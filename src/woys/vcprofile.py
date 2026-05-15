@@ -274,12 +274,22 @@ def import_profile(
     # the result - dead code with a side effect that left an
     # intermediate-state profile in `cfg._extras` for the millisecond
     # between the save_profile and the bag overwrite.
-    from tui.config import AppConfig
+    from tui.config import AppConfig, validate_field
 
     tmp_cfg = AppConfig()
+    # review F-merged-012: validate every value before it lands on
+    # tmp_cfg. `.vcprofile` is an untrusted import (cross-user share /
+    # downloaded artifact); a malicious or malformed one with
+    # `chunk_seconds = -1` is a DoS class. The user-owned `load_config`
+    # warns-and-defaults; here we refuse the whole import to keep the
+    # threat surface tight.
     for k, v in snap_in.items():
-        if hasattr(tmp_cfg, k):
-            setattr(tmp_cfg, k, v)
+        if not hasattr(tmp_cfg, k):
+            continue
+        err = validate_field(k, v)
+        if err is not None:
+            raise ValueError(f"{path}: refusing import - invalid profile field: {err}")
+        setattr(tmp_cfg, k, v)
 
     # B29 / corr-013: use the `_profiles_bag` helper so a corrupt
     # `_extras["profiles"]` (non-dict, e.g. user hand-edited config to
