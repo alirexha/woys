@@ -1860,20 +1860,45 @@ class RealtimeEngine:
         rmvpe_path = self._auto_pick_fp16(self.cfg.rmvpe_model, allow=True)
         rvc_path = Path(self.cfg.rvc_model)
 
-        # review F-CX2-04: fail with a clear, typed error naming the
-        # missing file *before* handing the path to ONNX Runtime, which
-        # otherwise raises an opaque ORT-internal exception far from the
-        # cause. This also makes the top-level traceback guard
-        # (F-merged-022) a clean typed catch rather than an error-string
-        # heuristic. Only paths whose session still needs loading are
-        # checked, so an already-loaded session is unaffected.
-        for label, path, needed in (
-            ("contentvec model", cv_path, self._cv is None),
-            ("rmvpe model", rmvpe_path, self._rmvpe is None),
-            ("rvc model", rvc_path, self._rvc is None),
+        # review F-CX2-04 + F-17-15 (commit-052): fail with a
+        # clear, typed error naming the missing file AND a remediation
+        # command, *before* handing the path to ONNX Runtime (which
+        # otherwise raises an opaque ORT-internal exception far from
+        # the cause). This also makes the top-level traceback guard
+        # (F-merged-022) a clean typed catch rather than an error-
+        # string heuristic. Only paths whose session still needs
+        # loading are checked, so an already-loaded session is
+        # unaffected.
+        #
+        # The remediation tag distinguishes foundation models (fetched
+        # by `scripts/download_weights.py` -- usually from a
+        # `./install.sh --skip-models` follow-up) from the user's RVC
+        # voice model (fetched by `woys models download <repo>` or
+        # converted from a .pth via `woys convert`).
+        for label, path, needed, remediation in (
+            (
+                "contentvec model",
+                cv_path,
+                self._cv is None,
+                "scripts/download_weights.py",
+            ),
+            (
+                "rmvpe model",
+                rmvpe_path,
+                self._rmvpe is None,
+                "scripts/download_weights.py",
+            ),
+            (
+                "rvc model",
+                rvc_path,
+                self._rvc is None,
+                "woys models download <hf-repo> -- or -- woys convert <pth>",
+            ),
         ):
             if needed and not path.exists():
-                raise FileNotFoundError(f"{label} not found at {path}")
+                raise FileNotFoundError(
+                    f"{label} not found at {path}.\n  Fix: run `{remediation}` and try again."
+                )
 
         if self._cv is None:
             self._cv = _make_session(

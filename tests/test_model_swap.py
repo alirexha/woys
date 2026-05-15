@@ -120,6 +120,20 @@ def test_ensure_sessions_raises_clean_filenotfound_for_missing_model(
     with pytest.raises(FileNotFoundError) as exc:
         eng._ensure_sessions()
     assert str(missing) in str(exc.value), "the error must name the missing path"
+    # review F-17-15 (commit-052): the error must ALSO name the
+    # remediation command so the user can act on it without grepping the
+    # repo. F-CX2-04 added the typed-exception path; F-17-15 adds the
+    # actionable-guidance part. The RVC-model branch fires first here
+    # (it's the last entry in the for-loop AND the only one whose
+    # session isn't already loaded by the default config, but the loop
+    # iterates in order and yields on the contentvec entry actually).
+    err_text = str(exc.value)
+    assert "Fix: run" in err_text, "error must include a 'Fix: run ...' remediation hint"
+    assert (
+        "scripts/download_weights.py" in err_text
+        or "woys models download" in err_text
+        or "woys convert" in err_text
+    ), "remediation hint must name a concrete fix command"
 
 
 def test_request_model_swap_replaces_rvc_session() -> None:
