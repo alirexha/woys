@@ -940,9 +940,16 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     # ergonomics. `woys --help` and `woys --version` still work because
     # argparse intercepts those before reaching this dispatch.
     if args.cmd is None:
+        # review F-16-04 (commit-067): bare `woys` used to
+        # silently autostart the engine (= `woys run --autostart`);
+        # `woys run` without `--autostart` did NOT. Undocumented
+        # least-surprise wart -- a non-developer typing the program
+        # name should not have their mic seized. Fix: bare `woys`
+        # == `woys run` (no autostart). The user can still opt in
+        # via `woys run --autostart`.
         from tui.app import run_tui
 
-        return run_tui(no_pw_setup=False, autostart=True, monitor=None)
+        return run_tui(no_pw_setup=False, autostart=False, monitor=None)
     if args.cmd == "info":
         return cmd_info()
     if args.cmd == "pw":
