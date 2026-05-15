@@ -27,7 +27,7 @@ from typing import Any
 def _ensure_audio_path() -> None:
     repo_root = Path(__file__).resolve().parent.parent
     if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
+        sys.path.append(str(repo_root))
 
 
 # B9 / arch-005 - derive _PROFILE_FIELDS from the single source of truth

@@ -30,6 +30,38 @@
 
 set -euo pipefail
 
+# review F-05-05 (commit-061): validate $HOME before deriving
+# paths from it. The install script writes systemd unit files and
+# rmrf's directories under $HOME -- if $HOME is unset, relative, or
+# owned by a different UID, those operations land in the wrong
+# place. Pre-fix the script trusted $HOME blindly.
+if [ -z "${HOME:-}" ]; then
+    printf '\n[install] error: HOME is unset; refusing to derive paths.\n' >&2
+    exit 1
+fi
+case "$HOME" in
+    /*) ;;  # absolute -- OK
+    *)
+        printf '\n[install] error: HOME=%s is not an absolute path; refusing.\n' "$HOME" >&2
+        exit 1
+        ;;
+esac
+if [ ! -d "$HOME" ]; then
+    printf '\n[install] error: HOME=%s does not exist or is not a directory.\n' "$HOME" >&2
+    exit 1
+fi
+# Ownership check: $HOME must be owned by the running UID. A scenario
+# where $HOME points at another user's directory (root-installed venv
+# pulling our scripts; container with a misconfigured passwd) lands
+# our systemd units + rmrf operations in the wrong place. `stat -c
+# %u` works on coreutils + busybox + macOS BSD-stat-coreutils.
+_home_uid="$(stat -c '%u' "$HOME" 2>/dev/null || stat -f '%u' "$HOME")"
+if [ "${_home_uid:-}" != "$(id -u)" ]; then
+    printf '\n[install] error: HOME=%s is owned by uid=%s, not our uid=%s; refusing.\n' \
+        "$HOME" "${_home_uid:-?}" "$(id -u)" >&2
+    exit 1
+fi
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_HOME="$HOME/.local/share/woys"
 OLD_APP_HOME="$HOME/.local/share/vcclient-cachy"
@@ -83,9 +115,22 @@ if ! command -v nvidia-smi >/dev/null; then
 fi
 
 # Install uv if absent.
+#
+# review F-05-09 (commit-061): pre-fix this was a bare
+# `curl | sh` pipeline -- inconsistent with the project's own SHA-
+# rigor for model downloads. Hard-fail with a clear message if uv
+# isn't already installed; let the user choose the install method
+# (pip, distro package, Astral's official script). The previous
+# automatic install was a convenience that crossed a security
+# boundary the rest of the project enforces.
 if [ ! -x "$UV_BIN" ]; then
-    say "installing uv (Astral) into $HOME/.local/bin…"
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+    fail "uv (Astral) is required but not found at $UV_BIN.
+       Install it with ONE of:
+         pip install --user uv     # via PyPI (recommended; pinnable)
+         pacman -S uv              # CachyOS / Arch
+         brew install uv           # macOS
+         curl -LsSf https://astral.sh/uv/install.sh | sh   # Astral's own (NOT auto-run anymore -- F-05-09)
+       Then re-run ./install.sh."
 fi
 
 # ---- venv ---------------------------------------------------------------------

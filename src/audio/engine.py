@@ -3563,6 +3563,26 @@ class RealtimeEngine:
                     raise ValueError(
                         f"WOYS_HELPER_STDERR_LOG must be an absolute path, got {debug_log_path!r}"
                     )
+                # review F-05-11 (commit-061): refuse paths
+                # outside `$XDG_RUNTIME_DIR/woys/` (or the secure
+                # `/tmp/woys-{uid}/` fallback). Pre-fix a user
+                # innocently setting this to `/tmp/woys-helper.log`
+                # opened a symlink-attackable path in a world-
+                # traversable directory. The O_NOFOLLOW below still
+                # guards the open call, but constraining the
+                # location keeps an attacker from positioning a
+                # symlink mid-flight in the first place.
+                from woys.xdg import safe_runtime_dir
+
+                runtime_dir = safe_runtime_dir()
+                resolved = os.path.realpath(debug_log_path)
+                if not resolved.startswith(str(runtime_dir.resolve()) + os.sep):
+                    raise ValueError(
+                        f"WOYS_HELPER_STDERR_LOG must live under {runtime_dir} "
+                        f"(refusing {debug_log_path!r}; "
+                        f"a path outside the user-private runtime dir is "
+                        f"symlink-attackable -- F-05-11)"
+                    )
                 fd = os.open(
                     debug_log_path,
                     os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,

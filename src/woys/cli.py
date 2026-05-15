@@ -12,13 +12,13 @@ from woys import __version__
 # Upstream-style imports (from voice_changer.X) require src/server/ on sys.path.
 _SERVER_ROOT = Path(__file__).resolve().parent.parent / "server"
 if _SERVER_ROOT.is_dir() and str(_SERVER_ROOT) not in sys.path:
-    sys.path.insert(0, str(_SERVER_ROOT))
+    sys.path.append(str(_SERVER_ROOT))
 
 # `src/audio` and `src/tui` are top-level packages; ensure src/ is reachable so
 # `from audio.pipewire import VirtualMic` works when running from a checkout.
 _SRC_ROOT = Path(__file__).resolve().parent.parent
 if _SRC_ROOT.is_dir() and str(_SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(_SRC_ROOT))
+    sys.path.append(str(_SRC_ROOT))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -789,7 +789,9 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
             print(
                 f"  ⚠ playback backend respawned {s.player_restarts}x during "
                 f"the session (helper exited mid-run; check stderr capture "
-                f"with WOYS_HELPER_STDERR_LOG=/tmp/woys-helper.log to find why)"
+                f"with WOYS_HELPER_STDERR_LOG=$XDG_RUNTIME_DIR/woys/helper.log "
+                f"to find why -- F-05-11 (commit-061): the path must live "
+                f"under $XDG_RUNTIME_DIR/woys/)"
             )
         if s.player_underruns > 0 and s.chunks_processed > 0:
             # Approximate per-second underrun rate. Rough; assumes the

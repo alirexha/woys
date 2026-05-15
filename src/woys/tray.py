@@ -38,7 +38,7 @@ def _ensure_tui_path() -> None:
     """
     repo_root = Path(__file__).resolve().parent.parent
     if str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
+        sys.path.append(str(repo_root))
 
 
 _ICON_SIZE = 64

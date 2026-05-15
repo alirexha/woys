@@ -260,7 +260,7 @@ def _read_active_model() -> Path | None:
     except ImportError:
         # Tests / standalone runs may not have src/tui on path.
         repo_root = Path(__file__).resolve().parent.parent
-        sys.path.insert(0, str(repo_root))
+        sys.path.append(str(repo_root))
         from tui.config import load_config
     cfg = load_config()
     if cfg.rvc_model:
@@ -304,7 +304,7 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
         return 1
 
     repo_root = Path(__file__).resolve().parent.parent
-    sys.path.insert(0, str(repo_root))
+    sys.path.append(str(repo_root))
     from tui.config import load_config, save_config
     from tui.control import submit_and_wait
 
