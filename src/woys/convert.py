@@ -29,7 +29,6 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 from __future__ import annotations
 
 import contextlib
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,20 +36,35 @@ from typing import Any
 
 CACHE_DIR = Path.home() / ".local" / "share" / "woys" / "converted"
 
-_TRUST_PICKLE_ENV = "WOYS_YES_I_TRUST_THE_PICKLE"
-
 
 def _user_trusts_pickle(flag: bool) -> bool:
-    """Has the user explicitly opted into unsafe pickle loading?
+    """Has the user explicitly opted into unsafe pickle loading FOR
+    THIS CALL?
 
-    True if `--yes-i-trust-the-pickle` was passed OR
-    `WOYS_YES_I_TRUST_THE_PICKLE=1` is in the environment. We don't
-    interactive-prompt - that's unsafe in scripts and CI.
+    review F-05-04: pre-fix this also honored
+    `WOYS_YES_I_TRUST_THE_PICKLE=1` from the environment. The env-var
+    path collapsed per-invocation consent to per-environment-lifetime
+    consent: set once in a shell rc, it auto-trusted EVERY
+    `woys convert` -- including batch flows like
+    `voice_library_import.py` that iterate ~9 third-party models.
+    `weights_only=False` is genuine arbitrary-code-execution, so the
+    silent expansion of "trust this file" to "trust every file
+    forever" was an unacceptable consent regression.
+
+    Post-fix the only consent path is the per-invocation
+    `--yes-i-trust-the-pickle` CLI flag. Batch callers pass the flag
+    explicitly per-file. The env var is no longer honored at all (it
+    is documented as REMOVED so users coming from older configs see
+    a clear error if they try to set it).
     """
-    if flag:
-        return True
-    val = os.environ.get(_TRUST_PICKLE_ENV, "").strip().lower()
-    return val in ("1", "true", "yes")
+    return bool(flag)
+
+
+# review F-05-04: keep the constant name for back-compat error
+# messages but the env var itself is NOT consulted. If a user has
+# `WOYS_YES_I_TRUST_THE_PICKLE=1` in their shell rc, woys convert
+# now ignores it and falls into the consent-required error path.
+_TRUST_PICKLE_ENV_NAME_REMOVED = "WOYS_YES_I_TRUST_THE_PICKLE"
 
 
 def _safe_torch_load(pth_path: Path, *, trust_pickle: bool) -> Any:
@@ -74,9 +88,19 @@ def _safe_torch_load(pth_path: Path, *, trust_pickle: bool) -> Any:
                 f"  will execute arbitrary code on import. Only proceed if you\n"
                 f"  trust the source (a model you trained, or a verified fork).\n"
                 f"\n"
-                f"  To proceed, re-run with --yes-i-trust-the-pickle, or set\n"
-                f"  {_TRUST_PICKLE_ENV}=1 in your environment.\n"
+                f"  To proceed, re-run with --yes-i-trust-the-pickle. The env var\n"
+                f"  {_TRUST_PICKLE_ENV_NAME_REMOVED} is no longer honored\n"
+                f"  (review F-05-04: it collapsed per-invocation consent to\n"
+                f"  per-environment-lifetime consent for an arbitrary-code-\n"
+                f"  execution operation; the flag forces per-file consent).\n"
             ) from safe_err
+        # review F-05-04: log every unsafe load loudly so a future
+        # audit can grep for it. The consent has already been granted
+        # (via the CLI flag); the log line is forensic.
+        print(
+            f"[security] UNSAFE pickle load of {pth_path} (--yes-i-trust-the-pickle granted)",
+            file=sys.stderr,
+        )
         return torch.load(str(pth_path), map_location="cpu", weights_only=False)
 
 
@@ -406,8 +430,9 @@ def convert_pth_to_onnx(
                     raise RuntimeError(
                         "[security] _export2onnx attempted unsafe torch.load "
                         f"on {args[0] if args else '<?>'} but no consent was "
-                        f"granted. Re-run with --yes-i-trust-the-pickle, or "
-                        f"set {_TRUST_PICKLE_ENV}=1."
+                        f"granted. Re-run with --yes-i-trust-the-pickle "
+                        f"(the {_TRUST_PICKLE_ENV_NAME_REMOVED} env var "
+                        f"is no longer honored -- review F-05-04)."
                     ) from safe_err
                 return original_torch_load(*args, weights_only=False, **kwargs)
         return original_torch_load(*args, **kwargs)
