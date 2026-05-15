@@ -146,7 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     chain_p = sub.add_parser(
         "chain",
-        help="manage the v0.13.2 RNNoise post-engine chain (woys-mic-clean.monitor)",
+        help="manage the RNNoise post-engine chain (woys-mic-clean.monitor)",
     )
     chain_sub = chain_p.add_subparsers(dest="chain_cmd", required=True, metavar="ACTION")
     chain_sub.add_parser("setup", help="load the RNNoise chain (one-shot)")

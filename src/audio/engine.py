@@ -2757,9 +2757,11 @@ class RealtimeEngine:
         Without that guard, `--target` / `--device` silently fall back
         to the default sink when the named sink is missing.
 
-        v0.9.0: `cfg.prefer_native_pw` (default False) selects the
-        new native helper `woys-pw-out` (see `bin/woys-pw-out.c`) over
-        pw-cat / pacat. The native helper decouples the engine's bursty
+        v0.9.0: `cfg.prefer_native_pw` (default True since v0.9.2 — the
+        default flipped after the native helper became the daily-driver
+        path) selects the native helper `woys-pw-out`
+        (see `bin/woys-pw-out.c`) over pw-cat / pacat. The native helper
+        decouples the engine's bursty
         chunk writes from PipeWire's per-quantum RT callback via an
         explicit SPSC ring buffer, closing the audit's lens-08 cut
         signature (sample-exact zeros at 21.33/42.67 ms quantum
