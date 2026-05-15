@@ -360,7 +360,22 @@ class ControlServer:
                     except ValueError:
                         reply = "ERR command too long"
                     else:
-                        reply = self.handler(data) if data else "ERR empty"
+                        try:
+                            reply = self.handler(data) if data else "ERR empty"
+                        except Exception as handler_err:
+                            # review F-CX6-01 (commit-062): pre-fix
+                            # the handler's exception propagated out of
+                            # this with-conn block, was NOT caught by the
+                            # outer except (TimeoutError, OSError), and
+                            # silently killed the `woys-control` listener
+                            # thread. Every subsequent `woys toggle` then
+                            # hung to its client timeout. The wire
+                            # contract is "the server always replies"; any
+                            # exception class from the handler routes to
+                            # an ERR internal reply so the client sees
+                            # the failure mode.
+                            logger.exception("control handler raised on %r: %s", data, handler_err)
+                            reply = f"ERR internal: {type(handler_err).__name__}: {handler_err}"
                     conn.sendall((reply + "\n").encode("utf-8"))
                 except (TimeoutError, OSError) as e:
                     logger.warning("control conn error: %s", e)
