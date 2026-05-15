@@ -31,9 +31,26 @@ output for self-monitoring.
 
 Threading
 ---------
-- Worker thread runs the blocking I/O loop and feeds the pacat subprocess.
-- TUI thread polls `EngineStats` for live UI; no shared mutable state beyond
-  a few atomic-ish primitives.
+The engine runs across 5-6 threads:
+- `woys-engine` worker thread: blocking I/O loop, audio capture, inference
+  dispatch, SOLA blending. Owns most reads of `EngineStats`.
+- writer thread (`_writer_loop`): drains the converted-audio queue,
+  writes to pacat / pw-cat / native_pw stream. Mutates xruns / writer-
+  interval counters.
+- pacat-watchdog thread: watches the playback subprocess's stderr/exit;
+  appends to `stats.helper_exit_reasons` on death.
+- (optional) GPU keepalive threads: torch-stream / clock-lock keep-alive
+  loops. Each may bump its own counter.
+- TUI thread: polls `EngineStats` for live UI.
+- Signal-handler thread: SIGTERM/SIGINT coordination.
+
+review F-merged-017 (commit-040a): `EngineStats` is shared mutable
+state. `stats.<counter> += 1` is LOAD/BINARY_OP/STORE_ATTR (the GIL
+guarantees each bytecode, not the triple -- textbook lost-update);
+`helper_exit_reasons.append() + len(...) > 10: pop(0)` from two
+threads (engine.py:3084-3086 and :3608-3610) violates the `len <= 10`
+invariant on race. `self._stats_lock` (`threading.RLock`) serializes
+every `+=` and every `append+len-check+pop` block.
 """
 
 from __future__ import annotations
@@ -1559,6 +1576,14 @@ class RealtimeEngine:
         # (existing contract -- `test_stop_releases_in_process_sessions`
         # pre-dates this fix and relies on it).
         self._stopped: bool = False
+        # review F-merged-017 (commit-040a): serialize every
+        # `stats.<counter> += 1` and every `helper_exit_reasons.append +
+        # len > 10: pop(0)` block. The lock is held for microseconds;
+        # the engine's hot-path overhead is negligible. RLock (not
+        # plain Lock) so future re-entrant callers (a method holding
+        # the lock calling another method that takes the lock) don't
+        # deadlock. See the threading section of the module docstring.
+        self._stats_lock = threading.RLock()
         # v0.7.0-rc7 - track whether GC was enabled before this engine
         # disabled it, so stop() restores the prior state instead of
         # blindly enabling. Lets us nest cleanly inside a parent that
@@ -2238,7 +2263,8 @@ class RealtimeEngine:
             # or SOLA. Pre-rc4 the path silently zeroed samples; lens 06
             # of the audit flagged this as one of three NaN-zero paths
             # that incremented no counter.
-            self.stats.nan_chunks += 1
+            with self._stats_lock:
+                self.stats.nan_chunks += 1
         t_rvc1 = time.perf_counter()
         # Per-stage timing surfaces in the slow_chunk_log when a chunk goes late.
         cv_ms = (t_cv1 - t_cv0) * 1000.0
@@ -2287,7 +2313,8 @@ class RealtimeEngine:
             self._consecutive_drops = 0
             return result
         except Exception as e:
-            self.stats.dropped_chunks += 1
+            with self._stats_lock:
+                self.stats.dropped_chunks += 1
             self._consecutive_drops += 1
             n = self.stats.dropped_chunks
             if n <= 3:
@@ -2930,7 +2957,8 @@ class RealtimeEngine:
         try:
             q.put_nowait(payload)
         except queue.Full:
-            self.stats.queue_full_events += 1
+            with self._stats_lock:
+                self.stats.queue_full_events += 1
 
     def _writer_loop(self) -> None:
         """Daemon thread: drains _writer_queue into pacat.stdin.
@@ -3060,7 +3088,8 @@ class RealtimeEngine:
                     # We match case-insensitively in case the wording shifts
                     # across PulseAudio versions.
                     if "underrun" in line.lower():
-                        self.stats.xruns += 1
+                        with self._stats_lock:
+                            self.stats.xruns += 1
                 elif is_native:
                     # v0.9.0 - native helper emits:
                     #   "ready"                      once after STREAMING
@@ -3081,9 +3110,10 @@ class RealtimeEngine:
                         # v0.11.0 - also push to helper_exit_reasons so the
                         # watchdog's "respawned" message can't clobber the
                         # cause when the watchdog fires shortly after.
-                        self.stats.helper_exit_reasons.append(cause)
-                        if len(self.stats.helper_exit_reasons) > 10:
-                            self.stats.helper_exit_reasons.pop(0)
+                        with self._stats_lock:
+                            self.stats.helper_exit_reasons.append(cause)
+                            if len(self.stats.helper_exit_reasons) > 10:
+                                self.stats.helper_exit_reasons.pop(0)
                 # else: pw-cat or unknown - drain-only.
         except (ValueError, OSError):
             # Pipe closed mid-read during shutdown - expected.
@@ -3445,7 +3475,8 @@ class RealtimeEngine:
                 )
                 break
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            self.stats.torch_keepalive_calls += 1
+            with self._stats_lock:
+                self.stats.torch_keepalive_calls += 1
             self.stats.torch_keepalive_last_ms = elapsed_ms
             self.stats._recent_torch_keepalive_ms.append(elapsed_ms)
             running_avg = ema_alpha * elapsed_ms + (1.0 - ema_alpha) * running_avg
@@ -3521,7 +3552,8 @@ class RealtimeEngine:
                 # Bail on persistent error - don't spam stats.last_error.
                 break
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            self.stats.keepalive_calls += 1
+            with self._stats_lock:
+                self.stats.keepalive_calls += 1
             self.stats.last_keepalive_ms = elapsed_ms
             self.stats._recent_keepalive_ms.append(elapsed_ms)
             running_avg = ema_alpha * elapsed_ms + (1.0 - ema_alpha) * running_avg
@@ -3592,7 +3624,8 @@ class RealtimeEngine:
             with self._pacat_lock:
                 # Discard the dead handle (caller already detected death).
                 self._pacat_proc = new_proc
-            self.stats.player_restarts += 1
+            with self._stats_lock:
+                self.stats.player_restarts += 1
             # v0.11.0 - preserve the helper's own death cause if the
             # stderr reader captured one before the exit. If not, log
             # the watchdog's view (exit code + chunk index) so the user
@@ -3605,9 +3638,10 @@ class RealtimeEngine:
                 f"{backend} exited code={exit_code} at chunk={chunk_idx} "
                 f"(restart #{self.stats.player_restarts})"
             )
-            self.stats.helper_exit_reasons.append(watchdog_msg)
-            if len(self.stats.helper_exit_reasons) > 10:
-                self.stats.helper_exit_reasons.pop(0)
+            with self._stats_lock:
+                self.stats.helper_exit_reasons.append(watchdog_msg)
+                if len(self.stats.helper_exit_reasons) > 10:
+                    self.stats.helper_exit_reasons.pop(0)
             self.stats.last_error = (
                 f"{backend} respawned (restarts={self.stats.player_restarts}); "
                 f"causes={self.stats.helper_exit_reasons[-3:]}"
@@ -3815,7 +3849,8 @@ class RealtimeEngine:
                     self.stats.last_mic_read_ms = mic_read_ms
                     self.stats._recent_mic_read_ms.append(mic_read_ms)
                     if overflowed:
-                        self.stats.input_overflows += 1
+                        with self._stats_lock:
+                            self.stats.input_overflows += 1
                     audio = data.reshape(-1).astype(np.float32, copy=False)
 
                     # v0.5.1: software input pre-attenuation. Default 0 dB
@@ -3855,7 +3890,8 @@ class RealtimeEngine:
                             self._enqueue_chunk(
                                 self._to_sink_bytes(np.zeros(n_silence, dtype=np.float32))
                             )
-                            self.stats.gated_chunks += 1
+                            with self._stats_lock:
+                                self.stats.gated_chunks += 1
                             continue
                         # Sub-hysteresis dip: pass through to inference. RVC
                         # on near-silent input emits near-silence anyway, so
@@ -3958,7 +3994,8 @@ class RealtimeEngine:
                             monitor_stream.write(out48.reshape(-1, 1))
 
                     total_ms = (time.perf_counter() - t_total) * 1000
-                    self.stats.chunks_processed += 1
+                    with self._stats_lock:
+                        self.stats.chunks_processed += 1
                     # B63 / arch-012: optional periodic gc.collect(0) for users
                     # who run multi-hour sessions and observe heap growth.
                     # Default off (engine_periodic_gc_chunks=0).
@@ -3973,7 +4010,8 @@ class RealtimeEngine:
                     if total_ms > self.stats.max_total_ms:
                         self.stats.max_total_ms = total_ms
                     if total_ms > self.cfg.chunk_seconds * 1000.0:
-                        self.stats.late_chunks += 1
+                        with self._stats_lock:
+                            self.stats.late_chunks += 1
                         # v0.6.9 round 5 - capture per-stage breakdown for
                         # postmortem of which session caused the outlier.
                         # Capped at 50 entries so memory doesn't grow without
