@@ -9,8 +9,17 @@ Foundation files (contentvec, rmvpe, hubert) are filtered out by name.
 Hugging Face download
 ---------------------
 `woys models download <repo>` uses `huggingface_hub`'s snapshot
-API to fetch all `.onnx` (and any `.index`) files from a repo into the
-cache. Re-runs are free thanks to HF's content-addressable cache.
+API to fetch all `.onnx` files from a repo into the cache. Re-runs
+are free thanks to HF's content-addressable cache.
+
+review F-31-01 + F-CX6-03 (commit-051): woys is INDEX-FREE.
+RVC's optional faiss `.index` file (speaker-similarity blending
+during conversion) was downloaded by pre-fix `download_repo` but
+NEVER actually consumed by the engine -- `index_rate` had no
+implementation. Per the F-31-01 product decision the index is
+permanently unsupported: `.index` files are skipped during
+download; the `faiss-cpu` runtime dependency is dropped; tests +
+docs declare the index-free contract.
 
 Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
@@ -125,7 +134,14 @@ def find_by_name(name: str, models_dir: Path = MODELS_DIR) -> Path | None:
 
 
 def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
-    """Snapshot-download all `.onnx` (and `.index`) files from a HF repo.
+    """Snapshot-download all `.onnx` files from a HF repo.
+
+    review F-31-01 + F-CX6-03 (commit-051): woys is INDEX-FREE.
+    Pre-fix this function also downloaded any `.index` files (RVC's
+    faiss speaker-similarity index), but the engine never consumed
+    them -- `index_rate` had no implementation. The product
+    decision: drop the unused download (and the `faiss-cpu`
+    dependency) rather than implement an unused feature.
 
     Returns the list of downloaded files copied into `models_dir`.
     """
@@ -163,9 +179,11 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
             sha = getattr(lfs_obj, "sha256", None)
             if isinstance(sha, str) and len(sha) == 64:
                 lfs_sha_by_name[s.rfilename] = sha
-    entries = [s.rfilename for s in siblings if s.rfilename.endswith((".onnx", ".index"))]
+    # review F-31-01 + F-CX6-03: index-free. `.index` files
+    # (RVC's faiss speaker-similarity index) are NOT downloaded.
+    entries = [s.rfilename for s in siblings if s.rfilename.endswith(".onnx")]
     if not entries:
-        raise RuntimeError(f"no .onnx / .index files found in {repo}")
+        raise RuntimeError(f"no .onnx files found in {repo}")
 
     models_dir.mkdir(parents=True, exist_ok=True)
     landed: list[Path] = []

@@ -90,7 +90,10 @@ docker run -d --gpus all --rm -p 18888:18888 \
 ```
 
 1. Open `http://localhost:18888`.
-2. Click **Edit** on a slot, upload your `.pth`, optionally `.index`.
+2. Click **Edit** on a slot, upload your `.pth`. (Any `.index` file
+   upstream's UI offers is not used by woys -- the optional faiss
+   speaker-similarity index is not supported. See "Voice quality
+   tips" below for details.)
 3. Click **Export ONNX**. The result lands in the slot directory.
 4. `docker exec vcclient-upstream find /resources -name '*.onnx'` → copy out.
 5. `docker stop vcclient-upstream`.
@@ -167,8 +170,15 @@ inputs.
   is ideal for testing latency; for production-quality voice, 40k is better.
 - **Pitch shift should match speaker pitch.** A male-to-female voice usually
   needs `+12` semitones; female-to-male `-12`. Start at 0 and tweak with `+`/`-`.
-- **Use the model's index file** (`.index`) when available. woys
-  doesn't use it yet (Phase 5+ enhancement); upstream's UI does.
+- **woys is index-free.** RVC's optional faiss `.index` file
+  (speaker-similarity blending during conversion) is NOT supported.
+  Per review F-31-01 + F-CX6-03 (commit-051): pre-fix
+  `woys models download` fetched any `.index` file in the HF repo
+  but the engine never consumed it (`index_rate` had no
+  implementation). The product decision was to drop the unused
+  download and the `faiss-cpu` runtime dependency rather than
+  implement an unused feature. The `.pth` -> `.onnx` conversion
+  path also does not use the index.
 
 ## Removing a model
 

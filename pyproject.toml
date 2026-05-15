@@ -49,7 +49,12 @@ dependencies = [
     "resampy>=0.4.3",
     "torchcrepe>=0.0.22",
     "torchfcpe>=0.0.4",
-    "faiss-cpu>=1.8",
+    # review F-31-01 + F-CX6-03 (commit-051): woys is INDEX-FREE.
+    # `faiss-cpu` was a runtime dep for RVC's optional speaker-
+    # similarity index file, but woys never implemented `index_rate`
+    # consumption -- the dep was paid every install for a feature
+    # that didn't exist. Drop it. `download_repo` now skips .index
+    # files; the engine path has no faiss imports.
     "einops>=0.8",
     "soundfile>=0.12",
     # Server framework -- imported by src/server (vendored upstream); the

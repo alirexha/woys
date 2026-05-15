@@ -44,8 +44,6 @@ einops==0.8.2
     #   local-attention
     #   torch-einops-utils
     #   torchfcpe
-faiss-cpu==1.13.2
-    # via woys (pyproject.toml)
 fastapi==0.115.14
     # via woys (pyproject.toml)
 filelock==3.29.0
@@ -131,7 +129,6 @@ numba==0.65.1
 numpy==2.1.3
     # via
     #   woys (pyproject.toml)
-    #   faiss-cpu
     #   librosa
     #   ml-dtypes
     #   numba
@@ -189,7 +186,6 @@ onnxsim==0.6.3
     # via woys (pyproject.toml)
 packaging==26.2
     # via
-    #   faiss-cpu
     #   huggingface-hub
     #   lazy-loader
     #   marshmallow
