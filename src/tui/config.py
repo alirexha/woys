@@ -90,6 +90,36 @@ class AppConfig:
         # Stamp the schema version on every fresh AppConfig so round-trips
         # match. The migration in load_config() bumps it on legacy files.
         self._extras.setdefault("config_schema_version", 10)
+        # review F-16-01: names of fields the user has explicitly
+        # touched (TUI pitch keys, `woys pitch +2`, monitor toggle, ...).
+        # Migration legs that match `value == old_default` skip fields
+        # listed here -- so a user who deliberately set
+        # `output_latency_ms = 300` (the v0.6.x default) keeps that value
+        # after a schema bump. See `mark_override()` below.
+        self._extras.setdefault("_user_overrides", [])
+
+
+def mark_override(cfg: AppConfig, *keys: str) -> None:
+    """Record that the user has explicitly touched these AppConfig fields.
+
+    review F-16-01: fields listed here are pinned across schema
+    migrations -- the migration logic in `load_config()` will not bump
+    them even if their current value matches an old default. Call this
+    from every user-input mutation site (TUI keypress, CLI command,
+    settings panel) before `save_config()`.
+
+    Idempotent: a key already in the list is not duplicated. Unknown
+    field names are accepted (no validation) so a future field rename
+    doesn't crash old config files; the migration legs only consult
+    the list by name, so a stale entry is a harmless no-op.
+    """
+    overrides = cfg._extras.setdefault("_user_overrides", [])
+    if not isinstance(overrides, list):
+        overrides = []
+        cfg._extras["_user_overrides"] = overrides
+    for key in keys:
+        if key not in overrides:
+            overrides.append(key)
 
 
 def app_config_to_engine_config(cfg: AppConfig, *, rvc_model: Path | None = None) -> _EngineConfig:
@@ -131,8 +161,17 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     if not path.exists():
         cfg = AppConfig()
         # Read-only home / unwritable XDG dir → fall back to in-memory defaults.
-        with contextlib.suppress(OSError):
+        # review F-16-01: surface the failure to stderr instead of
+        # silently suppressing it. The user still gets a working in-memory
+        # config; they just also get told why settings won't persist.
+        try:
             save_config(cfg, path)
+        except OSError as e:
+            print(
+                f"[woys] cannot write {path} ({type(e).__name__}: {e}) - "
+                f"running with in-memory defaults; settings will not persist.",
+                file=sys.stderr,
+            )
         return cfg
     try:
         with open(path, "rb") as f:
@@ -157,30 +196,43 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     extras = {k: v for k, v in raw.items() if k not in known}
     # v0.7.0 - bump stale v0.6.x defaults so existing users get the latency
     # win. Keyed off `config_schema_version`: absent / < 7 means the file
-    # was last written by v0.6.x or earlier. We only touch fields whose
-    # value matches the previous version's *default* - explicit user
-    # overrides are preserved. The bumped fields are then written back.
+    # was last written by v0.6.x or earlier. Each leg matches `value ==
+    # old_default` and overwrites with the new default.
+    #
+    # review F-16-01 (v0.14.x): the pre-fix legs unconditionally
+    # clobbered every field whose value matched the old default -- so a
+    # user who *deliberately* pinned `output_latency_ms = 300` lost that
+    # value on upgrade. Each leg now consults `_user_overrides` (an
+    # opt-in list of field names persisted in the TOML) and skips fields
+    # the user has marked explicit. Legacy configs (pre-v0.14.x) ship
+    # without the list, so the empty-default behavior is identical to
+    # the pre-fix migration -- back-compat is intact.
     schema = int(extras.pop("config_schema_version", 0) or 0)
+    user_overrides_raw = extras.pop("_user_overrides", []) or []
+    user_overrides: set[str] = {str(k) for k in user_overrides_raw if isinstance(k, str)}
     migrated = False
+
+    def _maybe_bump(name: str, old_default: Any, new_value: Any) -> None:
+        nonlocal migrated
+        if name in user_overrides:
+            return
+        if fields_in.get(name) == old_default:
+            fields_in[name] = new_value
+            migrated = True
+
     # ---- schema 0 → 7 - the original v0.7.0-rc1 latency-defaults bump.
     if schema < 7:
         # chunk_seconds 0.25 → engine default (mic-input wait, biggest lever).
-        if fields_in.get("chunk_seconds") == 0.25:
-            fields_in["chunk_seconds"] = _E.chunk_seconds
-            migrated = True
+        _maybe_bump("chunk_seconds", 0.25, _E.chunk_seconds)
         # sola_search_ms 4.0 → 6.0 (v0.6.9 SOLA tuning that never propagated
         # into existing configs because of the v0.6.8 forwarding gap).
-        if fields_in.get("sola_search_ms") == 4.0:
-            fields_in["sola_search_ms"] = _E.sola_search_ms  # 6.0
-            migrated = True
+        _maybe_bump("sola_search_ms", 4.0, _E.sola_search_ms)
         # output_latency_ms 300 → engine default. The actual value is
         # bumped again under schema 7→8 below; this is just the first
         # leg of the migration so a user coming straight from v0.6.x
         # with schema=0 on disk lands at the current default after the
         # combined run, not on rc1's now-deprecated 80.
-        if fields_in.get("output_latency_ms") == 300:
-            fields_in["output_latency_ms"] = _E.output_latency_ms
-            migrated = True
+        _maybe_bump("output_latency_ms", 300, _E.output_latency_ms)
         profiles = extras.get("profiles")
         if isinstance(profiles, dict):
             for pdata in profiles.values():
@@ -200,9 +252,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     # default to 220 ms; users who landed on 80 via the rc1 migration
     # get pulled forward. Note: the rc3 leg below cascades them on to 280.
     if schema < 8:
-        if fields_in.get("output_latency_ms") == 80:
-            fields_in["output_latency_ms"] = _E.output_latency_ms  # rc3: 280
-            migrated = True
+        _maybe_bump("output_latency_ms", 80, _E.output_latency_ms)  # rc3: 280
         profiles = extras.get("profiles")
         if isinstance(profiles, dict):
             for pdata in profiles.values():
@@ -217,9 +267,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     # on 220 via the rc2 default get pulled forward; explicit non-default
     # values (e.g. 250) are left alone.
     if schema < 9:
-        if fields_in.get("output_latency_ms") == 220:
-            fields_in["output_latency_ms"] = _E.output_latency_ms  # 280
-            migrated = True
+        _maybe_bump("output_latency_ms", 220, _E.output_latency_ms)  # 280
         profiles = extras.get("profiles")
         if isinstance(profiles, dict):
             for pdata in profiles.values():
@@ -248,10 +296,17 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     # that follows is the first time `prefer_pw_cat` lands in user
     # configs at all (pre-rc4 it had no on-disk surface).
     if schema < 10:
-        if fields_in.get("input_gate_dbfs") == -55.0:
-            fields_in["input_gate_dbfs"] = _E.input_gate_dbfs  # -75.0
-            migrated = True
-        if fields_in.get("prefer_pw_cat") is True:
+        _maybe_bump("input_gate_dbfs", -55.0, _E.input_gate_dbfs)  # -75.0
+        # `prefer_pw_cat` `is True` was the pre-fix check; _maybe_bump
+        # uses `==` which behaves identically for `bool` values
+        # (True == True, but also 1 == True). Tighten by an explicit
+        # type-and-value match so a hand-edited `prefer_pw_cat = 1`
+        # is not silently bumped.
+        if (
+            "prefer_pw_cat" not in user_overrides
+            and isinstance(fields_in.get("prefer_pw_cat"), bool)
+            and fields_in.get("prefer_pw_cat") is True
+        ):
             fields_in["prefer_pw_cat"] = _E.prefer_pw_cat  # False
             migrated = True
         profiles = extras.get("profiles")
@@ -267,9 +322,32 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
                     migrated = True
     cfg = AppConfig(**fields_in, _extras=extras)
     cfg._extras["config_schema_version"] = 10
+    # review F-16-01: re-stamp the override list so a round-trip
+    # (load → save → load) preserves it. The `extras.pop` above removed
+    # it from `extras` to keep migration logic clear; putting it back
+    # here is the canonical write surface.
+    cfg._extras["_user_overrides"] = sorted(user_overrides)
     if migrated:
-        with contextlib.suppress(OSError):
+        # review F-16-01: announce the migration so a user who set
+        # a value and then sees it change has a paper trail. The notice
+        # also explains how to opt out of future bumps for a given key.
+        print(
+            f"[woys] migrated config schema {schema} → 10 at {path}; "
+            f"pin a value across future schema bumps by adding its "
+            f"field name to `_user_overrides` in config.toml.",
+            file=sys.stderr,
+        )
+        try:
             save_config(cfg, path)
+        except OSError as e:
+            print(
+                f"[woys] failed to persist migrated config: "
+                f"{type(e).__name__}: {e}\n"
+                f"       (running with migrated values in memory; the "
+                f"file on disk is unchanged and will migrate again on "
+                f"the next launch).",
+                file=sys.stderr,
+            )
     return cfg
 
 

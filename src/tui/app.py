@@ -30,7 +30,13 @@ from textual.widgets import Footer, Header, Label, ProgressBar, Static
 from audio import RealtimeEngine
 from audio.engine import DEFAULT_RVC_MODEL
 from audio.pipewire import PipeWireError, VirtualMic
-from tui.config import AppConfig, app_config_to_engine_config, load_config, save_config
+from tui.config import (
+    AppConfig,
+    app_config_to_engine_config,
+    load_config,
+    mark_override,
+    save_config,
+)
 from tui.control import ControlServer, JobRegistry
 from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
 from woys.profiles import apply_profile, cycle_profile, list_profiles
@@ -240,6 +246,7 @@ class WoysApp(App[int]):
                 self.pitch = new
                 self.engine.cfg.f0_up_key = new
                 self.cfg.f0_up_key = new
+                mark_override(self.cfg, "f0_up_key")
 
             self.call_from_thread(apply)
             return f"OK pitch={new}"
@@ -406,16 +413,19 @@ class WoysApp(App[int]):
         self.pitch = int(self.pitch) + 1
         self.engine.cfg.f0_up_key = int(self.pitch)
         self.cfg.f0_up_key = int(self.pitch)
+        mark_override(self.cfg, "f0_up_key")
 
     def action_pitch_down(self) -> None:
         self.pitch = int(self.pitch) - 1
         self.engine.cfg.f0_up_key = int(self.pitch)
         self.cfg.f0_up_key = int(self.pitch)
+        mark_override(self.cfg, "f0_up_key")
 
     def action_pitch_reset(self) -> None:
         self.pitch = 0
         self.engine.cfg.f0_up_key = 0
         self.cfg.f0_up_key = 0
+        mark_override(self.cfg, "f0_up_key")
 
     def action_toggle_monitor(self) -> None:
         """v0.13.1 - toggle the engine's self-monitor stream (writes a
@@ -427,6 +437,7 @@ class WoysApp(App[int]):
         new_state = not self.cfg.monitor
         self.cfg.monitor = new_state
         self.engine.cfg.monitor = new_state
+        mark_override(self.cfg, "monitor")
         self.notify(f"monitor {'on' if new_state else 'off'}", timeout=2.0)
 
     def action_cycle_profile(self) -> None:
