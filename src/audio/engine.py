@@ -1540,6 +1540,25 @@ class RealtimeEngine:
         self.stats = EngineStats()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        # review F-merged-018: serialize the whole body of start()
+        # and stop() so:
+        # (a) two concurrent stop() calls (signal-handler path +
+        #     action_quit + CLI teardown, see F-CX3-01) don't both
+        #     pass `self._inf_client is not None` and double-tear-down,
+        # (b) a stop() arriving during start()'s multi-second warmup
+        #     window (SIGTERM during autostart) waits for warmup to
+        #     finish before tearing down -- avoiding the "running"
+        #     engine spawned after the stop signal.
+        # `_stopped` is the idempotence guard inside stop().
+        # `_started` is set the moment start() has committed (after
+        # is_alive re-check) so a racing stop() knows it must run.
+        self._lifecycle_lock = threading.Lock()
+        # `_stopped` is "stop() has completed at least once since the
+        # last start()". Initial False so the first stop() on a
+        # constructed-but-never-started engine still runs cleanup
+        # (existing contract -- `test_stop_releases_in_process_sessions`
+        # pre-dates this fix and relies on it).
+        self._stopped: bool = False
         # v0.7.0-rc7 - track whether GC was enabled before this engine
         # disabled it, so stop() restores the prior state instead of
         # blindly enabling. Lets us nest cleanly inside a parent that
@@ -2352,98 +2371,110 @@ class RealtimeEngine:
     # ---- realtime loop ------------------------------------------------------
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop_event.clear()
-        # review F-17-06: a fresh run starts un-crashed.
-        self.stats.crashed = False
+        # review F-merged-018: serialize start() and stop() under
+        # `_lifecycle_lock`. The pre-fix is_alive() check at the top of
+        # start() was a CHECK/ACT pair with a multi-second gap (session
+        # load + warmup) -- a concurrent start() could pass the check
+        # before the first one set `_thread.is_alive()`. The race itself
+        # is verdict-flagged-but-unreachable (no caller invokes start()
+        # from two threads today), but the lock is the simplest way to
+        # also cover the reachable stop-during-start case below.
+        with self._lifecycle_lock:
+            # Re-check INSIDE the lock so a winning concurrent start()
+            # is observed.
+            if self._thread and self._thread.is_alive():
+                return
+            self._stop_event.clear()
+            # review F-17-06: a fresh run starts un-crashed.
+            self.stats.crashed = False
+            self._stopped = False
 
-        # B55 / corr-025: disable Python GC BEFORE the heavy session-load +
-        # warmup steps. Pre-v0.8.0 we ran `gc.disable` after warmup, so any
-        # gc cycles that ORT session loading triggered (and there are some
-        # under torch+ORT version combinations) paid full GC cost during the
-        # commitment-to-running phase. Move it up - disable the moment the
-        # caller commits.
-        self._gc_was_enabled_before_start = gc.isenabled()
-        if self._gc_was_enabled_before_start:
-            gc.disable()
+            # B55 / corr-025: disable Python GC BEFORE the heavy session-load +
+            # warmup steps. Pre-v0.8.0 we ran `gc.disable` after warmup, so any
+            # gc cycles that ORT session loading triggered (and there are some
+            # under torch+ORT version combinations) paid full GC cost during the
+            # commitment-to-running phase. Move it up - disable the moment the
+            # caller commits.
+            self._gc_was_enabled_before_start = gc.isenabled()
+            if self._gc_was_enabled_before_start:
+                gc.disable()
 
-        # v0.14.0 (Lens 17 / C010): always install signal handlers, even
-        # when clock lock is disabled. SIGTERM / SIGINT used to kill the
-        # process immediately on default config -- now they coordinate a
-        # clean engine.stop() (drains writer queue, releases ORT
-        # sessions, terminates inference subprocess).
-        self._install_signal_handlers()
+            # v0.14.0 (Lens 17 / C010): always install signal handlers, even
+            # when clock lock is disabled. SIGTERM / SIGINT used to kill the
+            # process immediately on default config -- now they coordinate a
+            # clean engine.stop() (drains writer queue, releases ORT
+            # sessions, terminates inference subprocess).
+            self._install_signal_handlers()
 
-        # review F-08-06 (2nd half): warn (do not fail) if the system
-        # default sink is the woys sink the engine writes into -- the
-        # v0.14.2 desktop-audio hijack. The systemd units catch this at
-        # boot via `chain status --check`; this covers the window between
-        # boot and `woys run`.
-        self._warn_if_default_sink_hijacked()
+            # review F-08-06 (2nd half): warn (do not fail) if the system
+            # default sink is the woys sink the engine writes into -- the
+            # v0.14.2 desktop-audio hijack. The systemd units catch this at
+            # boot via `chain status --check`; this covers the window between
+            # boot and `woys run`.
+            self._warn_if_default_sink_hijacked()
 
-        # v0.11.0 - apply GPU clock lock at the start of engine activity.
-        # Done BEFORE session loading so cuDNN warmup runs at the locked
-        # boost clock (avoids retuning under post-lock-application clock
-        # changes).
-        clock_lock_on, _ = self._resolve_anti_jitter_flags()
-        if clock_lock_on:
-            self._apply_gpu_clock_lock()
+            # v0.11.0 - apply GPU clock lock at the start of engine activity.
+            # Done BEFORE session loading so cuDNN warmup runs at the locked
+            # boost clock (avoids retuning under post-lock-application clock
+            # changes).
+            clock_lock_on, _ = self._resolve_anti_jitter_flags()
+            if clock_lock_on:
+                self._apply_gpu_clock_lock()
 
-        if self.cfg.inference_subprocess:
-            # v0.8.0 - spawn the inference child. Child loads ORT
-            # sessions + applies the rc7-rc12 wins (gc.disable, RT
-            # priority, EXHAUSTIVE cuDNN, broader pre-warm) inside its
-            # own CUDA context. Parent's audio I/O thread no longer
-            # competes with inference for the GIL.
-            #
-            # v0.8.0-rc4: hard-fail on subprocess startup error
-            # rather than silently fall back to in-process. The rc2
-            # silent fallback hid the Path-vs-str crash from the
-            # user (Textual hijacked stderr); only audible
-            # corruption surfaced it. If the user explicitly asked
-            # for subprocess inference, give them a real error
-            # instead of a silent regression. Set
-            # `inference_subprocess=False` to opt into the legacy
-            # path explicitly.
-            from audio.inference_client import InferenceClient
+            if self.cfg.inference_subprocess:
+                # v0.8.0 - spawn the inference child. Child loads ORT
+                # sessions + applies the rc7-rc12 wins (gc.disable, RT
+                # priority, EXHAUSTIVE cuDNN, broader pre-warm) inside its
+                # own CUDA context. Parent's audio I/O thread no longer
+                # competes with inference for the GIL.
+                #
+                # v0.8.0-rc4: hard-fail on subprocess startup error
+                # rather than silently fall back to in-process. The rc2
+                # silent fallback hid the Path-vs-str crash from the
+                # user (Textual hijacked stderr); only audible
+                # corruption surfaced it. If the user explicitly asked
+                # for subprocess inference, give them a real error
+                # instead of a silent regression. Set
+                # `inference_subprocess=False` to opt into the legacy
+                # path explicitly.
+                from audio.inference_client import InferenceClient
 
-            cfg_dict = self._cfg_dict_for_subprocess()
-            self._inf_client = InferenceClient(cfg_dict)
-            self._inf_client.start()  # raises InferenceError on child failure
-            # Child loaded the RVC session - pull rate + dtype info.
-            self._rvc_output_sr = self._inf_client.rvc_output_sr
-            self._is_half = self._inf_client.is_half
-            self.active_embedder = self._inf_client.active_embedder
-            self.stats.child_pid = (
-                self._inf_client._handles.proc.pid if self._inf_client._handles else None
-            )
-            # Build the parent-side SOLA stream at the model's
-            # output rate. The legacy in-process path does this
-            # lazily inside `_cached_rvc_sr`; subprocess mode
-            # needs an explicit call because we never went
-            # through `_cached_rvc_sr`.
-            self._rebuild_sola_for_rate(self._rvc_output_sr)
-        else:
-            # Legacy in-process path. Builds ORT sessions in this
-            # process and warms cuDNN here. Used by tests that need
-            # direct access to `_infer` etc., and as an emergency
-            # escape if subprocess mode regresses.
-            self._ensure_sessions()
-            self._warmup_realtime_pipeline()
+                cfg_dict = self._cfg_dict_for_subprocess()
+                self._inf_client = InferenceClient(cfg_dict)
+                self._inf_client.start()  # raises InferenceError on child failure
+                # Child loaded the RVC session - pull rate + dtype info.
+                self._rvc_output_sr = self._inf_client.rvc_output_sr
+                self._is_half = self._inf_client.is_half
+                self.active_embedder = self._inf_client.active_embedder
+                self.stats.child_pid = (
+                    self._inf_client._handles.proc.pid if self._inf_client._handles else None
+                )
+                # Build the parent-side SOLA stream at the model's
+                # output rate. The legacy in-process path does this
+                # lazily inside `_cached_rvc_sr`; subprocess mode
+                # needs an explicit call because we never went
+                # through `_cached_rvc_sr`.
+                self._rebuild_sola_for_rate(self._rvc_output_sr)
+            else:
+                # Legacy in-process path. Builds ORT sessions in this
+                # process and warms cuDNN here. Used by tests that need
+                # direct access to `_infer` etc., and as an emergency
+                # escape if subprocess mode regresses.
+                self._ensure_sessions()
+                self._warmup_realtime_pipeline()
 
-        # v0.5.0: optionally pre-warm every voice so swaps are instant
-        # from the first press of `p`. Skipped in subprocess mode -
-        # the child's RvcSessionPool handles this internally if
-        # eager_warmup is set. (Wiring full eager_warmup via IPC is
-        # deferred; in v0.8.0 swaps are still on-demand for child.)
-        if self.cfg.eager_warmup and not self.cfg.inference_subprocess:
-            n = self.warmup_voice_library()
-            print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
-        self.stats.running = True
+            # v0.5.0: optionally pre-warm every voice so swaps are instant
+            # from the first press of `p`. Skipped in subprocess mode -
+            # the child's RvcSessionPool handles this internally if
+            # eager_warmup is set. (Wiring full eager_warmup via IPC is
+            # deferred; in v0.8.0 swaps are still on-demand for child.)
+            if self.cfg.eager_warmup and not self.cfg.inference_subprocess:
+                n = self.warmup_voice_library()
+                print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
+            self.stats.running = True
 
-        self._thread = threading.Thread(target=self._run_loop, name="woys-engine", daemon=True)
-        self._thread.start()
+            self._thread = threading.Thread(target=self._run_loop, name="woys-engine", daemon=True)
+            self._thread.start()
 
     def _cfg_dict_for_subprocess(self) -> dict[str, Any]:
         """Convert EngineConfig to a dict for spawn pickling.
@@ -2555,47 +2586,61 @@ class RealtimeEngine:
         self.stats._recent_total.clear()
 
     def stop(self, timeout: float = 2.0) -> None:
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=timeout)
-        self.stats.running = False
+        # review F-merged-018: lock + idempotence guard.
+        # Pre-fix two concurrent stop() callers (signal-handler path +
+        # action_quit + CLI teardown -- see F-CX3-01) both passed
+        # `self._inf_client is not None` and double-tore-down the
+        # InferenceClient. The `_stopped` flag short-circuits the
+        # second caller; the lock also makes a stop() that arrives
+        # during start()'s warmup wait for warmup to finish before
+        # tearing down, preventing the "running engine spawned after
+        # the stop signal" hazard.
+        with self._lifecycle_lock:
+            if self._stopped:
+                return
+            self._stop_event.set()
+            if self._thread:
+                self._thread.join(timeout=timeout)
+            self.stats.running = False
 
-        # v0.8.0 - tear down the inference subprocess after the engine
-        # thread has stopped sending it work. `InferenceClient.stop()`
-        # sends CMD_STOP, joins the child, closes pipes, unlinks shm.
-        if self._inf_client is not None:
+            # v0.8.0 - tear down the inference subprocess after the engine
+            # thread has stopped sending it work. `InferenceClient.stop()`
+            # sends CMD_STOP, joins the child, closes pipes, unlinks shm.
+            if self._inf_client is not None:
+                with contextlib.suppress(Exception):
+                    self._inf_client.stop(timeout_s=timeout)
+                self._inf_client = None
+                self.stats.child_pid = None
+
+            # review F-14-05 (P1): release the in-process ONNX sessions
+            # before the gc.collect() below. Pre-fix `stop()` tore down the
+            # inference subprocess but never dropped `_cv`/`_rmvpe`/`_rvc` or
+            # evicted the RVC pool (`evict_all()` had no caller), so in-process
+            # mode accumulated VRAM across start/stop cycles -- and any future
+            # VRAM-target measurement was confounded by the leak. This affects
+            # the in-process path (`inference_subprocess=False`); subprocess
+            # mode frees the sessions by killing the child above.
+            self._cv = None
+            self._rmvpe = None
+            self._rvc = None
+            self._rvc_pool.evict_all()
+
+            # v0.7.0-rc7 - restore GC to its prior state and run one
+            # collection to free any cyclic references that accumulated
+            # during the session. If GC was already disabled before this
+            # engine started (nested case), leave it disabled.
+            if self._gc_was_enabled_before_start:
+                gc.enable()
+                gc.collect()
+                self._gc_was_enabled_before_start = False
+
+            # v0.11.0 - release the GPU clock lock if active. Idempotent;
+            # safe to call when no lock was applied. SIGTERM/SIGINT path
+            # may have already reverted, in which case this is a no-op.
             with contextlib.suppress(Exception):
-                self._inf_client.stop(timeout_s=timeout)
-            self._inf_client = None
-            self.stats.child_pid = None
+                self._revert_gpu_clock_lock()
 
-        # review F-14-05 (P1): release the in-process ONNX sessions
-        # before the gc.collect() below. Pre-fix `stop()` tore down the
-        # inference subprocess but never dropped `_cv`/`_rmvpe`/`_rvc` or
-        # evicted the RVC pool (`evict_all()` had no caller), so in-process
-        # mode accumulated VRAM across start/stop cycles -- and any future
-        # VRAM-target measurement was confounded by the leak. This affects
-        # the in-process path (`inference_subprocess=False`); subprocess
-        # mode frees the sessions by killing the child above.
-        self._cv = None
-        self._rmvpe = None
-        self._rvc = None
-        self._rvc_pool.evict_all()
-
-        # v0.7.0-rc7 - restore GC to its prior state and run one
-        # collection to free any cyclic references that accumulated
-        # during the session. If GC was already disabled before this
-        # engine started (nested case), leave it disabled.
-        if self._gc_was_enabled_before_start:
-            gc.enable()
-            gc.collect()
-            self._gc_was_enabled_before_start = False
-
-        # v0.11.0 - release the GPU clock lock if active. Idempotent;
-        # safe to call when no lock was applied. SIGTERM/SIGINT path
-        # may have already reverted, in which case this is a no-op.
-        with contextlib.suppress(Exception):
-            self._revert_gpu_clock_lock()
+            self._stopped = True
 
     def _warn_if_default_sink_hijacked(self) -> None:
         """review F-08-06 (2nd half): one-shot check at engine start.
