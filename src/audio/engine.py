@@ -1708,6 +1708,22 @@ class RealtimeEngine:
         # monitor glitch is fine; an engine stall is not.
         self._monitor_queue: queue.Queue[NDArrayF32] = queue.Queue(maxsize=8)
         self._monitor_thread: threading.Thread | None = None
+        # review F-07-09 (commit-050): pre-load swap models on a
+        # dedicated background thread so the engine worker's
+        # `_apply_one_swap` hits a warm `_rvc_pool` cache (~10 ms)
+        # instead of paying a cache-cold `get_or_create` (~600 ms) on
+        # the hot path. Pre-fix the engine worker did the slow
+        # build-+-cudnn-tune itself; mic-read backed up during those
+        # 600 ms; audio drops.
+        #
+        # `request_model_swap` puts the target on BOTH queues:
+        # `_swap_queue` (drained by the engine worker at chunk
+        # boundary to actually swap the session in) AND
+        # `_swap_preload_queue` (drained by this preloader thread
+        # which just primes the cache). When the worker reaches the
+        # chunk-boundary swap, the cache is usually warm.
+        self._swap_preload_queue: queue.Queue[Path] = queue.Queue()
+        self._swap_preload_thread: threading.Thread | None = None
         # v0.7.0-rc7 - track whether GC was enabled before this engine
         # disabled it, so stop() restores the prior state instead of
         # blindly enabling. Lets us nest cleanly inside a parent that
@@ -2189,6 +2205,14 @@ class RealtimeEngine:
                 return req.completion
             self._swap_queue.put(req)
             self._outstanding_swaps.append(req)
+        # review F-07-09 (commit-050): also signal the preloader
+        # to prime the pool cache so the worker hits a cache-hit on
+        # the chunk-boundary swap. Best-effort -- queue.put never
+        # blocks because the queue is unbounded; if the preloader
+        # thread isn't running (engine not yet started or already
+        # stopped), the worker just pays the cache-miss cost itself.
+        with contextlib.suppress(Exception):
+            self._swap_preload_queue.put_nowait(Path(path))
         return req.completion
 
     def request_cfg_update(self, updates: dict[str, Any]) -> None:
@@ -2792,6 +2816,16 @@ class RealtimeEngine:
         )
         self._monitor_thread.start()
 
+        # review F-07-09 (commit-050): spawn the swap-preloader
+        # thread so request_model_swap callers warm the _rvc_pool
+        # cache off the hot path. The worker's chunk-boundary swap
+        # then hits a cache-hit (~10ms) instead of paying the
+        # cache-cold get_or_create (~600ms).
+        self._swap_preload_thread = threading.Thread(
+            target=self._swap_preloader_loop, name="woys-swap-preloader", daemon=True
+        )
+        self._swap_preload_thread.start()
+
     def _cfg_dict_for_subprocess(self) -> dict[str, Any]:
         """Convert EngineConfig to a dict for spawn pickling.
 
@@ -2976,6 +3010,12 @@ class RealtimeEngine:
             if self._monitor_thread is not None:
                 self._monitor_thread.join(timeout=1.0)
                 self._monitor_thread = None
+            # review F-07-09 (commit-050): join the swap-
+            # preloader thread. Same pattern -- it sees _stop_event
+            # via its 100ms get-timeout polling loop.
+            if self._swap_preload_thread is not None:
+                self._swap_preload_thread.join(timeout=1.0)
+                self._swap_preload_thread = None
             # review F-merged-030: clear warmup_stage so the TUI
             # doesn't show a stale "warming pipeline" indicator after
             # the engine fully stops.
@@ -3310,6 +3350,36 @@ class RealtimeEngine:
         except queue.Full:
             with self._stats_lock:
                 self.stats.queue_full_events += 1
+
+    def _swap_preloader_loop(self) -> None:
+        """review F-07-09 (commit-050): daemon thread that
+        primes the `_rvc_pool` cache for every queued swap target.
+
+        Pre-fix the engine worker called
+        `self._rvc_pool.get_or_create(target)` on the hot path. On a
+        cache miss that costs ~600 ms (model load + cuDNN tune) --
+        the engine isn't reading the mic, the writer queue drains,
+        the user hears a glitch.
+
+        Post-fix this thread drains `_swap_preload_queue` and calls
+        `get_or_create` itself. `RvcSessionPool.get_or_create` builds
+        OUTSIDE its internal lock, so this thread's call doesn't
+        block a concurrent worker call. By the time the worker
+        reaches `_apply_one_swap` at the chunk boundary, the cache
+        is warm and its `get_or_create` is a ~10 ms cache-hit.
+
+        Failures (FileNotFound, ORT errors) are swallowed here -- the
+        engine worker will hit the same failure at the chunk boundary
+        and surface it through the normal swap-completion error path
+        (`_SwapRequest.error`).
+        """
+        while not self._stop_event.is_set():
+            try:
+                target = self._swap_preload_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            with contextlib.suppress(Exception):
+                self._rvc_pool.get_or_create(target)
 
     def _monitor_writer_loop(self) -> None:
         """review F-07-17 (commit-049): daemon thread that owns
