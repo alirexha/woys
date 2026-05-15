@@ -25,6 +25,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="woys",
         description="Linux-native real-time voice changer (RVC + ONNX + PipeWire).",
+        # review F-merged-021: socket-routed commands (toggle / status /
+        # pitch / slow) inspect the reply and return non-zero on `ERR ...`
+        # so window-manager keybindings can chain commands.
+        epilog=(
+            "Exit codes:\n"
+            "  0  command succeeded (server replied OK ...)\n"
+            "  1  server replied ERR ... (TUI not running, unknown model, etc.) "
+            "or env-level failure\n"
+            "  2  usage error (bad flag value, missing argument)\n"
+            "\n"
+            "Note: socket-routed commands (toggle, status, pitch, slow) used to "
+            "exit 0 even on ERR; this changed in v0.14.4 -- WM-shortcut scripts "
+            "that relied on the old behavior should now check the exit code."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="cmd", required=False, metavar="COMMAND")
@@ -1021,12 +1036,31 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.cmd in ("toggle", "status", "pitch", "slow"):
         from tui.control import send_command
 
+        # review F-merged-021: route `ERR ...` replies to stderr and
+        # return 1. Pre-v0.14.4 these commands printed the reply verbatim
+        # and `return 0` regardless, so `woys toggle && notify-send "on"`
+        # would report success even when the TUI wasn't running (the reply
+        # was `ERR control socket not found ...`). The exit convention is
+        # documented in the parser epilog; the convention used here is the
+        # standard "server reply starts with ERR" check that the TUI emits
+        # on every documented failure path (control.py:264,287,288;
+        # app.py:236,305,365; etc.).
+        def _emit(reply: str) -> int:
+            if reply.startswith("ERR"):
+                print(reply, file=sys.stderr)
+                return 1
+            print(reply)
+            return 0
+
         if args.cmd == "toggle":
-            print(send_command("TOGGLE"))
-        elif args.cmd == "status":
-            print(send_command("STATUS"))
-        elif args.cmd == "slow":
-            print(send_command("SLOW"))
+            return _emit(send_command("TOGGLE"))
+        if args.cmd == "status":
+            return _emit(send_command("STATUS"))
+        if args.cmd == "slow":
+            reply = send_command("SLOW")
+            rc = _emit(reply)
+            if rc != 0:
+                return rc
             # B13: read from the same XDG_RUNTIME_DIR location the TUI writes.
             from tui.control import runtime_path
 
@@ -1034,15 +1068,15 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             if slow_path.exists():
                 print("---")
                 print(slow_path.read_text(), end="")
-        else:  # pitch
-            delta = args.delta.lstrip("+") if args.delta.startswith("+") else args.delta
-            try:
-                int(delta)
-            except ValueError:
-                print(f"error: pitch must be an integer (got {args.delta!r})", file=sys.stderr)
-                return 2
-            print(send_command(f"PITCH {delta}"))
-        return 0
+            return 0
+        # pitch
+        delta = args.delta.lstrip("+") if args.delta.startswith("+") else args.delta
+        try:
+            int(delta)
+        except ValueError:
+            print(f"error: pitch must be an integer (got {args.delta!r})", file=sys.stderr)
+            return 2
+        return _emit(send_command(f"PITCH {delta}"))
     parser.print_help()
     return 0
 
