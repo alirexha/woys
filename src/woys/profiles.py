@@ -123,17 +123,67 @@ def cli_profile_save(name: str) -> int:
 
 
 def cli_profile_use(name: str) -> int:
+    """Apply the named saved profile.
+
+    review F-merged-020 part 2: wire to the orphaned `PROFILE`
+    socket handler (`tui/app.py:342-357`). Pre-fix this function ONLY
+    wrote `config.toml` and told the user to "restart the engine" --
+    the PROFILE handler in the TUI was functional but unreachable from
+    the CLI. The socket is now the primary path; config-write is the
+    fallback (mirrors the F-16-07 / F-23-05 `models use` pattern).
+
+    Behavior:
+    - profile not in config locally -> error + return 1 (unchanged).
+    - TUI running, swap succeeds (`OK ... state=done`) -> done; the
+      TUI's `_apply_profile_named` already wrote config.
+    - TUI running, swap rejected (`OK ... state=error`) -> persist
+      config anyway (user's intent preserved) + return 1.
+    - TUI not running (any of the three `ERR control socket ...`
+      strings, see control.py:264, :287, :288) -> persist config +
+      return 0 (next `woys run` picks it up).
+    - Unknown reply class -> persist + return 0 (back-compat -- the
+      pre-fix unconditional write).
+    """
     _ensure_tui_path()
     from tui.config import load_config, save_config
+    from tui.control import submit_and_wait
 
     cfg = load_config()
     if not apply_profile(cfg, name):
         print(f"[profile] no such profile: {name!r}", file=sys.stderr)
         print("  available: " + ", ".join(list_profiles(cfg)))
         return 1
+
+    reply = submit_and_wait(f"PROFILE {name}", overall_timeout=10.0)
+    if reply.startswith("OK") and " state=done" in reply:
+        # TUI applied live + saved config. We don't write -- the TUI's
+        # save_config is the authority on this branch.
+        print(f"[profile] active profile -> {name}  (applied live)")
+        return 0
+    if reply.startswith("OK") and "state=error" in reply:
+        save_config(cfg)
+        print(
+            f"[profile] live-apply failed (config still updated): {reply}",
+            file=sys.stderr,
+        )
+        return 1
+    if reply.startswith("OK") and "job=" not in reply:
+        # Legacy synchronous handler path.
+        save_config(cfg)
+        print(f"[profile] active profile -> {name}  (applied via legacy sync path)")
+        return 0
+    if reply.startswith("ERR control socket"):
+        # Matches all three transport-failure strings (not found / stale
+        # / refused). Engine not running -- persist config so next run
+        # picks it up.
+        save_config(cfg)
+        print(f"[profile] active profile -> {name}")
+        print("  (engine not running; the next `woys run` will load it)")
+        return 0
+    # Unknown reply class. Preserve pre-fix behavior: persist config so
+    # we don't silently drop the user's intent.
     save_config(cfg)
-    print(f"[profile] active profile -> {name}")
-    print("  restart the engine for the change to take effect")
+    print(f"[profile] active profile -> {name}  (unrecognized reply: {reply})", file=sys.stderr)
     return 0
 
 
