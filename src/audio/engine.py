@@ -4176,8 +4176,22 @@ class RealtimeEngine:
                 f"{backend} respawned (restarts={self.stats.player_restarts}); "
                 f"causes={self.stats.helper_exit_reasons[-3:]}"
             )
-            # Spawn a fresh stderr reader bound to the new process. The old
-            # reader thread will exit on its own once the dead pipe EOFs.
+            # Spawn a fresh stderr reader bound to the new process.
+            #
+            # review F-merged-024 (commit-071): join the OLD
+            # reader thread before overwriting the reference.
+            # Pre-fix we just reassigned `self._stderr_thread = new`
+            # -- the prior thread became unreachable, kept its FD,
+            # and an external thread inspecting `self._stderr_thread
+            # .is_alive()` would only see the new one (the old was a
+            # daemon, would eventually exit, but until it did we
+            # leaked one Thread object per respawn). The old thread
+            # is daemon + reads from the dead process's stderr pipe,
+            # which EOFs as soon as the process is terminated -- so
+            # the join is at most a few ms.
+            old_stderr_t = self._stderr_thread
+            if old_stderr_t is not None and old_stderr_t.is_alive():
+                old_stderr_t.join(timeout=0.5)
             stderr_t = threading.Thread(
                 target=self._stderr_reader_loop,
                 args=(new_proc,),
