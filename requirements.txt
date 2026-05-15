@@ -33,8 +33,6 @@ coloredlogs==15.0.1
     # via onnxruntime-gpu
 cryptography==47.0.0
     # via pyopenssl
-dasbus==1.7
-    # via woys (pyproject.toml)
 dataclasses-json==0.6.7
     # via woys (pyproject.toml)
 decorator==5.2.1
