@@ -926,6 +926,26 @@ class EngineStats:
     # sessions with only `last_error` (easily clobbered) as evidence.
     gpu_clock_lock_revert_failed: bool = False
 
+    # review F-merged-017 (commit-040c): the rolling-window deques
+    # above (~11 of them) are appended from one thread (engine worker,
+    # writer, GPU keepalive thread) and read from ANOTHER thread (TUI
+    # poll / `woys diag`) via the `inference_samples()` /
+    # `writer_interval_samples_ms()` accessors below. `np.array(deque)`
+    # and `list(deque)` iterate, and a concurrent append raises
+    # `RuntimeError: deque mutated during iteration`. The reader
+    # thread silently dies; in the writer-jitter probe (engine.py:3125
+    # below) the dying thread is the writer itself, which means the
+    # audio stops -- the most serious of F-merged-017's three bug
+    # classes.
+    #
+    # Both sides take this lock. Append sites in `engine.py` wrap with
+    # `with self._stats_lock:`; iteration sites in the methods below
+    # wrap with `with self._internal_lock:`. The engine's
+    # `_stats_lock` (set in `RealtimeEngine.__init__`) IS this lock
+    # (`engine._stats_lock = stats._internal_lock`), so callers on
+    # either side reach the same primitive.
+    _internal_lock: Any = field(default_factory=threading.RLock, repr=False, compare=False)
+
     # v0.11.0 - track the helper's last-known exit cause(s) so the
     # watchdog's "respawned" message doesn't clobber the original
     # death reason from `_stderr_reader_loop`. List-of-strings, capped
@@ -953,55 +973,72 @@ class EngineStats:
     # directly, which made any future EngineStats refactor
     # silent-breaking.
     def inference_samples(self) -> list[float]:
-        """Snapshot of the recent-inference rolling window in ms."""
-        return list(self._recent_inference)
+        """Snapshot of the recent-inference rolling window in ms.
+
+        review F-merged-017 (commit-040c): copy under
+        `_internal_lock` so a concurrent appender doesn't raise
+        `RuntimeError: deque mutated during iteration`. Same for the
+        ~11 sibling snapshot accessors below.
+        """
+        with self._internal_lock:
+            return list(self._recent_inference)
 
     def total_samples(self) -> list[float]:
         """Snapshot of the recent-total rolling window in ms."""
-        return list(self._recent_total)
+        with self._internal_lock:
+            return list(self._recent_total)
 
     def mic_read_samples_ms(self) -> list[float]:
-        return list(self._recent_mic_read_ms)
+        with self._internal_lock:
+            return list(self._recent_mic_read_ms)
 
     def enqueue_lag_samples_ms(self) -> list[float]:
-        return list(self._recent_enqueue_lag_ms)
+        with self._internal_lock:
+            return list(self._recent_enqueue_lag_ms)
 
     # v0.10.0 - per-stage inference rolling-window accessors.
     def cv_samples_ms(self) -> list[float]:
         """Snapshot of the rolling per-chunk contentvec inference times in ms."""
-        return list(self._recent_cv_ms)
+        with self._internal_lock:
+            return list(self._recent_cv_ms)
 
     def rmvpe_samples_ms(self) -> list[float]:
         """Snapshot of the rolling per-chunk RMVPE pitch-extraction times in ms."""
-        return list(self._recent_rmvpe_ms)
+        with self._internal_lock:
+            return list(self._recent_rmvpe_ms)
 
     def rvc_samples_ms(self) -> list[float]:
         """Snapshot of the rolling per-chunk RVC vocoder inference times in ms."""
-        return list(self._recent_rvc_ms)
+        with self._internal_lock:
+            return list(self._recent_rvc_ms)
 
     def writer_interval_samples_ms(self) -> list[float]:
         """Snapshot of the writer-thread inter-flush intervals in ms.
         The std-dev is `writer_jitter_ms`; p99 is the load-bearing tail
         metric the v0.10.x investigation targets (acceptance gate ≤30 ms)."""
-        return list(self._writer_intervals_ms)
+        with self._internal_lock:
+            return list(self._writer_intervals_ms)
 
     def rvc_pre_samples_ms(self) -> list[float]:
         """Time spent in numpy pre-processing between RMVPE done and
         `self._rvc.run` invocation: feats_2x = np.repeat, _to_pitch_coarse,
         slice/reshape/astype on coarse + aligned pitch tensors."""
-        return list(self._recent_rvc_pre_ms)
+        with self._internal_lock:
+            return list(self._recent_rvc_pre_ms)
 
     def rvc_run_samples_ms(self) -> list[float]:
         """Time spent inside `self._rvc.run` itself (the GPU op).
         Compare against rvc_pre and rvc_post to split the rvc tail
         between GPU and Python overhead."""
-        return list(self._recent_rvc_run_ms)
+        with self._internal_lock:
+            return list(self._recent_rvc_run_ms)
 
     def rvc_post_samples_ms(self) -> list[float]:
         """Time spent in numpy post-processing between rvc.run return
         and the result returned to caller: np.array(out).astype.squeeze,
         isnan/isinf scan, optional nan_to_num replacement."""
-        return list(self._recent_rvc_post_ms)
+        with self._internal_lock:
+            return list(self._recent_rvc_post_ms)
 
 
 # v0.7.0-rc10: HEURISTIC → EXHAUSTIVE. The rc8 tail-chunk capture +
@@ -1593,14 +1630,14 @@ class RealtimeEngine:
         # (existing contract -- `test_stop_releases_in_process_sessions`
         # pre-dates this fix and relies on it).
         self._stopped: bool = False
-        # review F-merged-017 (commit-040a): serialize every
-        # `stats.<counter> += 1` and every `helper_exit_reasons.append +
-        # len > 10: pop(0)` block. The lock is held for microseconds;
-        # the engine's hot-path overhead is negligible. RLock (not
-        # plain Lock) so future re-entrant callers (a method holding
-        # the lock calling another method that takes the lock) don't
-        # deadlock. See the threading section of the module docstring.
-        self._stats_lock = threading.RLock()
+        # review F-merged-017: lock guarding both the counter
+        # `+=` / `helper_exit_reasons` TOCTOU sites (commit-040a) AND
+        # the rolling-window deque iteration sites (commit-040c).
+        # `EngineStats` owns the actual lock (`_internal_lock`); the
+        # engine aliases it so existing 040a call-sites
+        # (`with self._stats_lock:`) reach the same primitive. RLock
+        # so future re-entrant call patterns don't deadlock.
+        self._stats_lock = self.stats._internal_lock
         # review F-merged-017 (commit-040b): multi-field profile
         # apply consistency. The engine reads cfg fields at scattered
         # points within a chunk (`cfg.monitor` line 3843 + 4021,
@@ -2257,11 +2294,15 @@ class RealtimeEngine:
             self.stats.last_rmvpe_ms = timings.rmvpe_ms
             self.stats.last_rvc_ms = timings.rvc_ms
             self.stats.last_ipc_roundtrip_ms = timings.roundtrip_ms
-            self.stats._recent_ipc_roundtrip_ms.append(timings.roundtrip_ms)
-            # v0.10.0 - per-stage rolling windows for percentile attribution.
-            self.stats._recent_cv_ms.append(timings.cv_ms)
-            self.stats._recent_rmvpe_ms.append(timings.rmvpe_ms)
-            self.stats._recent_rvc_ms.append(timings.rvc_ms)
+            # review F-merged-017 (commit-040c): cluster the
+            # rolling-window appends under `_stats_lock` so a TUI /
+            # diag reader cannot raise on `deque mutated during
+            # iteration`.
+            with self._stats_lock:
+                self.stats._recent_ipc_roundtrip_ms.append(timings.roundtrip_ms)
+                self.stats._recent_cv_ms.append(timings.cv_ms)
+                self.stats._recent_rmvpe_ms.append(timings.rmvpe_ms)
+                self.stats._recent_rvc_ms.append(timings.rvc_ms)
             self.stats.unique_audio16_lens.add(int(audio16k.shape[-1]))
             self.stats.nan_chunks = timings.nan_chunks_total
             ipc_typed: NDArrayF32 = ipc_result
@@ -2357,12 +2398,14 @@ class RealtimeEngine:
         # The pre-v0.10.0 path tracked only `_recent_inference` (sum); the
         # writer-jitter investigation needs to know which stage owns the
         # tail.
-        self.stats._recent_cv_ms.append(cv_ms)
-        self.stats._recent_rmvpe_ms.append(rmvpe_ms)
-        self.stats._recent_rvc_ms.append(rvc_ms)
-        self.stats._recent_rvc_pre_ms.append(rvc_pre_ms)
-        self.stats._recent_rvc_run_ms.append(rvc_run_ms)
-        self.stats._recent_rvc_post_ms.append(rvc_post_ms)
+        # review F-merged-017 (commit-040c): cluster lock.
+        with self._stats_lock:
+            self.stats._recent_cv_ms.append(cv_ms)
+            self.stats._recent_rmvpe_ms.append(rmvpe_ms)
+            self.stats._recent_rvc_ms.append(rvc_ms)
+            self.stats._recent_rvc_pre_ms.append(rvc_pre_ms)
+            self.stats._recent_rvc_run_ms.append(rvc_run_ms)
+            self.stats._recent_rvc_post_ms.append(rvc_post_ms)
         self.stats.unique_audio16_lens.add(int(audio16k.shape[-1]))
         result_typed: NDArrayF32 = result
         return result_typed
@@ -3116,13 +3159,24 @@ class RealtimeEngine:
             now = time.perf_counter()
             if self._last_writer_ts is not None:
                 interval_ms = (now - self._last_writer_ts) * 1000.0
-                self.stats._writer_intervals_ms.append(interval_ms)
-                # B27 / corr-008: refresh jitter every chunk once the deque
-                # is full. The pre-v0.8.0 `% 16` gate produced stale readings
-                # for sudden jitter spikes that cleared in <16 chunks. Cost
-                # is ~10 µs every chunk on a 128-deque; trivial.
-                if len(self.stats._writer_intervals_ms) >= 16:
-                    arr = np.array(self.stats._writer_intervals_ms, dtype=np.float32)
+                # review F-merged-017 (commit-040c): the append +
+                # the np.array(deque) snapshot below both go through
+                # `_stats_lock`. Pre-fix the writer thread could die on
+                # `RuntimeError: deque mutated during iteration` if a
+                # cross-thread `list(deque)` ran via the woys-diag /
+                # TUI poll path. The dying thread is the writer
+                # itself, which means audio stops silently -- the most
+                # serious of the three F-merged-017 sub-bugs.
+                snapshot: list[float] | None = None
+                with self._stats_lock:
+                    self.stats._writer_intervals_ms.append(interval_ms)
+                    if len(self.stats._writer_intervals_ms) >= 16:
+                        # B27 / corr-008: refresh jitter every chunk
+                        # once the deque is full. Cost is ~10 us / chunk
+                        # on a 128-deque; trivial.
+                        snapshot = list(self.stats._writer_intervals_ms)
+                if snapshot is not None:
+                    arr = np.array(snapshot, dtype=np.float32)
                     self.stats.writer_jitter_ms = float(arr.std())
             self._last_writer_ts = now
 
@@ -3583,8 +3637,8 @@ class RealtimeEngine:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             with self._stats_lock:
                 self.stats.torch_keepalive_calls += 1
+                self.stats._recent_torch_keepalive_ms.append(elapsed_ms)
             self.stats.torch_keepalive_last_ms = elapsed_ms
-            self.stats._recent_torch_keepalive_ms.append(elapsed_ms)
             running_avg = ema_alpha * elapsed_ms + (1.0 - ema_alpha) * running_avg
             self.stats.torch_keepalive_avg_ms = running_avg
             next_tick = max(next_tick + interval_s, time.perf_counter())
@@ -3660,8 +3714,8 @@ class RealtimeEngine:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             with self._stats_lock:
                 self.stats.keepalive_calls += 1
+                self.stats._recent_keepalive_ms.append(elapsed_ms)
             self.stats.last_keepalive_ms = elapsed_ms
-            self.stats._recent_keepalive_ms.append(elapsed_ms)
             running_avg = ema_alpha * elapsed_ms + (1.0 - ema_alpha) * running_avg
             self.stats.keepalive_avg_ms = running_avg
             next_tick = max(next_tick + interval_s, time.perf_counter())
@@ -3959,7 +4013,8 @@ class RealtimeEngine:
                     data, overflowed = in_stream.read(chunk_mic)
                     mic_read_ms = (time.perf_counter() - t_mic_pre) * 1000.0
                     self.stats.last_mic_read_ms = mic_read_ms
-                    self.stats._recent_mic_read_ms.append(mic_read_ms)
+                    with self._stats_lock:
+                        self.stats._recent_mic_read_ms.append(mic_read_ms)
                     if overflowed:
                         with self._stats_lock:
                             self.stats.input_overflows += 1
@@ -4067,7 +4122,8 @@ class RealtimeEngine:
                     self._enqueue_chunk(self._to_sink_bytes(out48))
                     enq_lag_ms = (time.perf_counter() - t_enq_pre) * 1000.0
                     self.stats.last_enqueue_lag_ms = enq_lag_ms
-                    self.stats._recent_enqueue_lag_ms.append(enq_lag_ms)
+                    with self._stats_lock:
+                        self.stats._recent_enqueue_lag_ms.append(enq_lag_ms)
 
                     # v0.7.0-rc5 - pull SOLA's threshold-fallback count
                     # into engine stats. The rc4 `sola_drain_ms` (zero-
@@ -4168,15 +4224,14 @@ class RealtimeEngine:
                             )
                             if len(self.stats.tail_chunk_log) > 50:
                                 self.stats.tail_chunk_log.pop(0)
-                    self.stats._recent_inference.append(inf_ms)
-                    self.stats._recent_total.append(total_ms)
-                    if self.stats._recent_inference:
-                        self.stats.avg_inference_ms = sum(self.stats._recent_inference) / len(
-                            self.stats._recent_inference
-                        )
-                        self.stats.avg_total_ms = sum(self.stats._recent_total) / len(
-                            self.stats._recent_total
-                        )
+                    with self._stats_lock:
+                        self.stats._recent_inference.append(inf_ms)
+                        self.stats._recent_total.append(total_ms)
+                        inf_snapshot = list(self.stats._recent_inference)
+                        total_snapshot = list(self.stats._recent_total)
+                    if inf_snapshot:
+                        self.stats.avg_inference_ms = sum(inf_snapshot) / len(inf_snapshot)
+                        self.stats.avg_total_ms = sum(total_snapshot) / len(total_snapshot)
         except Exception as e:
             self.record_error(f"{type(e).__name__}: {e}")
             self.stats.running = False
