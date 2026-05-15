@@ -724,6 +724,14 @@ class EngineStats:
     # this field via `_refresh_stats` so the user sees a live stage,
     # not a frozen UI.
     warmup_stage: str = ""
+    # review F-07-17 (commit-049): count chunks the engine had
+    # to drop on its way to the monitor stream because the bounded
+    # `_monitor_queue` was full. Each drop means the monitor sink
+    # (host default audio device) was slower than the chunk cadence
+    # -- the user's self-monitor briefly glitches but the engine's
+    # main thread is NOT blocked. Pre-fix the engine wrote synchronously
+    # to `monitor_stream.write()` and stalled on a slow sink.
+    monitor_drops: int = 0
     # review F-merged-015: bounded timestamped error history. Pre-
     # fix `last_error` was a single clobberable string with ~28 write
     # sites across 6 threads. A real failure cascade (`subprocess died
@@ -1687,6 +1695,19 @@ class RealtimeEngine:
         # snapshot of all queued fields.
         self._cfg_lock = threading.Lock()
         self._pending_cfg_updates: dict[str, Any] = {}
+        # review F-07-17 (commit-049): bounded monitor-write queue
+        # + dedicated writer thread. Pre-fix the engine called
+        # `monitor_stream.write(out48)` on its main chunk-processing
+        # thread; a slow host-default sink (e.g., a Bluetooth output
+        # that stalled briefly) blocked the engine loop -- mic reads
+        # backed up -- audio drops. Post-fix the chunk loop does a
+        # non-blocking put_nowait into this 8-slot queue; the
+        # `_monitor_writer_loop` thread drains it and owns the
+        # `sd.OutputStream` lifecycle. On queue overflow the chunk is
+        # dropped (counted in `stats.monitor_drops`) -- a brief
+        # monitor glitch is fine; an engine stall is not.
+        self._monitor_queue: queue.Queue[NDArrayF32] = queue.Queue(maxsize=8)
+        self._monitor_thread: threading.Thread | None = None
         # v0.7.0-rc7 - track whether GC was enabled before this engine
         # disabled it, so stop() restores the prior state instead of
         # blindly enabling. Lets us nest cleanly inside a parent that
@@ -2762,6 +2783,15 @@ class RealtimeEngine:
             n = self.warmup_voice_library()
             print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
 
+        # review F-07-17 (commit-049): spawn the dedicated
+        # monitor-writer thread. Pre-fix the engine main thread did
+        # `monitor_stream.write()` synchronously on the hot path;
+        # any slow host-default sink blocked the engine.
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_writer_loop, name="woys-monitor-writer", daemon=True
+        )
+        self._monitor_thread.start()
+
     def _cfg_dict_for_subprocess(self) -> dict[str, Any]:
         """Convert EngineConfig to a dict for spawn pickling.
 
@@ -2939,6 +2969,13 @@ class RealtimeEngine:
             if self._thread:
                 self._thread.join(timeout=timeout)
             self.stats.running = False
+            # review F-07-17 (commit-049): join the monitor-
+            # writer thread. The thread sees `_stop_event` via its
+            # 50ms get-timeout polling loop and exits after closing
+            # its sd.OutputStream.
+            if self._monitor_thread is not None:
+                self._monitor_thread.join(timeout=1.0)
+                self._monitor_thread = None
             # review F-merged-030: clear warmup_stage so the TUI
             # doesn't show a stale "warming pipeline" indicator after
             # the engine fully stops.
@@ -3273,6 +3310,64 @@ class RealtimeEngine:
         except queue.Full:
             with self._stats_lock:
                 self.stats.queue_full_events += 1
+
+    def _monitor_writer_loop(self) -> None:
+        """review F-07-17 (commit-049): daemon thread that owns
+        the self-monitor `sd.OutputStream` lifecycle and drains the
+        bounded `_monitor_queue`. Pre-fix the engine main thread did
+        both -- opening / closing the stream when `cfg.monitor`
+        toggled AND writing each chunk synchronously. A slow host
+        default sink (Bluetooth glitch, ALSA underrun on a busy
+        system) blocked the engine and starved the mic-read loop.
+
+        This thread:
+          * Opens an `sd.OutputStream` on cfg.monitor going True.
+          * Closes it on cfg.monitor going False.
+          * Drains `_monitor_queue` with a short `get` timeout so the
+            loop also wakes to check `_stop_event` + `cfg.monitor`.
+          * Catches per-write exceptions via `record_error` and
+            keeps the stream open (a single bad write doesn't tear
+            the stream; the engine's main thread is never blocked).
+        """
+        import sounddevice as sd
+
+        # `sd.OutputStream` does not have published type stubs; use Any
+        # so the .start/.stop/.write/.close calls don't need per-line
+        # ignores.
+        stream: Any = None
+        while not self._stop_event.is_set():
+            want_monitor = bool(self.cfg.monitor)
+            if want_monitor and stream is None:
+                try:
+                    stream = sd.OutputStream(
+                        samplerate=self.cfg.sink_rate,
+                        channels=self.cfg.channels,
+                        dtype="float32",
+                    )
+                    stream.start()
+                except Exception as e:
+                    self.record_error(f"monitor open: {type(e).__name__}: {e}")
+                    stream = None
+                    time.sleep(0.05)
+                    continue
+            elif not want_monitor and stream is not None:
+                with contextlib.suppress(Exception):
+                    stream.stop()
+                    stream.close()
+                stream = None
+            try:
+                chunk = self._monitor_queue.get(timeout=0.05)
+            except queue.Empty:
+                continue
+            if stream is None:
+                continue  # drain the queue but discard if monitor is off
+            with contextlib.suppress(Exception):
+                stream.write(chunk.reshape(-1, 1))
+        # Stop event set -- tear down.
+        if stream is not None:
+            with contextlib.suppress(Exception):
+                stream.stop()
+                stream.close()
 
     def _writer_loop(self) -> None:
         """Daemon thread: drains _writer_queue into pacat.stdin.
@@ -4029,7 +4124,6 @@ class RealtimeEngine:
         # v0.5.2: pin engine main thread + bump priority if requested.
         self._apply_thread_priority(label="engine")
 
-        monitor_stream = None
         try:
             # v0.5.2: open pacat under the lock + start writer/stderr/watchdog
             # threads before the first inference. The writer queue is sized
@@ -4118,18 +4212,12 @@ class RealtimeEngine:
                 dtype="float32",
                 device=self.cfg.input_device,
             )
-            if self.cfg.monitor:
-                # Best-effort self-monitor stream; failures here don't stop the engine.
-                try:
-                    monitor_stream = sd.OutputStream(
-                        samplerate=self.cfg.sink_rate,
-                        channels=self.cfg.channels,
-                        dtype="float32",
-                    )
-                    monitor_stream.start()
-                except Exception as e:
-                    self.record_error(f"monitor: {type(e).__name__}: {e}")
-                    monitor_stream = None
+            # review F-07-17 (commit-049): the monitor stream
+            # lifecycle now lives in `_monitor_writer_loop` (spawned
+            # from `_worker_preamble`). The pre-fix eager-open here
+            # is gone -- the dedicated thread opens / closes the
+            # stream as cfg.monitor toggles, and writes go through
+            # the bounded queue.
 
             # v0.7.0-rc4 - input-gate hysteresis state. The gate must
             # observe ≥`input_gate_hysteresis_ms` of continuously-below
@@ -4300,31 +4388,22 @@ class RealtimeEngine:
                     if self._sola is not None:
                         self.stats.sola_fallback_count = self._sola.fallback_count
 
-                    # v0.13.1 - live toggle: engine reads self.cfg.monitor
-                    # each iteration and opens/closes the monitor stream
-                    # as needed. Lets the TUI's 'm' keybind take effect
-                    # without an engine restart (~5 s of session loss).
-                    if self.cfg.monitor and monitor_stream is None:
+                    # review F-07-17 (commit-049): push to the
+                    # bounded monitor queue (non-blocking). The
+                    # dedicated `_monitor_writer_loop` thread owns
+                    # the sd.OutputStream lifecycle + drains the
+                    # queue. Queue overflow counts as a monitor
+                    # drop (the user's self-monitor glitches but
+                    # the engine main thread is NEVER blocked).
+                    # Pre-fix the open/close + synchronous write
+                    # happened here on the engine main thread; a
+                    # slow host sink stalled the engine.
+                    if self.cfg.monitor:
                         try:
-                            monitor_stream = sd.OutputStream(
-                                samplerate=self.cfg.sink_rate,
-                                channels=self.cfg.channels,
-                                dtype="float32",
-                            )
-                            monitor_stream.start()
-                        except Exception as e:
-                            self.record_error(f"monitor: {type(e).__name__}: {e}")
-                            monitor_stream = None
-                    elif not self.cfg.monitor and monitor_stream is not None:
-                        with contextlib.suppress(Exception):
-                            monitor_stream.stop()
-                            monitor_stream.close()
-                        monitor_stream = None
-
-                    # Optional self-monitor → host default output.
-                    if monitor_stream is not None:
-                        with contextlib.suppress(Exception):
-                            monitor_stream.write(out48.reshape(-1, 1))
+                            self._monitor_queue.put_nowait(out48)
+                        except queue.Full:
+                            with self._stats_lock:
+                                self.stats.monitor_drops += 1
 
                     total_ms = (time.perf_counter() - t_total) * 1000
                     with self._stats_lock:
@@ -4423,12 +4502,10 @@ class RealtimeEngine:
                 deadline = time.perf_counter() + 1.0
                 while time.perf_counter() < deadline and not self._writer_queue.empty():
                     time.sleep(0.02)
-            if monitor_stream is not None:
-                try:
-                    monitor_stream.stop()
-                    monitor_stream.close()
-                except Exception:
-                    pass
+            # review F-07-17 (commit-049): monitor stream
+            # teardown moved to `_monitor_writer_loop`'s exit. That
+            # thread sees `_stop_event` set + closes its own stream
+            # before exiting.
             # Tearing down threads + pacat. _stop_event was set by stop()
             # (or we're here via exception); writer/watchdog will exit on
             # the next loop iteration.
