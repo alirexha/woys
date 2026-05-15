@@ -720,6 +720,18 @@ class EngineStats:
     # targets that mechanism. Capped at 50 entries.
     tail_chunk_log: list[dict[str, float]] = field(default_factory=list)
     last_error: str | None = None
+    # review F-23-14 (commit-075): timestamp of the most recent
+    # `last_error` write (monotonic seconds). The TUI uses this to
+    # render an age ("error: ... (3 s ago)") instead of a sticky string
+    # the reader cannot distinguish from a freshly minted failure --
+    # pre-fix `last_error` survived from session start until clobbered,
+    # so a user glancing at StatusPanel could not tell whether the
+    # engine had crashed five seconds ago or five minutes ago. Set
+    # under `_stats_lock` by `record_error()`; cleared together with
+    # `last_error` by the chunk-success path one `chunk_seconds` after
+    # the most recent failure (so a real cascade still surfaces, but a
+    # one-off transient self-clears once the engine is healthy again).
+    last_error_ts: float | None = None
     # review F-merged-030 (commit-048): cold-start progress.
     # Pre-fix start() ran _ensure_sessions + _warmup_realtime_pipeline
     # + (optional) eager_warmup + GPU clock-lock subprocess.run all on
@@ -2969,10 +2981,17 @@ class RealtimeEngine:
         `_stats_lock` so a concurrent record_error from another thread
         sees a consistent state. The lock is held for microseconds.
         """
-        entry = (time.monotonic(), threading.current_thread().name, msg)
+        now = time.monotonic()
+        entry = (now, threading.current_thread().name, msg)
         with self._stats_lock:
             self.stats.error_history.append(entry)
             self.stats.last_error = msg
+            # review F-23-14 (commit-075): stamp the write moment so
+            # the TUI can render an age and the chunk-success path can
+            # auto-clear once `chunk_seconds` has elapsed without a fresh
+            # failure. The ring keeps the history; this field is the
+            # *current* sticky-error timestamp.
+            self.stats.last_error_ts = now
 
     def recent_errors(self, n: int = 5) -> list[tuple[float, str, str]]:
         """Return the most recent up-to-`n` error entries from the ring,
@@ -4534,6 +4553,21 @@ class RealtimeEngine:
                     total_ms = (time.perf_counter() - t_total) * 1000
                     with self._stats_lock:
                         self.stats.chunks_processed += 1
+                        # review F-23-14 (commit-075): clear a stale
+                        # `last_error` once one full `chunk_seconds` has
+                        # elapsed without a new failure write. The error
+                        # ring (`error_history`) keeps the historical
+                        # record; this only un-sticks the StatusPanel
+                        # banner so a transient one-off doesn't read as
+                        # "engine is currently broken" forever.
+                        if (
+                            self.stats.last_error is not None
+                            and self.stats.last_error_ts is not None
+                            and (time.monotonic() - self.stats.last_error_ts)
+                            > self.cfg.chunk_seconds
+                        ):
+                            self.stats.last_error = None
+                            self.stats.last_error_ts = None
                     # B63 / arch-012: optional periodic gc.collect(0) for users
                     # who run multi-hour sessions and observe heap growth.
                     # Default off (engine_periodic_gc_chunks=0).

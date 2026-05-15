@@ -9,7 +9,9 @@ Keys
   +/-     pitch shift up/down (1 semitone)
   0       reset pitch shift
   p       cycle through saved profiles  (v0.3.0)
+  m       toggle the self-monitor output stream  (v0.13.1)
   s       force-save config
+  ?       show this key map in a modal overlay
   q       quit
 """
 
@@ -20,6 +22,7 @@ import logging
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import ClassVar
 
@@ -27,6 +30,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.reactive import reactive
+from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Label, ProgressBar, Static
 
 from audio import RealtimeEngine
@@ -49,6 +53,81 @@ from woys.profiles import apply_profile, cycle_profile, list_profiles
 # render failure is logged + counted.
 _REFRESH_STARTUP_TICKS = 8
 
+# review F-23-15 (commit-075): RVC f0 shifts past ±24 st mangle the
+# voice (formants and pitch decouple to where the output stops sounding
+# like a voice). The verdict picked WARN over hard-clamp -- the pitch
+# action still applies, but a toast fires on the threshold crossing so a
+# user who tap-keyed past it can back off if they hit it by accident. Tap
+# counter: only the *first* tap past ±24 in each direction toasts; further
+# taps in the same direction stay silent so the toast doesn't spam.
+_PITCH_WARN_ST = 24
+
+# review F-23-19 (commit-075): "no mic signal" hint. `_refresh_stats`
+# ticks at 0.25 s and reads `stats.last_input_rms`. If the engine is
+# running but RMS stays below `_MIC_SILENCE_RMS` for `_MIC_SILENCE_TICKS`
+# consecutive ticks (~6 s), the StatusPanel renders a hint and a single
+# toast fires. Pre-fix a dead/muted mic looked indistinguishable from a
+# normal quiet moment in the meter alone (the bar simply stayed empty).
+_MIC_SILENCE_RMS = 0.001
+_MIC_SILENCE_TICKS = 24
+
+
+def _fmt_age(seconds: float) -> str:
+    """Format a duration as a short, human-readable age suffix.
+
+    Used by the StatusPanel error banner so the reader can tell a stale
+    "happened 4 minutes ago" failure from a fresh one. Rendered next to
+    the error string; the timestamp itself lives on `EngineStats.
+    last_error_ts` (F-23-14, commit-075).
+    """
+    if seconds < 1.0:
+        return "now"
+    if seconds < 60.0:
+        return f"{int(seconds)} s ago"
+    if seconds < 3600.0:
+        return f"{int(seconds // 60)} m ago"
+    return f"{int(seconds // 3600)} h ago"
+
+
+class HelpScreen(ModalScreen[None]):
+    """review F-23-13 (commit-075): `?` opens a modal listing every
+    keybinding. The footer renders binding *labels* but truncates on a
+    narrow terminal and never explains what each action does; the
+    module docstring is comprehensive but only readable by opening the
+    source. The modal closes on any key. Bound from the main app via
+    `action_help`."""
+
+    DEFAULT_CSS = """
+    HelpScreen { align: center middle; }
+    #help-box {
+        width: 60;
+        max-width: 90%;
+        padding: 1 2;
+        border: thick $accent;
+        background: $surface;
+    }
+    """
+
+    HELP_TEXT = (
+        "[bold]woys -- key bindings[/]\n\n"
+        "  [bold]t[/]         toggle engine on/off\n"
+        "  [bold]+[/] / [bold]-[/]     pitch shift up/down (1 st)\n"
+        "  [bold]0[/]         reset pitch to 0\n"
+        "  [bold]p[/]         cycle through saved profiles\n"
+        "  [bold]m[/]         toggle the self-monitor output stream\n"
+        "  [bold]s[/]         force-save config to ~/.config/woys/config.toml\n"
+        "  [bold]?[/]         show this help\n"
+        "  [bold]q[/] / Ctrl-C  quit\n\n"
+        "[dim]press any key to close[/]"
+    )
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.HELP_TEXT, id="help-box")
+
+    def on_key(self, event: object) -> None:
+        _ = event  # any key closes the modal
+        self.dismiss(None)
+
 
 class StatusPanel(Static):
     """Top status block: model, on/off, pitch, active profile, cold-start hint."""
@@ -57,7 +136,7 @@ class StatusPanel(Static):
     StatusPanel {
         padding: 1 2;
         border: round $accent;
-        height: 8;
+        height: 10;
     }
     """
 
@@ -71,7 +150,17 @@ class StatusPanel(Static):
         cold_start: bool,
         swapping: str | None,
         error: str | None,
+        error_age_s: float | None = None,
+        mic_silent: bool = False,
     ) -> str:
+        # review F-23-04 (commit-075): an idle/stopped engine
+        # previously rendered "○ status: stopped" with no next-step.
+        # First-run users had no on-screen prompt that the engine even
+        # COULD be started from this view -- the only way to find out
+        # was to dig into the module docstring or hit `?`. The hint
+        # below is a one-line nudge that turns "stopped" from a dead-
+        # end status into a discoverable affordance.
+        idle_hint = ""
         if swapping:
             light = "[bold blue]◴[/]"
             state = f"loading {swapping}…"
@@ -84,14 +173,35 @@ class StatusPanel(Static):
         else:
             light = "[dim]○[/]"
             state = "stopped"
+            idle_hint = "\n   [dim]press [bold]t[/bold] to start, [bold]?[/bold] for help[/dim]"
         prof = f"[italic]{profile}[/]" if profile else "[dim](none)[/]"
-        err = f"\n[bold red]error:[/] {error}" if error else ""
+        # review F-23-14 (commit-075): render the error with an age
+        # so the user can tell a stale 4-minute-old transient from a
+        # fresh failure. `error_age_s` is None when the engine has not
+        # populated `last_error_ts` yet (older pickle, pre-fix readers).
+        err = ""
+        if error:
+            age = f" [dim]({_fmt_age(error_age_s)})[/dim]" if error_age_s is not None else ""
+            err = f"\n[bold red]error:[/] {error}{age}"
+        # review F-23-19 (commit-075): a persistent on-panel
+        # banner for "engine running, mic dead" -- the toast that fires
+        # on the threshold crossing fades, but the StatusPanel must
+        # still tell the eyes-only viewer why their voice isn't going
+        # through. Only shown while running so a stopped engine isn't
+        # misread as "mic broken".
+        mic_warn = ""
+        if mic_silent and running:
+            mic_warn = (
+                "\n[bold yellow]⚠ no mic signal[/] -- check input device / OS mute / `pactl info`"
+            )
         return (
             f"{light}  status:  [bold]{state}[/]\n"
             f"   model:   [italic]{model.name or '(none)'}[/]\n"
             f"   pitch:   {pitch:+d} st\n"
             f"   profile: {prof}"
+            f"{idle_hint}"
             f"{err}"
+            f"{mic_warn}"
         )
 
 
@@ -149,6 +259,10 @@ class WoysApp(App[int]):
         Binding("p", "cycle_profile", "profile"),
         Binding("m", "toggle_monitor", "monitor"),
         Binding("s", "save_cfg", "save"),
+        # review F-23-13 (commit-075): `?` opens HelpScreen. Both
+        # `question_mark` and `?` are accepted so the literal key works
+        # on shift-layouts where `?` is shift+/.
+        Binding("question_mark,?", "help", "help"),
         Binding("q,ctrl+c", "quit", "quit"),
     ]
 
@@ -196,6 +310,25 @@ class WoysApp(App[int]):
         # logged + counted instead of being swallowed by a bare `pass`.
         self._refresh_ticks = 0
         self._refresh_errors = 0
+        # review F-23-19 (commit-075): mic-silence detector state.
+        # `_silence_ticks` counts consecutive refresh ticks where the
+        # engine is running but `last_input_rms < _MIC_SILENCE_RMS`;
+        # `_silence_warned` gates the one-shot toast so the user gets
+        # one explicit nudge per silence episode, not one every tick.
+        self._silence_ticks = 0
+        self._silence_warned = False
+        # review F-23-15 (commit-075): track which extreme of the
+        # ±_PITCH_WARN_ST window the user has already been warned about,
+        # so a tap-key drag past the threshold toasts ONCE per crossing
+        # rather than every tap.
+        self._pitch_warned_high = False
+        self._pitch_warned_low = False
+        # review F-08-09 / F-23-03 + F-23-14 (commit-075): track
+        # the most recent `last_error` we toasted so the same error is
+        # not re-toasted on every refresh tick. Cleared when the engine
+        # clears its `last_error` so a *new* error matching an earlier
+        # string still surfaces.
+        self._last_notified_error: str | None = None
 
     def on_mount(self) -> None:
         # review F-23-06 (P1): a PipeWire-setup failure is BLOCKING.
@@ -437,23 +570,62 @@ class WoysApp(App[int]):
             return False
         return True
 
-    def action_pitch_up(self) -> None:
-        self.pitch = int(self.pitch) + 1
-        self.engine.cfg.f0_up_key = int(self.pitch)
-        self.cfg.f0_up_key = int(self.pitch)
+    def _apply_pitch(self, new_pitch: int) -> None:
+        """review F-23-11 (commit-075): unified pitch-set path so
+        every pitch action emits the same toast + the F-23-15 soft-warn
+        check, instead of three identical assignment blocks. Pre-fix
+        action_pitch_up/down/reset duplicated four-line bodies and the
+        only feedback was the next refresh tick updating the StatusPanel
+        -- so a tap-key user with their eyes on Discord had no idea
+        whether `+` registered."""
+        self.pitch = new_pitch
+        self.engine.cfg.f0_up_key = new_pitch
+        self.cfg.f0_up_key = new_pitch
         mark_override(self.cfg, "f0_up_key")
+        # F-23-11: one-line toast on every pitch change so the action is
+        # not silent. Short timeout -- the rapid + / - users do not want
+        # a stacking toast queue.
+        self.notify(f"pitch {new_pitch:+d} st", severity="information", timeout=1.5)
+        # F-23-15: warn when crossing ±_PITCH_WARN_ST. The action still
+        # applies (soft, not hard, clamp); the toast is once per crossing.
+        if new_pitch > _PITCH_WARN_ST:
+            if not self._pitch_warned_high:
+                self.notify(
+                    f"pitch past +{_PITCH_WARN_ST} st -- formants and pitch decouple, "
+                    "voice may stop sounding like a voice",
+                    severity="warning",
+                    timeout=5,
+                )
+                self._pitch_warned_high = True
+        else:
+            self._pitch_warned_high = False
+        if new_pitch < -_PITCH_WARN_ST:
+            if not self._pitch_warned_low:
+                self.notify(
+                    f"pitch past -{_PITCH_WARN_ST} st -- formants and pitch decouple, "
+                    "voice may stop sounding like a voice",
+                    severity="warning",
+                    timeout=5,
+                )
+                self._pitch_warned_low = True
+        else:
+            self._pitch_warned_low = False
+
+    def action_pitch_up(self) -> None:
+        self._apply_pitch(int(self.pitch) + 1)
 
     def action_pitch_down(self) -> None:
-        self.pitch = int(self.pitch) - 1
-        self.engine.cfg.f0_up_key = int(self.pitch)
-        self.cfg.f0_up_key = int(self.pitch)
-        mark_override(self.cfg, "f0_up_key")
+        self._apply_pitch(int(self.pitch) - 1)
 
     def action_pitch_reset(self) -> None:
-        self.pitch = 0
-        self.engine.cfg.f0_up_key = 0
-        self.cfg.f0_up_key = 0
-        mark_override(self.cfg, "f0_up_key")
+        self._apply_pitch(0)
+
+    def action_help(self) -> None:
+        """review F-23-13 (commit-075): open the HelpScreen modal.
+        The footer renders the binding labels but truncates on narrow
+        terminals and never spells out what each action does; this
+        modal gives the full list with a one-line gloss per binding."""
+        self.push_screen(HelpScreen())
 
     def action_toggle_monitor(self) -> None:
         """v0.13.1 - toggle the engine's self-monitor stream (writes a
@@ -614,11 +786,59 @@ class WoysApp(App[int]):
         if s.last_error and s.last_error != getattr(self, "_last_notified_error", None):
             self.notify(s.last_error, severity="error", timeout=8)
             self._last_notified_error = s.last_error
+        # F-23-14: forget the "already notified" sentinel once the engine
+        # has cleared `last_error` (via the chunk-success auto-clear).
+        # Otherwise a *different* error with the same string would never
+        # re-toast.
+        if not s.last_error:
+            self._last_notified_error = None
+
+        # review F-23-19 (commit-075): mic-silence detector. The
+        # engine reports last_input_rms each chunk; if it sits at ~0
+        # while we are RUNNING, the meter alone is ambiguous (a quiet
+        # second looks the same as a dead mic). After
+        # `_MIC_SILENCE_TICKS * 0.25 s` of near-zero RMS we toast once
+        # and let the StatusPanel render a persistent banner via the
+        # `mic_silent` flag below.
+        mic_silent = False
+        if s.running:
+            if s.last_input_rms < _MIC_SILENCE_RMS:
+                self._silence_ticks += 1
+                if self._silence_ticks >= _MIC_SILENCE_TICKS:
+                    mic_silent = True
+                    if not self._silence_warned:
+                        self.notify(
+                            "no mic signal -- check input device / OS mute "
+                            "/ run `pactl info` to inspect the default source",
+                            severity="warning",
+                            timeout=8,
+                        )
+                        self._silence_warned = True
+            else:
+                self._silence_ticks = 0
+                self._silence_warned = False
+        else:
+            self._silence_ticks = 0
+            self._silence_warned = False
+
+        # F-23-14: relative age for the error banner. Pre-fix the
+        # StatusPanel rendered the error string with no time qualifier,
+        # so a stale 4-minute-old transient read as if it had just
+        # happened. `last_error_ts` is set under `_stats_lock` by
+        # `record_error` -- a snapshot read is OK (we only need to format
+        # an age, not synchronize against a write).
+        error_age_s: float | None = None
+        if s.last_error and s.last_error_ts is not None:
+            error_age_s = time.monotonic() - s.last_error_ts
 
         try:
             # "Cold start" heuristic: engine is running but the rolling
-            # latency window hasn't stabilized yet - first ~10 chunks at
-            # chunk_seconds=0.1 = roughly 1 second of warmup.
+            # latency window hasn't stabilized yet - first ~10 chunks.
+            # Owner choice: keep the 10-chunk window even at the post-
+            # v0.12.4 chunk_seconds=0.25 default where this corresponds
+            # to ~2.5 s of warmup — the eyes-verification pass on
+            # commit-075 preferred the longer settle window over the
+            # 1-s-derived alternative (F-23-16, dropped from commit-075).
             cold_start = bool(s.running and s.chunks_processed < 10)
             status = self.query_one("#status", StatusPanel)
             status.update(
@@ -630,6 +850,8 @@ class WoysApp(App[int]):
                     cold_start=cold_start,
                     swapping=self._swap_in_flight,
                     error=s.last_error,
+                    error_age_s=error_age_s,
+                    mic_silent=mic_silent,
                 )
             )
             lat = self.query_one("#latency", LatencyPanel)
