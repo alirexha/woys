@@ -26,7 +26,9 @@ woys run --autostart
 ```
 
 - [ ] TUI displays `RUNNING` after the cold-start chunks finish
-- [ ] `avg total e2e` settles below 500 ms within 5 seconds
+- [ ] `avg total e2e` settles around 640 ms within 5 seconds (per
+      ADR 0013 — the 80 ms target is retired; the v0.12.4
+      listener-validated optimum is ~640 ms, operating budget ≤700 ms)
 - [ ] Input level meter responds when you speak
 
 In a *second* terminal:
