@@ -15,9 +15,11 @@ Keys
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import ClassVar
 
@@ -386,9 +388,27 @@ class WoysApp(App[int]):
     # ---- actions ------------------------------------------------------------
 
     def action_toggle_engine(self) -> None:
+        """review F-13-03: a running engine.stop() can take up to
+        ~10 s (engine._thread join 2 s + InferenceClient kill ladder
+        3.5 s + gc.collect + GPU clock-lock revert subprocess.run
+        timeout 4 s). Pre-fix this method called `self.engine.stop()`
+        synchronously on Textual's event-loop thread, freezing the UI
+        (the `set_interval` callback could not fire) and showing a
+        frozen "RUNNING" indicator. The fix: offload the stop to a
+        worker thread; render a "stopping..." notification
+        immediately so the user knows the action took. The success
+        notification fires when the worker finishes (via
+        `call_from_thread` so it lands on the event loop)."""
         if self.engine.stats.running:
-            self.engine.stop()
-            self.notify("engine stopped", severity="information", timeout=2)
+            self.notify("stopping engine…", severity="information", timeout=10)
+
+            def _stop_in_background() -> None:
+                self.engine.stop()
+                self.call_from_thread(
+                    self.notify, "engine stopped", severity="information", timeout=2
+                )
+
+            threading.Thread(target=_stop_in_background, name="woys-tui-stop", daemon=True).start()
         elif self._start_engine():
             self.notify("engine starting (cudnn warmup ~2s)", severity="information", timeout=2)
 
@@ -549,9 +569,19 @@ class WoysApp(App[int]):
         self.notify("config saved", severity="information")
 
     async def action_quit(self) -> None:
-        self.engine.stop()
-        self._control.stop()
-        save_config(self.cfg)
+        """review F-13-03 + F-CX3-02: offload the blocking
+        teardown trio off the event loop so the UI stays responsive
+        until the moment we call `self.exit(0)`. Pre-fix `action_
+        quit` was `async` but called every teardown step
+        synchronously -- the loop blocked for `engine.stop()` (up to
+        ~10 s), `_control.stop()` (~1.5 s join), and `save_config()`
+        (fsync). `asyncio.to_thread` runs each in the default
+        executor; `await` keeps the loop alive for `set_interval`
+        ticks until the trio finishes."""
+        self.notify("shutting down…", severity="information", timeout=10)
+        await asyncio.to_thread(self.engine.stop)
+        await asyncio.to_thread(self._control.stop)
+        await asyncio.to_thread(save_config, self.cfg)
         self.exit(0)
 
     # ---- live refresh -------------------------------------------------------
