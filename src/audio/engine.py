@@ -1601,6 +1601,22 @@ class RealtimeEngine:
         # the lock calling another method that takes the lock) don't
         # deadlock. See the threading section of the module docstring.
         self._stats_lock = threading.RLock()
+        # review F-merged-017 (commit-040b): multi-field profile
+        # apply consistency. The engine reads cfg fields at scattered
+        # points within a chunk (`cfg.monitor` line 3843 + 4021,
+        # `cfg.input_gain_db` line 3908, `cfg.f0_up_key` / `cfg.sid`
+        # inside _infer). A profile-apply on the TUI thread that
+        # writes 4+ fields one at a time leaves the engine reading a
+        # half-applied composite mid-chunk (new monitor, old pitch).
+        # The fix routes profile applies through the same chunk-
+        # boundary barrier as `request_model_swap`: callers stage a
+        # dict of `{field: value}` into `_pending_cfg_updates`; the
+        # engine flushes the dict at the top of each chunk iteration
+        # under `_cfg_lock`, AFTER `_maybe_swap_model` and BEFORE the
+        # mic read. Within a chunk the engine sees a consistent
+        # snapshot of all queued fields.
+        self._cfg_lock = threading.Lock()
+        self._pending_cfg_updates: dict[str, Any] = {}
         # v0.7.0-rc7 - track whether GC was enabled before this engine
         # disabled it, so stop() restores the prior state instead of
         # blindly enabling. Lets us nest cleanly inside a parent that
@@ -2015,6 +2031,49 @@ class RealtimeEngine:
         with self._swap_lock:
             self._pending_model_swap = Path(path)
             self._swap_done.clear()  # signal "swap in flight" to TUI poll sites
+
+    def request_cfg_update(self, updates: dict[str, Any]) -> None:
+        """Thread-safe: queue a multi-field cfg update for the worker to
+        apply at the next chunk boundary.
+
+        review F-merged-017 (commit-040b): pre-fix
+        `_apply_profile_named` wrote `engine.cfg.f0_up_key`,
+        `engine.cfg.sid`, `engine.cfg.monitor`, and `engine.cfg.input_
+        gain_db` one at a time. The engine thread reads those same
+        fields at scattered points within a single chunk, so an
+        apply interleaved with a chunk left the engine reading a
+        half-applied composite (e.g., new monitor flag, old pitch).
+        The bug class is multi-field *consistency*; lock-around-write
+        alone doesn't fix it because the engine's READS were not
+        locked.
+
+        This function stages a dict of `{field: value}` updates; the
+        engine drains the dict via `_maybe_apply_pending_cfg()` at
+        the top of each chunk iteration. Within a chunk the engine
+        sees a consistent snapshot.
+
+        Idempotent: repeat calls merge into the dict (later wins on
+        a field collision). Callers who write single fields directly
+        (TUI pitch keys, monitor toggle) are unaffected -- single-
+        field atomicity is already a Python guarantee.
+        """
+        with self._cfg_lock:
+            self._pending_cfg_updates.update(updates)
+
+    def _maybe_apply_pending_cfg(self) -> None:
+        """Worker-side hook: drain `_pending_cfg_updates` and apply
+        every queued field to `self.cfg` atomically (relative to the
+        chunk loop). Called from `_run_loop` at the top of each chunk
+        iteration, right after `_maybe_swap_model()` and before the
+        mic read."""
+        with self._cfg_lock:
+            if not self._pending_cfg_updates:
+                return
+            updates = self._pending_cfg_updates
+            self._pending_cfg_updates = {}
+        for field_name, value in updates.items():
+            if hasattr(self.cfg, field_name):
+                setattr(self.cfg, field_name, value)
 
     def _maybe_swap_model(self) -> None:
         """Worker-side hook: if a swap was queued, flush SOLA tail then
@@ -3878,6 +3937,12 @@ class RealtimeEngine:
                     # the next mic chunk. Owns _rvc on this thread, so no
                     # race with _infer below.
                     self._maybe_swap_model()
+                    # review F-merged-017 (commit-040b): drain any
+                    # multi-field cfg apply queued by `request_cfg_
+                    # update()` so the rest of this chunk sees a
+                    # consistent view of all queued fields. Cheap when
+                    # the queue is empty (one bool check inside a lock).
+                    self._maybe_apply_pending_cfg()
                     # v0.7.0-rc4 - capture the overflow flag PortAudio
                     # returns when its internal ring buffer overran
                     # since the previous read. Pre-rc4 this was tuple-

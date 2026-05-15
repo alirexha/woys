@@ -500,16 +500,28 @@ class WoysApp(App[int]):
             self.notify(f"failed to apply profile {name!r}", severity="error", timeout=4)
             return
         self._active_profile = name
-        # Mirror live-tunable fields onto the engine config. chunk_seconds /
-        # output_latency_ms still need an engine restart to bite (they're
-        # set at sounddevice/pacat init).
-        self.engine.cfg.f0_up_key = self.cfg.f0_up_key
-        self.engine.cfg.sid = self.cfg.sid
-        self.engine.cfg.monitor = self.cfg.monitor
-        # v0.5.1: input_gain_db is read by the audio worker every chunk,
-        # so updating in place takes effect on the next mic chunk without
-        # an engine restart.
-        self.engine.cfg.input_gain_db = self.cfg.input_gain_db
+        # review F-merged-017 (commit-040b): route the multi-field
+        # cfg update through `request_cfg_update`. Pre-fix the four
+        # `self.engine.cfg.X = ...` assignments below were issued one
+        # at a time, and the engine worker reads those fields at
+        # scattered points within a single chunk -- so a profile-apply
+        # interleaved with a chunk left the engine reading a half-
+        # applied composite (e.g., new monitor flag, old pitch). The
+        # queue+drain mechanism applies all four atomically at the
+        # next chunk boundary.
+        #
+        # chunk_seconds / output_latency_ms still need an engine
+        # restart to bite (they're set at sounddevice/pacat init) so
+        # they are NOT routed through the queue -- the queue only
+        # covers live-tunable fields the engine reads per-chunk.
+        self.engine.request_cfg_update(
+            {
+                "f0_up_key": self.cfg.f0_up_key,
+                "sid": self.cfg.sid,
+                "monitor": self.cfg.monitor,
+                "input_gain_db": self.cfg.input_gain_db,
+            }
+        )
         self.pitch = self.cfg.f0_up_key
         # The actual model swap - this is the v0.4.1 fix.
         new_model = (
