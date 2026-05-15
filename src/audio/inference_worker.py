@@ -154,7 +154,7 @@ def child_main(
         # Make `audio.engine` importable from the child.
         _src_root = Path(__file__).resolve().parent.parent
         if str(_src_root) not in sys.path:
-            sys.path.insert(0, str(_src_root))
+            sys.path.append(str(_src_root))
 
         from audio.engine import EngineConfig, RealtimeEngine
 

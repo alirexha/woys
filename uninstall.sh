@@ -20,6 +20,31 @@
 
 set -euo pipefail
 
+# review F-05-05 (commit-061): validate $HOME before
+# deriving the paths we rm-rf below. See install.sh for the
+# matching guard.
+if [ -z "${HOME:-}" ]; then
+    printf '\n[uninstall] error: HOME is unset; refusing to derive paths.\n' >&2
+    exit 1
+fi
+case "$HOME" in
+    /*) ;;  # absolute -- OK
+    *)
+        printf '\n[uninstall] error: HOME=%s is not an absolute path; refusing.\n' "$HOME" >&2
+        exit 1
+        ;;
+esac
+if [ ! -d "$HOME" ]; then
+    printf '\n[uninstall] error: HOME=%s does not exist or is not a directory.\n' "$HOME" >&2
+    exit 1
+fi
+_home_uid="$(stat -c '%u' "$HOME" 2>/dev/null || stat -f '%u' "$HOME")"
+if [ "${_home_uid:-}" != "$(id -u)" ]; then
+    printf '\n[uninstall] error: HOME=%s is owned by uid=%s, not our uid=%s; refusing.\n' \
+        "$HOME" "${_home_uid:-?}" "$(id -u)" >&2
+    exit 1
+fi
+
 APP_HOME="$HOME/.local/share/woys"
 LEGACY_APP_HOME="$HOME/.local/share/vcclient-cachy"
 BIN_DIR="$HOME/.local/bin"

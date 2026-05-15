@@ -140,7 +140,7 @@ def _probe_pth_metadata(pth_path: Path, *, trust_pickle: bool = False) -> _RVCMe
     sr = int(config[-1])
 
     # Late import upstream's enum so we feed _export2onnx the right strings.
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
+    sys.path.append(str(Path(__file__).resolve().parent.parent / "server"))
     from const import EnumInferenceTypes  # type: ignore[import-not-found]
 
     if config_len == 18:
@@ -372,7 +372,7 @@ def convert_pth_to_onnx(
 
     # Late-import upstream's _export2onnx. The opset arg isn't in upstream's
     # signature; we pass it through via monkey-patching torch.onnx.export.
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
+    sys.path.append(str(Path(__file__).resolve().parent.parent / "server"))
     import torch
     from voice_changer.RVC.onnxExporter.export2onnx import (  # type: ignore[import-not-found]
         _export2onnx,

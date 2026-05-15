@@ -524,11 +524,24 @@ def save_config(cfg: AppConfig, path: Path = CONFIG_FILE) -> None:
     # symlink-replace; O_EXCL refuses to follow). Plus fsync before
     # replace per C268 so power-loss-during-write doesn't corrupt config.
     tmp = path.with_suffix(path.suffix + ".tmp")
-    # Clean up any stale tmp file from a crashed prior write (own UID
-    # only, since the parent dir is XDG_CONFIG_HOME).
-    if tmp.exists():
-        tmp.unlink()
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    # review F-03-13 / F-05-10 (commit-061): drop the
+    # `if tmp.exists(): tmp.unlink()` pre-step that pre-fix lived
+    # here. That was a classic TOCTOU dance: an attacker (or a
+    # crashed prior write that happened to be in flight) could
+    # land a symlink at `tmp` between the `.exists()` and the
+    # `.unlink()`. Just open with O_CREAT|O_EXCL and handle
+    # FileExistsError -- if a stale tmp is there, unlink under
+    # `O_NOFOLLOW`-safe semantics by retrying once.
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # Stale tmp from a crashed prior write. Unlink + retry.
+        # The parent dir is XDG_CONFIG_HOME (~/.config/woys),
+        # mode 0700 -- a cross-UID symlink here would have had to
+        # cross the parent dir's perm boundary.
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "wb") as f:
             tomli_w.dump(data, f)
