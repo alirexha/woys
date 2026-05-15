@@ -45,15 +45,17 @@ def _runtime_dir() -> Path:
     """Pick the same dir that tui.control uses for the socket so the
     lock and the socket live next to each other.
 
-    Priority:
-      1. `$XDG_RUNTIME_DIR/woys/`  (preferred; user-private, tmpfs)
-      2. `/tmp/woys-{uid}/`        (fallback; ownership/mode protected
-                                    by the caller in tui/control.py)
+    review F-32-02 (commit-047, closes F-cx4-002): delegates to
+    `woys.xdg.safe_runtime_dir`, which enforces `mode=0700, exist_
+    ok=False` on the `/tmp` fallback creation and lstat-refuses any
+    pre-existing fallback that's not owned by us with strict mode.
+    Pre-fix the comment falsely claimed the fallback's mode was
+    "protected by the caller in tui/control.py" -- a Hard Rule 1
+    chain because `tui/control.py` set no mode either.
     """
-    xdg = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg:
-        return Path(xdg) / "woys"
-    return Path(f"/tmp/woys-{os.getuid()}")
+    from woys.xdg import safe_runtime_dir
+
+    return safe_runtime_dir()
 
 
 @contextmanager
@@ -68,7 +70,8 @@ def acquire_instance_lock() -> Iterator[Path]:
     OR when the holding process dies (kernel closes the fd).
     """
     runtime_dir = _runtime_dir()
-    runtime_dir.mkdir(parents=True, exist_ok=True)
+    # safe_runtime_dir() already created the dir with mode 0700; no
+    # post-creation mkdir needed here. F-32-02.
     lock_path = runtime_dir / "instance.lock"
 
     # O_RDWR so we can write our PID after acquiring; O_CREAT so the

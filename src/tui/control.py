@@ -52,31 +52,38 @@ logger = logging.getLogger("woys.control")
 
 def _runtime_dir() -> Path:
     """Resolve the user's runtime dir for woys ephemera (control socket,
-    slow-chunk log, etc.). Prefers XDG_RUNTIME_DIR (mode 0700 by spec);
-    falls back to /tmp/woys-<uid>/ for systems that don't set it."""
-    base = os.environ.get("XDG_RUNTIME_DIR")
-    if base:
-        return Path(base) / "woys"
-    return Path("/tmp") / f"woys-{os.getuid()}"
+    slow-chunk log, etc.).
+
+    review F-32-02 (commit-047, closes F-05-06, F-32-11,
+    F-cx4-002): delegates to `woys.xdg.safe_runtime_dir`, which does:
+      * `mode=0700, exist_ok=True` on the XDG branch (mode-belt-and-
+        braces; systemd-logind already sets `$XDG_RUNTIME_DIR` to
+        0700 per spec);
+      * `mode=0o700, exist_ok=False` on the `/tmp` fallback first
+        creation; if pre-existing, lstat-refused unless real-dir +
+        own-UID + no group/other perms.
+
+    Pre-fix this function did `mkdir(parents=True, exist_ok=True)`
+    with no mode -- inherited the process umask (typically 0022,
+    world-traversable 0755). A co-resident attacker could pre-create
+    or symlink `/tmp/woys-{uid}` and position themselves around the
+    control channel. The pre-fix code comment falsely claimed "the
+    symlink TOCTOU surface closes" -- true only on the XDG branch.
+    """
+    from woys.xdg import safe_runtime_dir
+
+    return safe_runtime_dir()
 
 
 def control_socket_path() -> Path:
-    out = _runtime_dir() / "control.sock"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    return out
+    # The runtime-dir is created by safe_runtime_dir() with mode 0700.
+    return _runtime_dir() / "control.sock"
 
 
 def runtime_path(name: str) -> Path:
-    """Return `<runtime_dir>/<name>` and ensure the parent exists.
-
-    B13 / corr-012 / sec-002: replaces predictable `/tmp/woys-*` paths
-    that were symlink-attackable on multi-user systems. XDG_RUNTIME_DIR
-    is mode 0700 by the systemd-logind contract, so the symlink TOCTOU
-    surface closes.
-    """
-    rt = _runtime_dir()
-    rt.mkdir(parents=True, exist_ok=True)
-    return rt / name
+    """Return `<runtime_dir>/<name>`. The directory is guaranteed
+    to exist + safe-mode by `safe_runtime_dir()` (commit-047)."""
+    return _runtime_dir() / name
 
 
 HandlerFn = Callable[[str], str]
