@@ -372,11 +372,28 @@ def convert_pth_to_onnx(
 
     # Late-import upstream's _export2onnx. The opset arg isn't in upstream's
     # signature; we pass it through via monkey-patching torch.onnx.export.
+    #
+    # review F-19-11 (commit-069): the upstream subtree imports
+    # fastapi / uvicorn / python-socketio / python-multipart /
+    # websockets / pyOpenSSL transitively. Pre-fix these were
+    # mandatory runtime deps; now they live in the `[convert]`
+    # optional extra. Surface an actionable install hint if the
+    # user runs `woys convert` on a default install.
     sys.path.append(str(Path(__file__).resolve().parent.parent / "server"))
-    import torch
-    from voice_changer.RVC.onnxExporter.export2onnx import (  # type: ignore[import-not-found]
-        _export2onnx,
-    )
+    try:
+        import torch
+        from voice_changer.RVC.onnxExporter.export2onnx import (  # type: ignore[import-not-found]
+            _export2onnx,
+        )
+    except ImportError as e:
+        raise RuntimeError(
+            f"woys convert needs the [convert] extra. Install it with:\n"
+            f"  pip install -e '.[convert]'   (from the repo checkout)\n"
+            f"  -- or --\n"
+            f"  pip install 'woys[convert]'   (if installed from a wheel)\n"
+            f"\n"
+            f"(missing import: {type(e).__name__}: {e})"
+        ) from e
 
     metadata_dict = {
         "modelType": meta.modelType,
