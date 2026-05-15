@@ -1154,6 +1154,25 @@ def _set_pdeathsig() -> None:
             pass
 
 
+@dataclass
+class _SwapRequest:
+    """review F-03-02 + F-13-12: a single queued model-swap with a
+    per-call completion event. The TUI / socket caller holds the
+    `completion` event after `request_model_swap()` returns and waits
+    on IT specifically (not a shared broadcast Event) so two rapid
+    swaps cannot collapse into one false-done.
+
+    `error` is set by `_maybe_swap_model` when the swap fails (e.g.,
+    subprocess InferenceError) so the caller can distinguish "done"
+    from "failed". Pre-fix the single broadcast Event had no way to
+    convey failure.
+    """
+
+    target: Path
+    completion: threading.Event = field(default_factory=threading.Event)
+    error: BaseException | None = None
+
+
 class CpuFallbackError(RuntimeError):
     """review F-merged-001 (P0): ONNX Runtime bound a session CPU-only
     while a CUDA execution provider was available.
@@ -1709,18 +1728,36 @@ class RealtimeEngine:
             dtype=np.float32,
         )
 
-        # v0.4.1 hot-swap: the worker thread checks this slot at the top of
-        # each chunk. The TUI / socket sets it via `request_model_swap`.
-        self._pending_model_swap: Path | None = None
+        # v0.4.1 hot-swap + review F-03-02 + F-13-12 (commit-042-
+        # 043): queued model-swap requests with PER-CALL completion
+        # events. Pre-fix this was a single `_pending_model_swap: Path
+        # | None` slot + a shared `_swap_done: threading.Event`. Two
+        # rapid swap requests collapsed (the second overwrote the
+        # first in the single slot, so voice-A was silently dropped);
+        # the broadcast `_swap_done.set()` released ALL waiters when
+        # only ONE swap had actually applied -- so Job A reported
+        # "done" even though voice-A never loaded. Defeated B5/
+        # corr-003. Hard Rule 2 silent-failure.
+        #
+        # F-13-12: `_swap_done.set()` had three setter sites, all
+        # inside `_maybe_swap_model` (engine-thread). `stop()` never
+        # set it, so if the engine stopped with a swap in flight the
+        # JobRegistry daemon thread parked for the full 10 s timeout.
+        # Reachable via the ordinary "queue a swap, toggle off"
+        # sequence.
+        #
+        # Post-fix `request_model_swap` enqueues a `_SwapRequest`
+        # (target + per-call event) and returns the event. The worker
+        # drains the queue at each chunk boundary, applies each swap
+        # in order, and sets the event of the swap it just completed.
+        # `stop()` resolves every outstanding event in teardown
+        # (F-13-12) so callers never park.
+        self._swap_queue: queue.Queue[_SwapRequest] = queue.Queue()
         self._swap_lock = threading.Lock()
-        # B5 / corr-003: TUI poll sites previously checked
-        # `_pending_model_swap is None` to know "swap done" - but the slot was
-        # cleared at the START of `_maybe_swap_model`, before the actual work.
-        # So the TUI replied "done" while the worker was still loading the new
-        # model (~600 ms cold-cache cuDNN tune). Add an Event that's set AFTER
-        # the swap completes; TUI waits on this instead.
-        self._swap_done = threading.Event()
-        self._swap_done.set()  # initial state = idle, no swap in flight
+        # Per-call completion events that the engine still owes a
+        # `.set()` to. Used by `stop()` to resolve every outstanding
+        # waiter in teardown.
+        self._outstanding_swaps: list[_SwapRequest] = []
         # Promoted so _maybe_swap can flush the SOLA tail through the same
         # pacat process the worker already owns. v0.5.2: protected by
         # `_pacat_lock` so the watchdog can swap the handle atomically.
@@ -2059,15 +2096,40 @@ class RealtimeEngine:
             self._rvc = prev_rvc
             self._is_half = prev_is_half
 
-    def request_model_swap(self, path: Path) -> None:
-        """Thread-safe: queue a model swap for the worker to pick up at the
-        next chunk boundary. Returns immediately. Idempotent - repeat calls
-        replace the pending target. The SOLA tail is drained before the
-        swap so consecutive chunks crossfade cleanly across the boundary.
+    def request_model_swap(self, path: Path) -> threading.Event:
+        """Thread-safe: queue a model swap and return a PER-CALL
+        completion event the caller waits on.
+
+        review F-03-02 + F-13-12 (commit-042-043): pre-fix this
+        method overwrote a single `_pending_model_swap` slot and
+        cleared a SHARED `_swap_done` Event -- two rapid swaps
+        collapsed (the second overwrote the first; voice A was
+        silently dropped) and the broadcast `_swap_done.set()`
+        released all waiters when only one swap had applied. Defeated
+        B5/corr-003.
+
+        Post-fix every request lands as its own `_SwapRequest` in
+        `self._swap_queue`. The returned `threading.Event` is THE
+        event the worker will `.set()` when THIS specific swap
+        completes. F-13-12: if the engine is stopped (or stopping)
+        when this is called, the event is resolved immediately so
+        the caller never parks.
         """
+        req = _SwapRequest(target=Path(path))
         with self._swap_lock:
-            self._pending_model_swap = Path(path)
-            self._swap_done.clear()  # signal "swap in flight" to TUI poll sites
+            if self._stopped:
+                # F-13-12: a STOPPED engine cannot drain the queue --
+                # resolve the event immediately so callers don't park
+                # for the full 10 s JobRegistry timeout. A never-
+                # started engine still queues (used by tests +
+                # script-only flows where `_maybe_swap_model` is
+                # called manually).
+                req.error = RuntimeError("engine stopped; swap not applied")
+                req.completion.set()
+                return req.completion
+            self._swap_queue.put(req)
+            self._outstanding_swaps.append(req)
+        return req.completion
 
     def request_cfg_update(self, updates: dict[str, Any]) -> None:
         """Thread-safe: queue a multi-field cfg update for the worker to
@@ -2113,28 +2175,38 @@ class RealtimeEngine:
                 setattr(self.cfg, field_name, value)
 
     def _maybe_swap_model(self) -> None:
-        """Worker-side hook: if a swap was queued, flush SOLA tail then
-        replace the RVC session and reset streaming state. Called from
-        `_run_loop` at the top of each chunk."""
+        """Worker-side hook: drain any queued swap requests, applying
+        each in order. Called from `_run_loop` at the top of each
+        chunk.
+
+        review F-03-02: pre-fix the single-slot pattern collapsed
+        rapid swaps. Post-fix every queued `_SwapRequest` is applied
+        in order; each completion event fires when ITS swap finishes
+        (not the broadcast Event of the pre-fix code)."""
+        requests: list[_SwapRequest] = []
         with self._swap_lock:
-            target = self._pending_model_swap
-            self._pending_model_swap = None
-        if target is None:
+            while True:
+                try:
+                    requests.append(self._swap_queue.get_nowait())
+                except queue.Empty:
+                    break
+        if not requests:
             return
-        # The actual swap work happens below. `_swap_done` stays cleared
-        # until we either complete the work or hit a fatal error path.
-        # Drain SOLA's held-back tail so the last ~50 ms of the *old* voice
-        # plays out before the new session takes over. Tail is at the OLD
-        # model's output rate, not necessarily 16 kHz. v0.5.2: route through
-        # the writer queue so we don't bypass the BrokenPipe / xrun-counter
-        # plumbing.
-        # v0.14.0 (Lens 4 / C002): track whether the output resampler was
-        # finalized via flush(). soxr's ResampleStream rejects further
-        # `resample_chunk()` calls after `last=True`. The post-swap path
-        # below MUST rebuild `_resampler_out` if this flag is set, even
-        # when the new model's output rate equals the old (the pre-fix
-        # `if new_sr != self._rvc_output_sr` check skipped the rebuild
-        # for same-rate swaps and the next chunk crashed the engine).
+        for req in requests:
+            self._apply_one_swap(req)
+
+    def _apply_one_swap(self, req: _SwapRequest) -> None:
+        """Apply a single `_SwapRequest`: flush SOLA tail, drain writer,
+        swap the session, reset streaming state, set the per-call
+        completion event. Failures are recorded on `req.error`; the
+        event is set regardless so the caller never parks.
+
+        Extracted from the legacy `_maybe_swap_model` body so each
+        queued swap gets the same treatment (SOLA flush + writer
+        drain + session reset). For multi-swap drains the SOLA flush
+        happens per-swap -- the user requested each one and each
+        deserves a clean transition."""
+        target = req.target
         resampler_out_was_flushed = False
         if self._sola is not None:
             with contextlib.suppress(Exception):
@@ -2182,7 +2254,7 @@ class RealtimeEngine:
                     self._rebuild_sola_for_rate(new_sr)
                 self._rvc_output_sr = new_sr
                 self.reset_streaming_state()
-                self._swap_done.set()
+                self._resolve_swap(req)
                 return
             except InferenceError as e:
                 # B6 / corr-004: do NOT silently fall through. The in-process
@@ -2194,7 +2266,8 @@ class RealtimeEngine:
                     f"flip `inference_subprocess=false` to fall back to "
                     f"in-process inference."
                 )
-                self._swap_done.set()
+                req.error = e
+                self._resolve_swap(req)
                 self._stop_event.set()
                 return
 
@@ -2218,8 +2291,18 @@ class RealtimeEngine:
         self._rvc_output_sr = new_sr
         self.reset_streaming_state()
         # B5: signal "swap complete" AFTER all the work. TUI poll sites
-        # waiting on `_swap_done.is_set()` now correctly observe done-state.
-        self._swap_done.set()
+        # waiting on the per-call event now correctly observe done-state.
+        self._resolve_swap(req)
+
+    def _resolve_swap(self, req: _SwapRequest) -> None:
+        """Set the per-call completion event and drop the request
+        from `_outstanding_swaps`. Safe to call from the engine
+        thread (via `_apply_one_swap`) or from `stop()` teardown
+        (where `req.error` is set first)."""
+        req.completion.set()
+        with self._swap_lock, contextlib.suppress(ValueError):
+            # already removed (double-resolve) -> ValueError is fine.
+            self._outstanding_swaps.remove(req)
 
     # ---- inference ----------------------------------------------------------
 
@@ -2775,6 +2858,27 @@ class RealtimeEngine:
             if self._stopped:
                 return
             self._stop_event.set()
+            # review F-13-12: resolve every outstanding swap
+            # waiter BEFORE we start the slow teardown. Pre-fix
+            # `_swap_done` was never set in `stop()`, so a JobRegistry
+            # daemon thread parked the full 10 s timeout on the
+            # "queue a swap, toggle off" sequence. With per-call
+            # events, we walk the outstanding list and resolve each
+            # with an "engine stopped" error.
+            with self._swap_lock:
+                pending = list(self._outstanding_swaps)
+                self._outstanding_swaps.clear()
+                # Also drain any queued requests that the worker
+                # never got to.
+                while True:
+                    try:
+                        pending.append(self._swap_queue.get_nowait())
+                    except queue.Empty:
+                        break
+            for req in pending:
+                if not req.completion.is_set():
+                    req.error = RuntimeError("engine stopped before swap completed")
+                    req.completion.set()
             if self._thread:
                 self._thread.join(timeout=timeout)
             self.stats.running = False
