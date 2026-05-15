@@ -2,11 +2,12 @@
 
 Live tracking of phase status. Updated continuously during autonomous execution.
 
-## Current status — v0.13.3 shipped; v0.14.0 review cycle in progress (2026-05-10)
+## Current status — v0.14.3 shipped; review Phase 6 cleanup in progress (2026-05-15)
 
-`v0.13.3` is the latest tag. The v0.14.0 release candidate cycle is currently
-running an external "review" audit (`docs/24-review/`) and
-backfilling the remaining doc-drift fixes.
+`v0.14.3` is the latest tag. The review Phase 6 cleanup
+(`docs/26-review/`) is currently landing the verdict-gated fix
+batch on the `review-phase6` branch — see
+`docs/26-review/phase-5-verdicts.md` for the ordered fix list.
 
 Release-by-release summary since the v0.6.0 rename. CHANGELOG.md is the
 authoritative chronology — this section is just the headline-per-release
@@ -14,6 +15,10 @@ view.
 
 | Version | Date       | Headline |
 |---------|------------|----------|
+| v0.14.3 | 2026-05-10 | Pure rollback of v0.14.2 (filter-chain conf broke system audio); v0.14.1 stays the daily-driver architecture |
+| v0.14.2 | 2026-05-10 | (yanked) filter-chain.conf attempt — rolled back; see LESSONS §46 |
+| v0.14.1 | 2026-05-10 | RNNoise post-engine chain with single-default dropdown visibility |
+| v0.14.0 | 2026-05-07 | Lens 1–19 audit batch landed (instance lock; SIGINT/SIGTERM ordering; HF pin-to-SHA; pickle consent gate; `chunk_seconds` plumb-through) |
 | v0.13.3 | 2026-05-09 | Friendly source descriptions in app dropdowns (`woys-by-alirexha` + `woys-no-cleanup`) |
 | v0.13.2 | 2026-05-09 | Fix v0.13.0 RNNoise chain ALSA leak (`media.class` mismatch); systemd unit lifecycle |
 | v0.13.1 | 2026-05-09 | TUI `m` monitor toggle; leftover vcclient/VCClient strings cleaned |
@@ -31,9 +36,9 @@ view.
 | v0.6.x  | 2026-05-05 | Defaults canonicalization; micro-cut investigation rounds 1–4 |
 | v0.6.0  | 2026-05-05 | Project renamed `vcclient-cachy` → `woys` |
 
-Dev-environment snapshot, defaults, and DoD status as of v0.13.3:
+Dev-environment snapshot, defaults, and DoD status as of v0.14.3:
 
-- 176 fast tests + 15 slow tests; ruff + mypy --strict clean over `src/{woys,audio,tui}/` and `tests/`.
+- 238 fast tests + 15 slow tests; ruff + mypy --strict clean over `src/{woys,audio,tui}/` and `tests/`.
 - Total e2e latency: ~640 ms (v0.12.4 listener-test optimum). Inference ~45 ms warm with `gpu_anti_jitter_mode='both'`.
 - VRAM: ~1.35 GiB stable for foundation + a single RVC voice loaded.
 - The PipeWire SOURCE name `woys-mic` is unchanged since v0.6.5; v0.13.x adds `woys-by-alirexha` (RNNoise-cleaned) and `woys-no-cleanup` (raw fallback) as friendly aliases when the chain is enabled.

@@ -1,6 +1,12 @@
 [project]
 name = "woys"
-version = "0.14.3"
+# Single source of truth: src/woys/__init__.py::__version__. Read here by
+# hatchling at build time (see [tool.hatch.version] at the bottom of the
+# file). Pre-commit-027 this was a hand-duplicated literal that drifted
+# from every other version-bearing surface (README/PROGRESS/PKGBUILD/
+# `woys chain --help`) — F-merged-029. Bump the version by editing
+# `src/woys/__init__.py` then running `python scripts/release.py`.
+dynamic = ["version"]
 description = "Linux-native real-time voice changer. RVC-only on ONNX Runtime CUDA, PipeWire-native, terminal-controlled."
 authors = [{ name = "Alireza Hamayeli", email = "alireza.hmyl@gmail.com" }]
 license = { file = "LICENSE" }
@@ -29,6 +35,11 @@ dependencies = [
     # ML / inference
     "numpy>=1.26,<2.2",
     "scipy>=1.13",
+    # pin-bump (F-cx5-01): re-verify `_gated_torch_load`'s keyword-only
+    # assumption (src/woys/convert.py) and `export2onnx.py:61`'s call signature
+    # against `torch.load`'s defaults before raising the upper bound. The
+    # `weights_only` default flipped to True in torch 2.6; the consent gate
+    # currently relies on that not having flipped silently.
     "torch>=2.4,<2.6",
     "torchaudio>=2.4,<2.6",
     "onnxruntime-gpu>=1.20,<1.23",
@@ -93,6 +104,13 @@ woys = "woys.cli:main"
 [build-system]
 requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+# Hatch reads __version__ out of src/woys/__init__.py at build time.
+# The `# pin-bump: re-verify _gated_torch_load + export2onnx torch.load
+# signature` note on the torch pin (`torch>=2.4,<2.6` above) intentionally
+# stays at the pin site, not here.
+path = "src/woys/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/woys", "src/server", "src/audio", "src/tui"]

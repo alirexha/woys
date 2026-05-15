@@ -60,11 +60,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       # requirements.txt must be the exact `uv pip compile` output of
-      # pyproject.toml. NOTE: this gate is expected RED until F-merged-004
-      # (commit-029) regenerates requirements.txt — it currently still pins
-      # the removed `dasbus`. A red result here is the gate working, not a
-      # broken pipeline.
+      # pyproject.toml. F-merged-004 (commit-029) regenerated the file
+      # after F-merged-029 (commit-027) made hatch read the version
+      # dynamically; this gate keeps it that way.
       - name: requirements.txt is in sync with pyproject.toml
         run: |
           uv pip compile pyproject.toml -o requirements.txt --quiet
           git diff --exit-code requirements.txt
+
+  version-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # F-merged-029: keep src/woys/__init__.py::__version__ in sync with
+      # the documentation surfaces that historically drifted (README.md
+      # "## Status (vX.Y.Z)" header, pkg/PKGBUILD pkgver=). Run
+      # `python scripts/release.py` after bumping __init__.py to make this
+      # green; the gate fails the build otherwise.
+      - name: version drift across user-facing surfaces
+        run: bash scripts/check_version_drift.sh

@@ -7,7 +7,7 @@
 
 Linux-native real-time voice changer. RVC-only, ONNX Runtime CUDA, PipeWire-native, terminal-controlled. Originally targeted CachyOS; runs on any modern Linux with PipeWire + an NVIDIA GPU.
 
-## Status (v0.13.3)
+## Status (v0.14.3)
 
 Daily-use ready on RTX 2070 Mobile. The user's perceptual A/B
 test (Desktop WAV listening) ratified the v0.12.3 sweep top-1
