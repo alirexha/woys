@@ -139,23 +139,36 @@ def test_request_model_swap_replaces_rvc_session() -> None:
     assert first_session is not None
     assert eng.cfg.rvc_model == a
 
-    eng.request_model_swap(b)
-    assert eng._pending_model_swap == b
+    completion = eng.request_model_swap(b)
+    assert not completion.is_set()
     eng._maybe_swap_model()
-    assert eng._pending_model_swap is None
+    assert completion.is_set(), "per-call completion event must fire after the swap applies"
     assert eng.cfg.rvc_model == b
     # New ORT session, not the same Python object as before.
     assert eng._rvc is not first_session
 
 
-def test_request_model_swap_is_idempotent_replace() -> None:
-    """Two queue-and-replace calls leave the most-recent target pending."""
+def test_request_model_swap_queues_each_request_per_call_event() -> None:
+    """review F-03-02 (commit-042-043): pre-fix two requests
+    collapsed into a single `_pending_model_swap` slot -- voiceA was
+    silently dropped and a broadcast `_swap_done.set()` falsely
+    released voiceA's waiter as "done". Post-fix each request lands
+    as its own `_SwapRequest` on the queue with its OWN completion
+    event, so neither swap can be silently dropped and each waiter
+    waits on its own swap."""
     from audio.engine import EngineConfig, RealtimeEngine
 
     eng = RealtimeEngine(EngineConfig(chunk_seconds=0.1))
-    eng.request_model_swap(Path("/tmp/first.onnx"))
-    eng.request_model_swap(Path("/tmp/second.onnx"))
-    assert eng._pending_model_swap == Path("/tmp/second.onnx")
+    e1 = eng.request_model_swap(Path("/tmp/first.onnx"))
+    e2 = eng.request_model_swap(Path("/tmp/second.onnx"))
+    # Two distinct per-call events, neither set yet (engine never
+    # drained the queue).
+    assert e1 is not e2
+    assert not e1.is_set()
+    assert not e2.is_set()
+    # Both requests in the queue (no collapse).
+    assert eng._swap_queue.qsize() == 2
+    assert len(eng._outstanding_swaps) == 2
 
 
 def test_status_handler_includes_model_name() -> None:

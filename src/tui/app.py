@@ -320,9 +320,15 @@ class WoysApp(App[int]):
             # swap and waits for the worker to apply it.
             def do_swap() -> None:
                 self._swap_in_flight = new_path.name
+                # review F-03-02: capture the PER-CALL completion
+                # event returned by request_model_swap. Pre-fix the
+                # waiter watched a shared `engine._swap_done`, which
+                # released ALL pending waiters on the FIRST swap to
+                # complete -- so rapid swaps reported false-done.
+                completion_holder: list[threading.Event] = []
 
                 def apply_main() -> None:
-                    self.engine.request_model_swap(new_path)
+                    completion_holder.append(self.engine.request_model_swap(new_path))
                     self.cfg.rvc_model = str(new_path.resolve())
                     # v0.5.0: model swap also updates the active profile name
                     # if a profile saved that exact rvc_model exists. This
@@ -333,13 +339,8 @@ class WoysApp(App[int]):
                     save_config(self.cfg)
 
                 self.call_from_thread(apply_main)
-
-                # B5 / corr-003: wait on `_swap_done` Event (set AFTER the
-                # worker finishes the swap), not on `_pending_model_swap` -
-                # the latter is cleared at the START of the swap, so the
-                # JOB used to report "done" while the worker was still
-                # cuDNN-tuning for ~600 ms.
-                self.engine._swap_done.wait(timeout=10.0)
+                if completion_holder:
+                    completion_holder[0].wait(timeout=10.0)
                 self._swap_in_flight = None
 
             jid = self._jobs.submit(do_swap)
@@ -349,13 +350,17 @@ class WoysApp(App[int]):
 
             def do_profile() -> None:
                 self._swap_in_flight = target
+                completion_holder: list[threading.Event | None] = []
 
                 def apply_main() -> None:
-                    self._apply_profile_named(target)
+                    completion_holder.append(self._apply_profile_named(target))
 
                 self.call_from_thread(apply_main)
-                # B5: same wait-on-Event pattern as MODEL above.
-                self.engine._swap_done.wait(timeout=10.0)
+                # review F-03-02: wait on the PER-CALL event the
+                # profile-apply returned (None if the model didn't
+                # change -- in that case there's nothing to wait for).
+                if completion_holder and completion_holder[0] is not None:
+                    completion_holder[0].wait(timeout=10.0)
                 self._swap_in_flight = None
 
             jid = self._jobs.submit(do_profile)
@@ -485,13 +490,15 @@ class WoysApp(App[int]):
 
         def _runner() -> None:
             self._swap_in_flight = next_name
+            completion_holder: list[threading.Event | None] = []
 
             def apply_main() -> None:
-                self._apply_profile_named(next_name)
+                completion_holder.append(self._apply_profile_named(next_name))
 
             self.call_from_thread(apply_main)
-            # B5: wait on the swap-done Event, not the request flag.
-            self.engine._swap_done.wait(timeout=10.0)
+            # review F-03-02: wait on the per-call event.
+            if completion_holder and completion_holder[0] is not None:
+                completion_holder[0].wait(timeout=10.0)
             self._swap_in_flight = None
 
         self._jobs.submit(_runner)
@@ -511,14 +518,19 @@ class WoysApp(App[int]):
                 return name
         return None
 
-    def _apply_profile_named(self, name: str) -> None:
+    def _apply_profile_named(self, name: str) -> threading.Event | None:
         """Apply a saved profile to both `self.cfg` and `self.engine`. The
-        RVC model swap is queued via `request_model_swap` and takes effect
-        at the next chunk boundary in the worker (≤ chunk_seconds + a few
-        ms cudnn-cache lookups for the new shape)."""
+        RVC model swap is queued via `request_model_swap` and takes
+        effect at the next chunk boundary.
+
+        Returns the per-call completion event from the model swap (if a
+        swap was triggered) or `None` (if the profile didn't change the
+        active model). The PROFILE socket handler waits on the returned
+        event so the JobRegistry reports done only when the swap
+        actually completes. review F-03-02."""
         if not apply_profile(self.cfg, name):
             self.notify(f"failed to apply profile {name!r}", severity="error", timeout=4)
-            return
+            return None
         self._active_profile = name
         # review F-merged-017 (commit-040b): route the multi-field
         # cfg update through `request_cfg_update`. Pre-fix the four
@@ -549,8 +561,9 @@ class WoysApp(App[int]):
             if self.cfg.rvc_model and Path(self.cfg.rvc_model).exists()
             else None
         )
+        swap_completion: threading.Event | None = None
         if new_model is not None and new_model != self.engine.cfg.rvc_model:
-            self.engine.request_model_swap(new_model)
+            swap_completion = self.engine.request_model_swap(new_model)
             self.notify(
                 f"profile → {name} (loading {new_model.name}, pitch {self.cfg.f0_up_key:+d})",
                 severity="information",
@@ -563,6 +576,7 @@ class WoysApp(App[int]):
                 timeout=2,
             )
         save_config(self.cfg)
+        return swap_completion
 
     def action_save_cfg(self) -> None:
         save_config(self.cfg)
