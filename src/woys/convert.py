@@ -171,6 +171,123 @@ def _probe_pth_metadata(pth_path: Path, *, trust_pickle: bool = False) -> _RVCMe
     )
 
 
+# review F-31-09: post-export fp16 numerical quality gate.
+# Pre-fix the only validation on `--fp16` exports was `_validate_onnx_loads`
+# (load + I/O names). The docstring on `convert_pth_to_onnx` admitted that
+# v1 models "often degrade", but nothing in the export pipeline measured
+# the actual degradation -- the user discovered it by ear, possibly mid-
+# call. The gate runs the fp16 model and an fp32 reference on a fixed
+# seeded input, computes SNR (signal-to-noise ratio in dB), and prints a
+# loud stderr warning when SNR falls below the threshold.
+#
+# Threshold rationale: fp16 vs fp32 SNR for a healthy RVC v2 conversion
+# is typically 35-55 dB on the engine's typical input. 30 dB is the
+# audibility floor (the gap between perceptually-identical and "you can
+# tell" on a clean tone). 20 dB is severe -- catastrophic clipping or a
+# broken op. The default surfaces the value either way so the user has a
+# numeric quality readout to compare against future builds.
+_FP16_SNR_THRESHOLD_DB = 30.0
+
+
+def _fp16_quality_gate(
+    fp16_path: Path,
+    fp32_path: Path,
+    *,
+    is_f0: bool,
+    emb_channels: int,
+    snr_threshold_db: float = _FP16_SNR_THRESHOLD_DB,
+    n_frames: int = 100,
+    seed: int = 42,
+) -> float:
+    """Run ORT on both ONNX files with seeded synthetic inputs and return
+    the fp16-vs-fp32 SNR in dB.
+
+    A SNR below `snr_threshold_db` emits a loud stderr warning naming
+    the measurement and the threshold. The caller can decide whether to
+    abort the export, but this function never raises on quality (only
+    on shape mismatches between the two outputs, which would be a real
+    structural bug).
+
+    Inputs follow the engine's `_infer` signature:
+    - `feats` (1, T, emb_channels) -- float32 (or fp16 cast for the
+      fp16 model if its input type says so).
+    - `p_len` (1,) -- int64.
+    - `sid` (1,) -- int64.
+    - `pitch` (1, T) / `pitchf` (1, T) when `is_f0=True`.
+
+    Seeded with `np.random.default_rng(seed)` so two runs of the same
+    pair of ONNX files produce the same SNR -- the gate is meant to be
+    a reproducible quality signal, not a sample of in-the-wild audio.
+    """
+    import numpy as np
+    import onnxruntime as ort
+
+    if hasattr(ort, "preload_dlls"):
+        ort.preload_dlls()
+
+    rng = np.random.default_rng(seed)
+    feats = rng.standard_normal((1, n_frames, emb_channels)).astype(np.float32)
+    p_len = np.array([n_frames], dtype=np.int64)
+    sid = np.array([0], dtype=np.int64)
+    inputs: dict[str, np.ndarray[Any, Any]] = {"feats": feats, "p_len": p_len, "sid": sid}
+    if is_f0:
+        pitch = np.full((1, n_frames), 50, dtype=np.int64)
+        pitchf = np.full((1, n_frames), 440.0, dtype=np.float32)
+        inputs["pitch"] = pitch
+        inputs["pitchf"] = pitchf
+
+    sess_fp16 = ort.InferenceSession(str(fp16_path), providers=["CPUExecutionProvider"])
+    sess_fp32 = ort.InferenceSession(str(fp32_path), providers=["CPUExecutionProvider"])
+
+    def _coerce(
+        d: dict[str, np.ndarray[Any, Any]],
+        type_map: dict[str, str],
+    ) -> dict[str, np.ndarray[Any, Any]]:
+        """Cast each input to the dtype the session declares (fp16 if the
+        model's feats input is fp16; everything else stays as-is)."""
+        out: dict[str, np.ndarray[Any, Any]] = {}
+        for k, v in d.items():
+            t = type_map.get(k, "")
+            if "float16" in t and v.dtype == np.float32:
+                out[k] = v.astype(np.float16)
+            else:
+                out[k] = v
+        return out
+
+    types16 = {i.name: i.type for i in sess_fp16.get_inputs()}
+    types32 = {i.name: i.type for i in sess_fp32.get_inputs()}
+    out16 = sess_fp16.run(None, _coerce(inputs, types16))[0]
+    out32 = sess_fp32.run(None, _coerce(inputs, types32))[0]
+
+    a16 = np.asarray(out16, dtype=np.float64)
+    a32 = np.asarray(out32, dtype=np.float64)
+    if a16.shape != a32.shape:
+        raise RuntimeError(f"fp16/fp32 output shape mismatch: {a16.shape} vs {a32.shape}")
+    noise = a16 - a32
+    sig_power = float((a32**2).mean())
+    noise_power = float((noise**2).mean())
+    if noise_power == 0.0:
+        snr_db = float("inf")
+    elif sig_power == 0.0:
+        snr_db = float("-inf")
+    else:
+        snr_db = 10.0 * float(np.log10(sig_power / noise_power))
+
+    print(
+        f"[convert] fp16 quality gate: SNR = {snr_db:.1f} dB (threshold: {snr_threshold_db:.1f} dB)"
+    )
+    if snr_db < snr_threshold_db:
+        print(
+            f"[convert] WARNING: fp16 export degraded -- SNR {snr_db:.1f} dB "
+            f"is below the {snr_threshold_db:.1f} dB threshold. The model "
+            f"may sound noticeably worse than the fp32 export. Consider "
+            f"keeping fp32 (drop --fp16) or validating perceptually before "
+            f"shipping.",
+            file=sys.stderr,
+        )
+    return snr_db
+
+
 def _validate_onnx_loads(onnx_path: Path) -> None:
     """Sanity-check the freshly-exported file: must load in ORT and expose
     the I/O names our engine reads (`feats`, `pitch`/`pitchf`, `audio`)."""
@@ -295,19 +412,26 @@ def convert_pth_to_onnx(
                 return original_torch_load(*args, weights_only=False, **kwargs)
         return original_torch_load(*args, **kwargs)
 
-    try:
-        torch.onnx.export = _export_with_opset
-        torch.load = _gated_torch_load
-        _export2onnx(
-            str(pth_path),
-            str(output_path),
-            str(output_simple),
-            fp16,
-            metadata_dict,
-        )
-    finally:
-        torch.onnx.export = original_export
-        torch.load = original_torch_load
+    def _run_one_export(fp16_arg: bool, out_path: Path, simple_path: Path) -> None:
+        """Single _export2onnx call with the torch.load + torch.onnx.export
+        monkey-patches scoped to its lifetime. Factored so the fp16
+        quality gate (F-31-09) can run a second fp32 reference export
+        without duplicating the patching boilerplate."""
+        try:
+            torch.onnx.export = _export_with_opset
+            torch.load = _gated_torch_load
+            _export2onnx(
+                str(pth_path),
+                str(out_path),
+                str(simple_path),
+                fp16_arg,
+                metadata_dict,
+            )
+        finally:
+            torch.onnx.export = original_export
+            torch.load = original_torch_load
+
+    _run_one_export(fp16, output_path, output_simple)
 
     if not output_path.exists():
         raise RuntimeError(f"export silently failed - {output_path} not created")
@@ -315,6 +439,54 @@ def convert_pth_to_onnx(
     print(f"[convert] wrote {output_path} ({output_path.stat().st_size / 1024 / 1024:.1f} MiB)")
     _validate_onnx_loads(output_path)
     print("[convert] ONNX validation OK - ready for the engine.")
+
+    # review F-31-09: post-export fp16 numerical quality gate.
+    # The docstring on this function says "v1 models often degrade" --
+    # measure that, don't just warn in docs. We do a second fp32 export
+    # to a tmp path, run both through ORT on a seeded reference input,
+    # compute SNR, and emit a loud stderr warning if SNR is below the
+    # audibility floor. The fp32 reference is deleted after the gate.
+    if fp16:
+        # Advisory: v1 models historically degrade under fp16. Embed
+        # channels == 256 is the v1 signature (vs 768 on v2). The
+        # actual SNR will tell the user how bad it is for this model.
+        if meta.embChannels == 256:
+            print(
+                "[convert] note: this is an RVC v1 checkpoint "
+                "(embChannels=256). v1 + fp16 historically produces "
+                "lower SNR than v2 + fp16 -- the gate below measures it.",
+                file=sys.stderr,
+            )
+        fp32_ref = output_path.with_name(output_path.stem + "_fp32_ref.onnx")
+        fp32_ref_simple = fp32_ref.with_name(fp32_ref.stem + "_simple.onnx")
+        try:
+            _run_one_export(False, fp32_ref, fp32_ref_simple)
+            if not fp32_ref.exists():
+                raise RuntimeError(
+                    "fp16 quality gate: fp32 reference export silently failed; skipping SNR check"
+                )
+            _fp16_quality_gate(
+                output_path,
+                fp32_ref,
+                is_f0=meta.f0,
+                emb_channels=meta.embChannels,
+            )
+        except Exception as e:
+            # The quality gate is a safety net; failure to run it must
+            # NOT lose the user's already-completed fp16 export. Surface
+            # what went wrong so they know to validate by ear.
+            print(
+                f"[convert] WARNING: fp16 quality gate skipped "
+                f"({type(e).__name__}: {e}). The fp16 ONNX at "
+                f"{output_path} is the user's; validate quality "
+                f"perceptually before shipping.",
+                file=sys.stderr,
+            )
+        finally:
+            for ref_path in (fp32_ref, fp32_ref_simple):
+                if ref_path.exists():
+                    with contextlib.suppress(OSError):
+                        ref_path.unlink()
 
     # v0.6.6 - `_export2onnx` always writes a `<stem>_simple.onnx` sibling
     # for upstream's stripped-down inference path, but the woys engine only
