@@ -223,6 +223,16 @@ class EngineConfig:
     # (~540 ms → ~640 ms). Conversational threshold (~700 ms) is still
     # comfortably above this; the perceptual delta dwarfs the latency
     # penalty per the user's listening test.
+    #
+    # review F-11-03a (commit-059) honesty caveat: that
+    # "perceptual delta dwarfs the latency penalty" claim is from an
+    # **n=1 author A/B on desktop WAV playback** during v0.12.4. It
+    # has NOT been validated in the production Discord / CS2 VoIP
+    # path, where end-to-end latency stacks (mic capture +
+    # transcoder + Discord's voice-activation gate + the listener's
+    # output buffer) sit on top of the woys engine. Treat 0.25 as
+    # the chosen default for the WAV playback context where the
+    # original A/B happened, not a settled fact for every consumer.
     chunk_seconds: float = 0.25
     channels: int = 1
 
