@@ -102,13 +102,89 @@ def _best_offset(
     regardless of which offset wins. Bidirectional search would let
     us recover from "model emitted slightly early" cases too, but
     real RVC's bias is purely toward late emission, so one-sided is
-    sufficient and matches the reference implementation.
+    sufficient and matches the reference implementation. Hard Rule 1
+    note: the "RVC bias is purely late" claim is an assumed property
+    of the reference implementation, not an in-tree measurement; the
+    one-sided contract follows upstream rather than independent
+    evidence. F-31-05 cluster (commit-079).
+
+    review F-07-03 (commit-077): vectorised. Pre-fix this ran a
+    Python loop over `range(search + 1)` (default 65 iterations
+    per call), each computing `np.linalg.norm(slice_)` + `np.dot(tail,
+    slice_)`. At `chunk_seconds=0.25` and a 100% voiced session the
+    loop fires 4x per second and lights up `_best_offset` in py-spy
+    flame graphs as the dominant pure-Python hot-spot in the SOLA
+    streaming path. The vectorised form uses one `np.correlate` for
+    the numerator (cross-correlation at every offset in one BLAS
+    call) and one cumulative-sum-of-squares for the rolling norm,
+    so the per-call cost is two O(overlap + search) array ops
+    instead of `search+1` Python iterations each doing two BLAS
+    calls. The reference implementation
+    (`_best_offset_loop_reference` below) stays in-module so the
+    parity test in `tests/test_sola_best_offset_vectorised.py` can
+    pin the two paths against each other.
     """
     overlap = len(tail)
     if overlap == 0 or len(head) < overlap + search:
         return 0, True
 
-    # Normalize tail once.
+    # Normalise tail once (fp32 -> Python float; matches the reference).
+    tail_norm = float(np.linalg.norm(tail))
+    if tail_norm < 1e-6:
+        return 0, True
+
+    # Numerator: cross-correlation `sum(head[k : k + overlap] * tail)`
+    # for k in [0, search]. `np.correlate(head, tail, mode='valid')`
+    # returns exactly `len(head) - overlap + 1 = search + 1` samples.
+    corr_num = np.correlate(head, tail, mode="valid")
+
+    # Denominator: rolling L2 norm of `head[k : k + overlap]` across
+    # all valid k. cumsum-of-squares yields the per-window sum-of-
+    # squares in O(len(head)) with no temporaries beyond `head**2`.
+    # fp64 accumulator keeps the rolling sum honest for long overlaps
+    # (default 800 samples) where fp32 partial sums accumulate ~6
+    # ULPs of error -- below the reference's own `np.linalg.norm`
+    # promotion behaviour so the parity test passes within fp32.
+    head_sq = head.astype(np.float64) * head.astype(np.float64)
+    cs = np.empty(head_sq.shape[0] + 1, dtype=np.float64)
+    cs[0] = 0.0
+    np.cumsum(head_sq, out=cs[1:])
+    window_ss = cs[overlap:] - cs[:-overlap]
+    window_norm = np.sqrt(window_ss)
+
+    # Skip windows whose L2 norm is below the same `1e-6` epsilon the
+    # reference uses; without this the division would produce `inf`
+    # in those rows and `argmax` could land on a noise window.
+    safe = window_norm > 1e-6
+    corr = np.full(corr_num.shape, -np.inf, dtype=np.float64)
+    np.divide(corr_num, tail_norm * window_norm, out=corr, where=safe)
+
+    # `argmax` matches the reference's `>`-based tie-break: on a tie
+    # both pick the LOWEST-INDEX winner.
+    best_idx = int(np.argmax(corr))
+    best_corr = float(corr[best_idx])
+
+    if best_corr >= threshold:
+        return best_idx, False
+    return 0, True
+
+
+def _best_offset_loop_reference(
+    tail: NDArrayF32, head: NDArrayF32, search: int, threshold: float
+) -> tuple[int, bool]:
+    """Pre-F-07-03 reference implementation, kept in-module exclusively
+    for the parity test in `tests/test_sola_best_offset_vectorised.py`.
+    Do NOT call from the streaming path -- the vectorised
+    `_best_offset` above is the production hot-path.
+
+    The behavioural contract pinned by the parity test:
+      * Same `(offset, fell_back)` return on identical inputs.
+      * Same tie-break (lowest-index winner on equal correlations).
+      * Same fallback predicate (`peak_corr >= threshold`).
+    """
+    overlap = len(tail)
+    if overlap == 0 or len(head) < overlap + search:
+        return 0, True
     tail_norm = float(np.linalg.norm(tail))
     if tail_norm < 1e-6:
         return 0, True
