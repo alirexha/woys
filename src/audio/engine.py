@@ -710,6 +710,20 @@ class EngineStats:
     # targets that mechanism. Capped at 50 entries.
     tail_chunk_log: list[dict[str, float]] = field(default_factory=list)
     last_error: str | None = None
+    # review F-merged-030 (commit-048): cold-start progress.
+    # Pre-fix start() ran _ensure_sessions + _warmup_realtime_pipeline
+    # + (optional) eager_warmup + GPU clock-lock subprocess.run all on
+    # the caller's thread before spawning the worker -- the TUI froze
+    # for multi-seconds with a stale "~2s" toast. Post-fix start()
+    # returns immediately after spawning the worker; the worker does
+    # the heavy preamble and updates this field through documented
+    # states: "" / "starting" / "checking default sink" / "applying
+    # GPU clock lock" / "loading sessions" / "spawning inference
+    # subprocess" / "warming pipeline" / "eager warming voice
+    # library" / "ready" / "crashed: <ExceptionName>". The TUI polls
+    # this field via `_refresh_stats` so the user sees a live stage,
+    # not a frozen UI.
+    warmup_stage: str = ""
     # review F-merged-015: bounded timestamped error history. Pre-
     # fix `last_error` was a single clobberable string with ~28 write
     # sites across 6 threads. A real failure cascade (`subprocess died
@@ -2625,110 +2639,128 @@ class RealtimeEngine:
     # ---- realtime loop ------------------------------------------------------
 
     def start(self) -> None:
-        # review F-merged-018: serialize start() and stop() under
-        # `_lifecycle_lock`. The pre-fix is_alive() check at the top of
-        # start() was a CHECK/ACT pair with a multi-second gap (session
-        # load + warmup) -- a concurrent start() could pass the check
-        # before the first one set `_thread.is_alive()`. The race itself
-        # is verdict-flagged-but-unreachable (no caller invokes start()
-        # from two threads today), but the lock is the simplest way to
-        # also cover the reachable stop-during-start case below.
+        """review F-merged-030 (commit-048): start() returns
+        promptly after spawning the worker thread; the worker does
+        the slow cold-start preamble (sessions, warmup, GPU clock
+        lock, inference subprocess) and updates `stats.warmup_stage`
+        as it goes. Pre-fix start() ran all that work on the
+        caller's thread and blocked for up to ~10 s, freezing the
+        TUI with a stale "~2s" toast and no progress signal.
+
+        Failure modes that pre-v0.14.x review caught
+        synchronously (PipeWireError, FileNotFoundError,
+        CpuFallbackError) now land ASYNC via `stats.crashed=True`
+        + `record_error(...)` (the bounded ring from F-merged-015).
+        The TUI's `_refresh_stats` polls and surfaces the error as
+        a notify toast -- the same machinery that handles steady-
+        state errors. F-merged-022's outer traceback guard at
+        `_start_engine` keeps catching anything start() itself
+        raises synchronously (signal-handler setup, etc.).
+
+        F-merged-018: `_lifecycle_lock` still serializes start()
+        and stop(). The lock is now held only for the FAST setup
+        (gc disable, signal handlers, worker spawn); the slow
+        preamble in `_worker_main` re-acquires the lock so a stop()
+        that fires mid-preamble waits for the preamble to either
+        finish or itself acquire the lock and observe `_stop_event`.
+        """
         with self._lifecycle_lock:
-            # Re-check INSIDE the lock so a winning concurrent start()
-            # is observed.
             if self._thread and self._thread.is_alive():
                 return
             self._stop_event.clear()
-            # review F-17-06: a fresh run starts un-crashed.
             self.stats.crashed = False
             self._stopped = False
+            self.stats.warmup_stage = "starting"
 
-            # B55 / corr-025: disable Python GC BEFORE the heavy session-load +
-            # warmup steps. Pre-v0.8.0 we ran `gc.disable` after warmup, so any
-            # gc cycles that ORT session loading triggered (and there are some
-            # under torch+ORT version combinations) paid full GC cost during the
-            # commitment-to-running phase. Move it up - disable the moment the
-            # caller commits.
+            # FAST caller-thread setup (sub-millisecond): GC + signal
+            # handlers. Anything slower goes to the worker.
             self._gc_was_enabled_before_start = gc.isenabled()
             if self._gc_was_enabled_before_start:
                 gc.disable()
-
-            # v0.14.0 (Lens 17 / C010): always install signal handlers, even
-            # when clock lock is disabled. SIGTERM / SIGINT used to kill the
-            # process immediately on default config -- now they coordinate a
-            # clean engine.stop() (drains writer queue, releases ORT
-            # sessions, terminates inference subprocess).
             self._install_signal_handlers()
 
-            # review F-08-06 (2nd half): warn (do not fail) if the system
-            # default sink is the woys sink the engine writes into -- the
-            # v0.14.2 desktop-audio hijack. The systemd units catch this at
-            # boot via `chain status --check`; this covers the window between
-            # boot and `woys run`.
-            self._warn_if_default_sink_hijacked()
-
-            # v0.11.0 - apply GPU clock lock at the start of engine activity.
-            # Done BEFORE session loading so cuDNN warmup runs at the locked
-            # boost clock (avoids retuning under post-lock-application clock
-            # changes).
-            clock_lock_on, _ = self._resolve_anti_jitter_flags()
-            if clock_lock_on:
-                self._apply_gpu_clock_lock()
-
-            if self.cfg.inference_subprocess:
-                # v0.8.0 - spawn the inference child. Child loads ORT
-                # sessions + applies the rc7-rc12 wins (gc.disable, RT
-                # priority, EXHAUSTIVE cuDNN, broader pre-warm) inside its
-                # own CUDA context. Parent's audio I/O thread no longer
-                # competes with inference for the GIL.
-                #
-                # v0.8.0-rc4: hard-fail on subprocess startup error
-                # rather than silently fall back to in-process. The rc2
-                # silent fallback hid the Path-vs-str crash from the
-                # user (Textual hijacked stderr); only audible
-                # corruption surfaced it. If the user explicitly asked
-                # for subprocess inference, give them a real error
-                # instead of a silent regression. Set
-                # `inference_subprocess=False` to opt into the legacy
-                # path explicitly.
-                from audio.inference_client import InferenceClient
-
-                cfg_dict = self._cfg_dict_for_subprocess()
-                self._inf_client = InferenceClient(cfg_dict)
-                self._inf_client.start()  # raises InferenceError on child failure
-                # Child loaded the RVC session - pull rate + dtype info.
-                self._rvc_output_sr = self._inf_client.rvc_output_sr
-                self._is_half = self._inf_client.is_half
-                self.active_embedder = self._inf_client.active_embedder
-                self.stats.child_pid = (
-                    self._inf_client._handles.proc.pid if self._inf_client._handles else None
-                )
-                # Build the parent-side SOLA stream at the model's
-                # output rate. The legacy in-process path does this
-                # lazily inside `_cached_rvc_sr`; subprocess mode
-                # needs an explicit call because we never went
-                # through `_cached_rvc_sr`.
-                self._rebuild_sola_for_rate(self._rvc_output_sr)
-            else:
-                # Legacy in-process path. Builds ORT sessions in this
-                # process and warms cuDNN here. Used by tests that need
-                # direct access to `_infer` etc., and as an emergency
-                # escape if subprocess mode regresses.
-                self._ensure_sessions()
-                self._warmup_realtime_pipeline()
-
-            # v0.5.0: optionally pre-warm every voice so swaps are instant
-            # from the first press of `p`. Skipped in subprocess mode -
-            # the child's RvcSessionPool handles this internally if
-            # eager_warmup is set. (Wiring full eager_warmup via IPC is
-            # deferred; in v0.8.0 swaps are still on-demand for child.)
-            if self.cfg.eager_warmup and not self.cfg.inference_subprocess:
-                n = self.warmup_voice_library()
-                print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
+            # Announce intent + spawn worker. `stats.running = True`
+            # before the worker enters its chunk loop because the
+            # warmup IS the running engine doing work -- the TUI
+            # should show "RUNNING" with the warmup_stage substage
+            # rather than "STOPPED" while sessions load.
             self.stats.running = True
-
-            self._thread = threading.Thread(target=self._run_loop, name="woys-engine", daemon=True)
+            self._thread = threading.Thread(
+                target=self._worker_main, name="woys-engine", daemon=True
+            )
             self._thread.start()
+
+    def _worker_main(self) -> None:
+        """Worker-thread entry: cold-start preamble + chunk loop.
+
+        Preamble failures land on `stats.crashed` + `record_error`
+        (async surfacing path; the TUI's `_refresh_stats` notify
+        toast picks them up). The preamble itself takes
+        `_lifecycle_lock` so a concurrent stop() coordinates
+        cleanly. F-merged-030.
+        """
+        try:
+            with self._lifecycle_lock:
+                if self._stop_event.is_set():
+                    # stop() fired between start()'s spawn and the
+                    # worker grabbing the lock -- bail clean.
+                    self.stats.warmup_stage = ""
+                    self.stats.running = False
+                    return
+                self._worker_preamble()
+            self.stats.warmup_stage = "ready"
+        except (FileNotFoundError, RuntimeError, OSError) as e:
+            # PipeWireError is RuntimeError so it falls into this
+            # bucket. We name it in the docstring above for the
+            # benefit of grep / IDE.
+            self.stats.warmup_stage = f"crashed: {type(e).__name__}"
+            self.stats.crashed = True
+            self.record_error(f"engine warmup: {type(e).__name__}: {e}")
+            self.stats.running = False
+            return
+        # Preamble succeeded; enter the chunk loop. _run_loop has its
+        # own outer try/except that records errors and sets running=
+        # False / crashed=True on uncaught exceptions.
+        self._run_loop()
+
+    def _worker_preamble(self) -> None:
+        """Slow cold-start work that pre-fix ran on the caller's
+        thread. Updates `stats.warmup_stage` at each step so the TUI
+        can show a live substage. F-merged-030.
+
+        Called from `_worker_main` while holding `_lifecycle_lock`."""
+        self.stats.warmup_stage = "checking default sink"
+        self._warn_if_default_sink_hijacked()
+
+        self.stats.warmup_stage = "applying GPU clock lock"
+        clock_lock_on, _ = self._resolve_anti_jitter_flags()
+        if clock_lock_on:
+            self._apply_gpu_clock_lock()
+
+        if self.cfg.inference_subprocess:
+            self.stats.warmup_stage = "spawning inference subprocess"
+            from audio.inference_client import InferenceClient
+
+            cfg_dict = self._cfg_dict_for_subprocess()
+            self._inf_client = InferenceClient(cfg_dict)
+            self._inf_client.start()
+            self._rvc_output_sr = self._inf_client.rvc_output_sr
+            self._is_half = self._inf_client.is_half
+            self.active_embedder = self._inf_client.active_embedder
+            self.stats.child_pid = (
+                self._inf_client._handles.proc.pid if self._inf_client._handles else None
+            )
+            self._rebuild_sola_for_rate(self._rvc_output_sr)
+        else:
+            self.stats.warmup_stage = "loading sessions"
+            self._ensure_sessions()
+            self.stats.warmup_stage = "warming pipeline"
+            self._warmup_realtime_pipeline()
+
+        if self.cfg.eager_warmup and not self.cfg.inference_subprocess:
+            self.stats.warmup_stage = "eager warming voice library"
+            n = self.warmup_voice_library()
+            print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
 
     def _cfg_dict_for_subprocess(self) -> dict[str, Any]:
         """Convert EngineConfig to a dict for spawn pickling.
@@ -2907,6 +2939,10 @@ class RealtimeEngine:
             if self._thread:
                 self._thread.join(timeout=timeout)
             self.stats.running = False
+            # review F-merged-030: clear warmup_stage so the TUI
+            # doesn't show a stale "warming pipeline" indicator after
+            # the engine fully stops.
+            self.stats.warmup_stage = ""
 
             # v0.8.0 - tear down the inference subprocess after the engine
             # thread has stopped sending it work. `InferenceClient.stop()`
