@@ -44,6 +44,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -258,12 +259,23 @@ class ControlServer:
     framing. Server quits when `stop()` is called.
     """
 
+    # review F-merged-025 (commit-072): the listener loop was
+    # serial pre-fix -- every accept() was handled inline before the
+    # next accept ran. A slow handler (heavy MODEL swap, blocked on a
+    # contended engine lock, slow disk reload) stalled every
+    # subsequent `woys toggle` / `woys pitch` etc. command at the
+    # socket layer. We now hand each accepted connection to a small
+    # ThreadPoolExecutor so handlers can run concurrently. Bounded
+    # (max_workers=4) so a runaway sender can't fork-bomb the TUI.
+    _WORKER_POOL_SIZE = 4
+
     def __init__(self, handler: HandlerFn, path: Path | None = None) -> None:
         self.handler = handler
         self.path = path or control_socket_path()
         self._sock: socket.socket | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._pool: ThreadPoolExecutor | None = None
 
     def start(self) -> None:
         # Remove a stale socket from a prior run.
@@ -300,6 +312,12 @@ class ControlServer:
             signal.signal(signal.SIGTERM, _exit_on_signal)
 
         self._stop.clear()
+        # F-merged-025: per-connection workers run in this pool so a
+        # slow handler doesn't block the accept loop.
+        self._pool = ThreadPoolExecutor(
+            max_workers=self._WORKER_POOL_SIZE,
+            thread_name_prefix="woys-ctrl-worker",
+        )
         self._thread = threading.Thread(target=self._loop, name="woys-control", daemon=True)
         self._thread.start()
 
@@ -317,6 +335,15 @@ class ControlServer:
                 self._sock.close()
             finally:
                 self._sock = None
+        # F-merged-025: drain any in-flight workers before unlinking
+        # the socket file. wait=True bounds at the handler timeouts
+        # (conn.settimeout(0.5) + a single handler() call), so a few
+        # hundred ms in the worst case.
+        if self._pool is not None:
+            try:
+                self._pool.shutdown(wait=True, cancel_futures=False)
+            finally:
+                self._pool = None
         with contextlib.suppress(OSError):
             self.path.unlink(missing_ok=True)
 
@@ -329,56 +356,81 @@ class ControlServer:
                 continue
             except OSError:
                 break
-            with conn:
+            # review F-merged-025: hand each accepted connection
+            # to a worker. Pre-fix the per-connection body ran inline
+            # here; a slow handler stalled every other client at the
+            # socket layer. The pool exists from start() through stop().
+            pool = self._pool
+            if pool is None:
+                # Defensive: stop() may have closed the pool between
+                # the while-check and accept(). Close the conn and exit.
+                with contextlib.suppress(OSError):
+                    conn.close()
+                break
+            try:
+                pool.submit(self._serve_one, conn)
+            except RuntimeError:
+                # Pool shut down between the None-check and submit().
+                with contextlib.suppress(OSError):
+                    conn.close()
+                break
+
+    def _serve_one(self, conn: socket.socket) -> None:
+        """Per-connection worker body. review F-merged-025 split
+        this out of `_loop` so the accept loop can submit each conn
+        to a small ThreadPoolExecutor. Must be exception-safe at the
+        top level -- an uncaught raise here only kills the worker
+        thread, not the listener, but it still loses the reply."""
+        with conn:
+            try:
+                conn.settimeout(0.5)
+                # review F-05-01: SO_PEERCRED UID check.
+                # The socket file is mode 0600 + lives under
+                # XDG_RUNTIME_DIR (which is mode 0700 by the
+                # systemd-logind contract), so cross-UID connect
+                # is already blocked at the filesystem layer.
+                # SAME-UID processes (a malicious pip dep in the
+                # same venv, a game mod, a misbehaving script)
+                # can still `connect()` and dispatch QUIT /
+                # MODEL / TOGGLE / PITCH / PROFILE without any
+                # auth gate -- the socket is reachable by
+                # design (the WM-shortcut control path) and the
+                # commands have real impact. We read SO_PEERCRED
+                # and reject any UID != ours so the same-UID
+                # trust boundary is at least made explicit (a
+                # regression guard for the 0600 + XDG_RUNTIME_
+                # DIR layer, not a substitute for it).
+                if not _check_peer_uid(conn):
+                    conn.sendall(b"ERR unauthorized\n")
+                    return
+                # review F-merged-020: read until newline (or the
+                # MAX_COMMAND_BYTES cap), honoring the docstring's
+                # "newline-terminated" promise. Pre-fix this was a
+                # single recv(256) that silently truncated.
                 try:
-                    conn.settimeout(0.5)
-                    # review F-05-01: SO_PEERCRED UID check.
-                    # The socket file is mode 0600 + lives under
-                    # XDG_RUNTIME_DIR (which is mode 0700 by the
-                    # systemd-logind contract), so cross-UID connect
-                    # is already blocked at the filesystem layer.
-                    # SAME-UID processes (a malicious pip dep in the
-                    # same venv, a game mod, a misbehaving script)
-                    # can still `connect()` and dispatch QUIT /
-                    # MODEL / TOGGLE / PITCH / PROFILE without any
-                    # auth gate -- the socket is reachable by
-                    # design (the WM-shortcut control path) and the
-                    # commands have real impact. We read SO_PEERCRED
-                    # and reject any UID != ours so the same-UID
-                    # trust boundary is at least made explicit (a
-                    # regression guard for the 0600 + XDG_RUNTIME_
-                    # DIR layer, not a substitute for it).
-                    if not _check_peer_uid(conn):
-                        conn.sendall(b"ERR unauthorized\n")
-                        continue
-                    # review F-merged-020: read until newline (or the
-                    # MAX_COMMAND_BYTES cap), honoring the docstring's
-                    # "newline-terminated" promise. Pre-fix this was a
-                    # single recv(256) that silently truncated.
+                    data = _recv_line(conn) or ""
+                except ValueError:
+                    reply = "ERR command too long"
+                else:
                     try:
-                        data = _recv_line(conn) or ""
-                    except ValueError:
-                        reply = "ERR command too long"
-                    else:
-                        try:
-                            reply = self.handler(data) if data else "ERR empty"
-                        except Exception as handler_err:
-                            # review F-CX6-01 (commit-062): pre-fix
-                            # the handler's exception propagated out of
-                            # this with-conn block, was NOT caught by the
-                            # outer except (TimeoutError, OSError), and
-                            # silently killed the `woys-control` listener
-                            # thread. Every subsequent `woys toggle` then
-                            # hung to its client timeout. The wire
-                            # contract is "the server always replies"; any
-                            # exception class from the handler routes to
-                            # an ERR internal reply so the client sees
-                            # the failure mode.
-                            logger.exception("control handler raised on %r: %s", data, handler_err)
-                            reply = f"ERR internal: {type(handler_err).__name__}: {handler_err}"
-                    conn.sendall((reply + "\n").encode("utf-8"))
-                except (TimeoutError, OSError) as e:
-                    logger.warning("control conn error: %s", e)
+                        reply = self.handler(data) if data else "ERR empty"
+                    except Exception as handler_err:
+                        # review F-CX6-01 (commit-062): pre-fix
+                        # the handler's exception propagated out of
+                        # this with-conn block, was NOT caught by the
+                        # outer except (TimeoutError, OSError), and
+                        # silently killed the `woys-control` listener
+                        # thread. Every subsequent `woys toggle` then
+                        # hung to its client timeout. The wire
+                        # contract is "the server always replies"; any
+                        # exception class from the handler routes to
+                        # an ERR internal reply so the client sees
+                        # the failure mode.
+                        logger.exception("control handler raised on %r: %s", data, handler_err)
+                        reply = f"ERR internal: {type(handler_err).__name__}: {handler_err}"
+                conn.sendall((reply + "\n").encode("utf-8"))
+            except (TimeoutError, OSError) as e:
+                logger.warning("control conn error: %s", e)
 
 
 # review F-05-01: SO_PEERCRED UID check. Linux's `struct ucred`
