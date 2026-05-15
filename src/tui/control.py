@@ -325,6 +325,25 @@ class ControlServer:
             with conn:
                 try:
                     conn.settimeout(0.5)
+                    # review F-05-01: SO_PEERCRED UID check.
+                    # The socket file is mode 0600 + lives under
+                    # XDG_RUNTIME_DIR (which is mode 0700 by the
+                    # systemd-logind contract), so cross-UID connect
+                    # is already blocked at the filesystem layer.
+                    # SAME-UID processes (a malicious pip dep in the
+                    # same venv, a game mod, a misbehaving script)
+                    # can still `connect()` and dispatch QUIT /
+                    # MODEL / TOGGLE / PITCH / PROFILE without any
+                    # auth gate -- the socket is reachable by
+                    # design (the WM-shortcut control path) and the
+                    # commands have real impact. We read SO_PEERCRED
+                    # and reject any UID != ours so the same-UID
+                    # trust boundary is at least made explicit (a
+                    # regression guard for the 0600 + XDG_RUNTIME_
+                    # DIR layer, not a substitute for it).
+                    if not _check_peer_uid(conn):
+                        conn.sendall(b"ERR unauthorized\n")
+                        continue
                     # review F-merged-020: read until newline (or the
                     # MAX_COMMAND_BYTES cap), honoring the docstring's
                     # "newline-terminated" promise. Pre-fix this was a
@@ -338,6 +357,48 @@ class ControlServer:
                     conn.sendall((reply + "\n").encode("utf-8"))
                 except (TimeoutError, OSError) as e:
                     logger.warning("control conn error: %s", e)
+
+
+# review F-05-01: SO_PEERCRED UID check. Linux's `struct ucred`
+# is 12 bytes (3 x int32: pid / uid / gid). `SO_PEERCRED` is the
+# kernel API. The check is the regression-guard for the 0600 + XDG_
+# RUNTIME_DIR layer; it does NOT replace those (filesystem perms still
+# do the heavy lifting cross-UID).
+_SO_PEERCRED_STRUCT = "iII"  # 1 x signed pid (i), 2 x unsigned uid/gid (I)
+
+
+def _check_peer_uid(conn: socket.socket) -> bool:
+    """Return True iff the connecting peer is the SAME UID as the
+    server process. Used by the control-socket accept loop to gate
+    every connection on a UID match.
+
+    Wrapped in a try/except so a kernel without SO_PEERCRED (very
+    old / non-Linux) does not crash the server -- we log + accept
+    in that case. The filesystem permissions remain the load-bearing
+    cross-UID guard.
+    """
+    import struct
+
+    try:
+        cred = conn.getsockopt(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize(_SO_PEERCRED_STRUCT)
+        )
+        _pid, peer_uid, _gid = struct.unpack(_SO_PEERCRED_STRUCT, cred)
+    except (OSError, AttributeError) as e:
+        logger.warning(
+            "SO_PEERCRED unavailable (%s: %s); accepting on filesystem-perm guarantees only",
+            type(e).__name__,
+            e,
+        )
+        return True
+    if peer_uid != os.getuid():
+        logger.warning(
+            "control socket: rejecting connection from UID %d (server UID %d)",
+            peer_uid,
+            os.getuid(),
+        )
+        return False
+    return True
 
 
 def _exit_on_signal(signum: int, _frame: object) -> None:
