@@ -82,6 +82,79 @@ def runtime_path(name: str) -> Path:
 HandlerFn = Callable[[str], str]
 
 
+# review F-merged-020: framing limits. The docstring above promises
+# "one newline-terminated command / single short reply", but the pre-fix
+# code did a single fixed-size `recv` (256 server / 512 client) and
+# silently truncated anything longer. The STATUS reply was already
+# ~250 B and growing -- truncation was a *when*, not *if*. The caps
+# below are intentionally generous (64 KiB) so the framing fix doesn't
+# create a new bottleneck; the real protection is the read-until-`\n`
+# logic in `_recv_line` / `_recv_reply` below.
+MAX_COMMAND_BYTES = 64 * 1024
+MAX_REPLY_BYTES = 64 * 1024
+
+
+def _recv_line(conn: socket.socket, max_bytes: int = MAX_COMMAND_BYTES) -> str | None:
+    """Read from `conn` until a `\\n` byte or `max_bytes` is reached.
+
+    Returns the decoded line (`\\n` stripped) on success, `None` on
+    immediate EOF, or raises `ValueError` when `max_bytes` is exceeded
+    before a newline arrives. Used server-side to honor the docstring's
+    "newline-terminated" framing promise.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while total < max_bytes:
+        try:
+            chunk = conn.recv(min(4096, max_bytes - total))
+        except (TimeoutError, OSError):
+            raise
+        if not chunk:
+            break  # peer closed
+        chunks.append(chunk)
+        total += len(chunk)
+        if b"\n" in chunk:
+            full = b"".join(chunks)
+            line, _, _ = full.partition(b"\n")
+            return line.decode("utf-8", errors="replace").strip()
+    if total >= max_bytes:
+        raise ValueError(f"command exceeded {max_bytes} bytes without newline")
+    if not chunks:
+        return None
+    # Peer closed mid-line. Treat as best-effort decode (no terminator).
+    return b"".join(chunks).decode("utf-8", errors="replace").strip()
+
+
+def _recv_reply(sock: socket.socket, max_bytes: int = MAX_REPLY_BYTES) -> str:
+    """Client-side counterpart to `_recv_line`. Reads until `\\n` or
+    `max_bytes`. Returns the decoded reply (sans newline).
+
+    Distinct from `_recv_line` in two ways:
+    1. The client trusts the server to close the connection after the
+       reply, so a partial-but-newline-less buffer at EOF is OK
+       (returned as-is).
+    2. On overflow (reply > max_bytes with no newline) we append a
+       ` ... (truncated)` marker rather than raising -- the client
+       still gives the user something usable.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while total < max_bytes:
+        chunk = sock.recv(min(4096, max_bytes - total))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if b"\n" in chunk:
+            full = b"".join(chunks)
+            line, _, _ = full.partition(b"\n")
+            return line.decode("utf-8", errors="replace").strip()
+    # Either EOF (return what we have) or max_bytes hit without newline.
+    if total >= max_bytes:
+        return b"".join(chunks).decode("utf-8", errors="replace").rstrip() + " ... (truncated)"
+    return b"".join(chunks).decode("utf-8", errors="replace").strip()
+
+
 @dataclass
 class Job:
     id: str
@@ -235,8 +308,16 @@ class ControlServer:
             with conn:
                 try:
                     conn.settimeout(0.5)
-                    data = conn.recv(256).decode("utf-8", errors="replace").strip()
-                    reply = self.handler(data) if data else "ERR empty"
+                    # review F-merged-020: read until newline (or the
+                    # MAX_COMMAND_BYTES cap), honoring the docstring's
+                    # "newline-terminated" promise. Pre-fix this was a
+                    # single recv(256) that silently truncated.
+                    try:
+                        data = _recv_line(conn) or ""
+                    except ValueError:
+                        reply = "ERR command too long"
+                    else:
+                        reply = self.handler(data) if data else "ERR empty"
                     conn.sendall((reply + "\n").encode("utf-8"))
                 except (TimeoutError, OSError) as e:
                     logger.warning("control conn error: %s", e)
@@ -275,7 +356,11 @@ def send_command(cmd: str, timeout: float = 30.0) -> str:
                 s.settimeout(timeout)
                 s.connect(str(path))
                 s.sendall((cmd + "\n").encode("utf-8"))
-                return s.recv(512).decode("utf-8", errors="replace").strip()
+                # review F-merged-020: read until newline (or
+                # MAX_REPLY_BYTES). Pre-fix this was recv(512) which
+                # silently truncated the STATUS reply (~250 B and
+                # growing) when it eventually crossed the cap.
+                return _recv_reply(s)
         except ConnectionRefusedError as e:
             last_err = e
             time.sleep(0.1)
