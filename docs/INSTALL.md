@@ -156,7 +156,7 @@ apps' input-device selector, pick `woys-mic`. That's it.
 ## Updating
 
 ```
-cd ~/ai/woys
+cd ~/woys
 git pull
 ./install.sh --skip-models
 ```
@@ -166,7 +166,7 @@ git pull
 ## Uninstalling
 
 ```
-cd ~/ai/woys
+cd ~/woys
 ./uninstall.sh
 ```
 
