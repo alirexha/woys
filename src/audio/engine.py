@@ -2202,9 +2202,10 @@ class RealtimeEngine:
             self._rvc = prev_rvc
             self._is_half = prev_is_half
 
-    def request_model_swap(self, path: Path) -> threading.Event:
-        """Thread-safe: queue a model swap and return a PER-CALL
-        completion event the caller waits on.
+    def request_model_swap(self, path: Path) -> _SwapRequest:
+        """Thread-safe: queue a model swap and return the per-call
+        `_SwapRequest`. The caller waits on `req.completion` and reads
+        `req.error` to distinguish "done" from "failed".
 
         review F-03-02 + F-13-12 (commit-042-043): pre-fix this
         method overwrote a single `_pending_model_swap` slot and
@@ -2215,11 +2216,24 @@ class RealtimeEngine:
         B5/corr-003.
 
         Post-fix every request lands as its own `_SwapRequest` in
-        `self._swap_queue`. The returned `threading.Event` is THE
-        event the worker will `.set()` when THIS specific swap
-        completes. F-13-12: if the engine is stopped (or stopping)
-        when this is called, the event is resolved immediately so
-        the caller never parks.
+        `self._swap_queue`. F-13-12: if the engine is stopped (or
+        stopping) when this is called, the event is resolved
+        immediately so the caller never parks.
+
+        review F-23-17 (commit-076): the return type widened
+        from `threading.Event` to `_SwapRequest` so swap *failures*
+        also have a single read site. `_maybe_swap_model` sets
+        `req.error` before resolving the event; callers (the TUI's
+        MODEL / PROFILE handlers, `_apply_profile_named`,
+        `action_cycle_profile`) check `req.error` after `req.
+        completion.wait(...)` and route a failure to
+        `engine.record_error()`. Pre-fix the failure landed only in
+        the JobRegistry status_line via the worker's bare-exception
+        path, and the TUI never polled its own jobs -- so a swap to
+        a corrupted ONNX or a `subprocess swap failed` cascade
+        recorded "OK job=... model=...", parked the UI on "loading
+        X..." for 10 s, then resumed with the old voice still in
+        place. No banner, no toast.
         """
         req = _SwapRequest(target=Path(path))
         with self._swap_lock:
@@ -2232,7 +2246,7 @@ class RealtimeEngine:
                 # called manually).
                 req.error = RuntimeError("engine stopped; swap not applied")
                 req.completion.set()
-                return req.completion
+                return req
             self._swap_queue.put(req)
             self._outstanding_swaps.append(req)
         # review F-07-09 (commit-050): also signal the preloader
@@ -2243,7 +2257,7 @@ class RealtimeEngine:
         # stopped), the worker just pays the cache-miss cost itself.
         with contextlib.suppress(Exception):
             self._swap_preload_queue.put_nowait(Path(path))
-        return req.completion
+        return req
 
     def request_cfg_update(self, updates: dict[str, Any]) -> None:
         """Thread-safe: queue a multi-field cfg update for the worker to
