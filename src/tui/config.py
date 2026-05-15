@@ -510,6 +510,44 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     return cfg
 
 
+_CONFIG_HEADER = b"""# woys config.toml -- managed by `woys` (the engine, TUI, CLI). Edit
+# any knob below; the next launch picks it up. review F-16-06
+# (commit-068): pre-fix this file was written with zero comments,
+# so a user opening it for the first time had to grep the source
+# to figure out which fields existed and what they did.
+#
+# MANAGED keys -- do NOT hand-edit:
+#   config_schema_version    F-16-01 migration anchor (commit-032).
+#                            The schema-migration code in load_config
+#                            relies on this value to decide whether
+#                            to bump stale defaults. If you change
+#                            it by hand to a higher value, the next
+#                            load thinks your file is already
+#                            current and skips migrations that
+#                            should have run.
+#   _user_overrides          F-16-01 explicit-override list. The
+#                            migration leaves fields named here
+#                            alone even when they match an old
+#                            default. Append a field name yourself
+#                            to pin its current value across future
+#                            schema bumps; otherwise the file
+#                            manages this list automatically when
+#                            you touch a knob via TUI keys / CLI.
+#
+# Knob reference: see `docs/MODELS.md` (foundation weights),
+# `docs/INSTALL.md` (rates, sinks), and the inline comments in
+# `src/audio/engine.py` `EngineConfig` (the canonical source of
+# truth for runtime defaults). `woys info` prints the active
+# values alongside the runtime state.
+#
+# Path: this file lives at $XDG_CONFIG_HOME/woys/config.toml
+# (typically ~/.config/woys/config.toml). The directory is mode
+# 0700; the file is mode 0600 -- woys' tuning + model paths are
+# user-private by design (F-32-02 / commit-047).
+
+"""
+
+
 def save_config(cfg: AppConfig, path: Path = CONFIG_FILE) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {k: v for k, v in asdict(cfg).items() if not k.startswith("_")}
@@ -548,6 +586,11 @@ def save_config(cfg: AppConfig, path: Path = CONFIG_FILE) -> None:
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "wb") as f:
+            # review F-16-06 (commit-068): write a discoverability
+            # header before the TOML body. tomli_w doesn't emit
+            # comments natively; we prepend the comment block as raw
+            # bytes and let tomli_w handle the data section.
+            f.write(_CONFIG_HEADER)
             tomli_w.dump(data, f)
             f.flush()
             os.fsync(f.fileno())
