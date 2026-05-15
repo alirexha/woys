@@ -183,3 +183,146 @@ def test_import_rejects_unsupported_format_version(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="format_version"):
         import_profile(bad, "x")
+
+
+# --- review F-16-08: .vcprofile forward-compat reader ----------------
+# Pre-fix `import_profile` raised on any `format_version` mismatch -- a
+# share format whose whole purpose is cross-user / cross-version
+# distribution cannot fail-hard on its first revision. The fix adds a
+# migration ladder + clearer error messages.
+
+
+def _write_vcprofile(path: Path, *, format_version: object, profile_name: str = "x") -> None:
+    """Synthesize a minimal but valid-shape .vcprofile with a custom
+    format_version. Bypasses tomli_w so we can write `format_version =
+    "not-an-int"` or other deliberately broken values for the type-
+    check test."""
+    if isinstance(format_version, int) and not isinstance(format_version, bool):
+        fv_lit = str(format_version)
+    elif isinstance(format_version, str):
+        fv_lit = f'"{format_version}"'
+    else:
+        fv_lit = repr(format_version)
+    path.write_text(
+        f'[meta]\nformat_version = {fv_lit}\nprofile_name = "{profile_name}"\n[profile]\n[model]\n',
+        encoding="utf-8",
+    )
+
+
+def test_import_newer_than_current_says_upgrade_woys(tmp_path: Path) -> None:
+    """Bug-class half-A. A .vcprofile from a future build raises with
+    a clear "upgrade woys" message, not a generic 'unsupported'.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from woys.vcprofile import VCPROFILE_VERSION, import_profile
+
+    bad = tmp_path / "from_the_future.vcprofile"
+    _write_vcprofile(bad, format_version=VCPROFILE_VERSION + 1)
+
+    with pytest.raises(ValueError, match=r"newer build|Upgrade woys"):
+        import_profile(bad, "x")
+
+
+def test_import_older_than_current_with_no_migration_explains_what_is_missing(
+    tmp_path: Path,
+) -> None:
+    """When a v(current-1) file arrives and the ladder has no
+    registered v(current-1) -> v(current) migration, the error names
+    the missing leg so a future maintainer knows what to add.
+    Today the ladder is empty so v(0) is the test case."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from woys.vcprofile import _VCPROFILE_MIGRATIONS, import_profile
+
+    # Defensive: this test assumes no v0 migration is registered. If
+    # a future commit adds one, the assumption needs revisiting.
+    assert 0 not in _VCPROFILE_MIGRATIONS
+
+    bad = tmp_path / "ancient.vcprofile"
+    _write_vcprofile(bad, format_version=0)
+
+    with pytest.raises(ValueError, match=r"v0 -> v1 migration"):
+        import_profile(bad, "x")
+
+
+def test_import_older_than_current_with_registered_migration_migrates_and_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Bug-class half-B. The mechanism: an older format_version with a
+    registered migration in `_VCPROFILE_MIGRATIONS` imports successfully
+    and emits a stderr warning naming the leg. We exercise the
+    mechanism by injecting a fake v0 -> v1 migration that fills in
+    the profile-name (in the spirit of how a real migration would
+    transform old-shape data into new-shape data)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from woys.vcprofile import VCPROFILE_VERSION, _migrate_vcprofile_raw
+
+    # VCPROFILE_VERSION must currently equal 1 for the v0 -> v1 test
+    # leg to map onto the verdict's "current-1" scenario. If the format
+    # version is bumped in a future commit, this test needs to track.
+    assert VCPROFILE_VERSION == 1, (
+        "this test exercises v0 -> v1 migration; bump the source/target "
+        "versions if VCPROFILE_VERSION moves"
+    )
+
+    def _legacy_v0_to_v1(raw: dict[str, object]) -> dict[str, object]:
+        # A test-only migration: pretend v0 had `meta.author` and we now
+        # rename it to `meta.author_hint`. Real future migrations will
+        # do the same shape of work.
+        meta = dict(raw.get("meta", {}))  # type: ignore[arg-type]
+        if "author" in meta:
+            meta["author_hint"] = meta.pop("author")
+        out: dict[str, object] = dict(raw)
+        out["meta"] = meta
+        return out
+
+    # Inject the test leg without leaking it into other tests.
+    from woys import vcprofile
+
+    monkeypatch.setitem(vcprofile._VCPROFILE_MIGRATIONS, 0, _legacy_v0_to_v1)
+
+    raw_in: dict[str, object] = {
+        "meta": {"format_version": 0, "author": "alirexha"},
+        "profile": {},
+        "model": {},
+    }
+    migrated = _migrate_vcprofile_raw(raw_in)
+    err = capsys.readouterr().err
+
+    assert migrated["meta"]["format_version"] == VCPROFILE_VERSION, (
+        "the migrated dict's meta.format_version must be stamped "
+        "to the current version after a successful walk"
+    )
+    assert migrated["meta"]["author_hint"] == "alirexha"
+    assert "author" not in migrated["meta"]
+    assert "migrating v0 -> v1" in err, (
+        f"the reader must print a stderr warning per migration leg; stderr was: {err!r}"
+    )
+
+
+def test_import_missing_format_version_is_clear(tmp_path: Path) -> None:
+    """A .vcprofile with no `meta.format_version` raises a clear
+    "missing or non-integer" error -- not a `None != 1` confusion."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from woys.vcprofile import import_profile
+
+    bad = tmp_path / "no_version.vcprofile"
+    bad.write_text('[meta]\nprofile_name = "x"\n[profile]\n[model]\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="missing or non-integer"):
+        import_profile(bad, "x")
+
+
+def test_import_non_integer_format_version_is_clear(tmp_path: Path) -> None:
+    """A `format_version = "1"` (string instead of int) raises the
+    same "missing or non-integer" error -- a malformed value is not
+    a version mismatch."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from woys.vcprofile import import_profile
+
+    bad = tmp_path / "string_version.vcprofile"
+    _write_vcprofile(bad, format_version="1")
+
+    with pytest.raises(ValueError, match="missing or non-integer"):
+        import_profile(bad, "x")
