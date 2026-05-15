@@ -145,16 +145,33 @@ def _default_sink() -> str:
 
 
 def _list_modules() -> list[tuple[str, str, str]]:
-    """Return [(id, type, args)] for currently loaded pipewire-pulse modules."""
+    """Return [(id, type, args)] for currently loaded pipewire-pulse modules.
+
+    review F-cx4-001 / F-05-14 P2a (commit-064): match
+    `pipewire.py:_list_modules` by validating that the first column
+    is a non-negative integer. Pre-fix any garbage in column 0
+    propagated as a module ID to `_unload_chain_modules`'s
+    `pactl unload-module <id>` call -- a daemon-corrupted output
+    or a future pactl format change could feed an attacker-named
+    token back as a command arg. `int()` validation rejects non-
+    numeric tokens cleanly. The return type stays `str` because
+    downstream callers use the value as a CLI argument verbatim;
+    the validation is the load-bearing part.
+    """
     out = _pactl("list", "short", "modules").stdout
     rows: list[tuple[str, str, str]] = []
     for line in out.splitlines():
         parts = line.split("\t", 2)
-        if len(parts) >= 2:
-            mod_id = parts[0].strip()
-            mod_type = parts[1].strip()
-            mod_args = parts[2].strip() if len(parts) >= 3 else ""
-            rows.append((mod_id, mod_type, mod_args))
+        if len(parts) < 2:
+            continue
+        try:
+            int(parts[0])  # F-cx4-001: validation; result discarded.
+        except ValueError:
+            continue
+        mod_id = parts[0].strip()
+        mod_type = parts[1].strip()
+        mod_args = parts[2].strip() if len(parts) >= 3 else ""
+        rows.append((mod_id, mod_type, mod_args))
     return rows
 
 
