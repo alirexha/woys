@@ -50,7 +50,7 @@ which is called automatically. If you see this error, your venv is probably
 out of date:
 
 ```
-cd ~/ai/woys
+cd ~/woys
 .venv/bin/python -m pip install --upgrade onnxruntime-gpu
 ```
 
@@ -238,7 +238,7 @@ exposes toggling via the TUI key (`t`) and the Unix socket
 If you need a system-wide hotkey *outside* of CS2, the opt-in evdev path:
 
 ```
-pip install -e ~/ai/woys[evdev]
+pip install -e ~/woys[evdev]
 sudo usermod -aG input $USER
 # logout / login
 ```
@@ -259,7 +259,7 @@ The TUI's latency panel shows `avg_total_ms` and `avg_inference_ms`. To run
 the inference-only benchmark used in `docs/05-perf.md`:
 
 ```
-cd ~/ai/woys
+cd ~/woys
 .venv/bin/python scripts/smoke_rvc_onnx.py
 ```
 
@@ -275,7 +275,7 @@ Wipe config and re-install:
 
 ```
 rm ~/.config/woys/config.toml
-cd ~/ai/woys
+cd ~/woys
 ./uninstall.sh
 ./install.sh
 ```
