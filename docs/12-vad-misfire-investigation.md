@@ -144,7 +144,7 @@ The Pipeline.py edits remain as defensive guards in case some other path ever in
 In `src/audio/engine.py` `_infer()` (search for `def _infer`):
 
 1. After `feats = self._extract_feats(audio16k)` — `if np.isnan(feats).any(): feats = np.nan_to_num(feats, nan=0.0)`. Catches partial-NaN bursts from the embedder before they propagate.
-2. After `pitchf = pitchf_raw.astype(np.float32).squeeze()` — call a new module-level helper `_interpolate_voiced_gaps_np(pitchf)` that does the same as the (dead) torch helper in `Pipeline.py`: replace NaN with 0, then linearly interpolate runs ≤ `_VOICED_GAP_MAX_FRAMES` between two voiced frames.
+2. After `pitchf = pitchf_raw.astype(np.float32).squeeze()` — call a new module-level helper `_interpolate_voiced_gaps_np(pitchf)` that does the same as the (dead) torch helper in `Pipeline.py`: replace NaN with 0, then interpolate runs ≤ `_VOICED_GAP_MAX_FRAMES` between two voiced frames. (Originally linear-in-Hz; review F-31-03 / commit-080 switched the bridge to log-f0 — geometric-mean midpoint — so the bridged contour follows a perceptually-straight glide. F-31-12 / commit-079 added an optional `prior_voiced_f0` carry so a leading-edge unvoiced run that straddles a chunk boundary can also be bridged using the previous chunk's trailing anchor.)
 3. After the model returns (`result = np.array(out).astype(np.float32).squeeze()`) — `if np.isnan(result).any() or np.isinf(result).any(): result = np.nan_to_num(result, nan=0.0, posinf=1.0, neginf=-1.0)`. Pacat is fed `float32le`; NaN bytes in the stream are undefined behavior in PipeWire.
 
 ### Round-3 instrumentation — visibility into timing outliers
