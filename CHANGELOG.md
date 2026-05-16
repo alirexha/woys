@@ -11,10 +11,10 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-## [0.15.0] — UNRELEASED — review phase-6 hardening (213-finding adversarial audit, 80 fix commits)
+## [0.15.0] — 2026-05-16 — review phase-6 hardening (213-finding adversarial audit, 80 fix commits)
 
-**Status:** branch `review-phase6`, not yet merged to `main`. Date
-will be filled in on merge.
+**Status:** released from branch `review-phase6`, merged to `main`
+and tagged `v0.15.0` on 2026-05-16.
 
 This release is the result of the project's second review cycle:
 a 36-lens adversarial audit using the `review` skill methodology.
