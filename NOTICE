@@ -117,7 +117,6 @@ Scripts — all *.py and *.sh under scripts/:
   scripts/v012_spectral_flux.py
   scripts/v012_spectrogram_analysis.py
   scripts/v012_stationary_run.py
-  scripts/voice_library_import.py
 
 Native helpers (C):
   bin/woys-pw-out.c                   (native PipeWire output client; v0.9.0+)
@@ -140,40 +139,20 @@ Configuration & metadata:
 Documentation (original) — all *.md under docs/, plus top-level prose:
   README.md
   CHANGELOG.md
-  the project notes
   LESSONS.md
-  PROGRESS.md
-  PROJECT_BRIEF.md
-  BLOCKERS.md
   NOTICE                              (this file)
   LICENSE                             (the All Rights Reserved license)
-  docs/00-recon.md
   docs/05-perf.md
-  docs/06-model-switch-bug.md
-  docs/07-audio-quality-bug.md
-  docs/08-pacat-underrun-bug.md
-  docs/10-monitor-leak-diag.md
-  docs/11-microcuts-bug.md
-  docs/12-vad-misfire-investigation.md
-  docs/13-detector-calibration.md
-  docs/14-v070-baseline.md
-  docs/15-auto-sweep-methodology.md
-  docs/16-audit/                      (v0.8.0 external review materials)
-  docs/17-review/                     (further external review notes)
-  docs/19-pw-investigation.md
-  docs/19-v09x-plan.md
-  docs/20-mitigations-tuning.md
-  docs/21-v09x-final-summary.md
   docs/22-gpu-clock-lock.md
   docs/23-rnnoise-chain.md
-  docs/24-review/                (v0.14.0 review audit materials)
+  docs/26-review/                (v0.15.0 review audit materials)
+  docs/decisions/                     (architectural decision records)
   docs/CS2-SETUP.md
   docs/DISCORD-SETUP.md
   docs/INSTALL.md
   docs/MODELS.md
   docs/QA.md
   docs/TROUBLESHOOTING.md
-  docs/v0_5_0_quality_report.md
 
 
 ----------------------------------------------------------------------
