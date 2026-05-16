@@ -41,6 +41,18 @@ jobs:
           enable-cache: true
       - run: uv python install 3.11
       - run: uv sync --frozen --extra dev
+      # System libs the hermetic tests depend on transitively:
+      #   pulseaudio-utils -> provides `pactl` binary on disk so
+      #     chain._pactl()'s `shutil.which("pactl")` pre-check passes
+      #     and the test-level mocks of subprocess.run actually fire
+      #     (the pre-check short-circuits before subprocess.run otherwise).
+      #   libportaudio2    -> provides libportaudio.so so `import
+      #     sounddevice` succeeds in tests that exercise code paths
+      #     containing the import statement without actually using audio.
+      # Neither package starts a daemon, so PipeWire-marker tests still
+      # auto-skip via conftest's _has_pipewire() / _has_gpu() checks.
+      - name: install audio system libs for hermetic tests
+        run: sudo apt-get update && sudo apt-get install -y pulseaudio-utils libportaudio2
       - name: pytest (fast — hardware-gated tests are `slow`-marked and skipped)
         run: uv run pytest -m "not slow"
 
