@@ -1,17 +1,130 @@
 # woys
 
-> **Status: private alpha — All Rights Reserved. Not for redistribution.**
-> This repository is private and proprietary pending a commercial decision.
-> See `LICENSE` and `NOTICE` for the boundary between original work and the
-> upstream `w-okada/voice-changer` MIT-licensed code.
+Linux-native real-time voice changer. RVC-only, ONNX Runtime CUDA,
+PipeWire-native, terminal-controlled. Tested on CachyOS + RTX 2070;
+should work on any modern Linux with PipeWire + an NVIDIA GPU.
 
-Linux-native real-time voice changer. RVC-only, ONNX Runtime CUDA, PipeWire-native, terminal-controlled. Originally targeted CachyOS; runs on any modern Linux with PipeWire + an NVIDIA GPU.
+> **Honest disclaimer.** This is a personal project. I built it for my
+> own daily use; you're welcome to try it, but response time on issues
+> is best-effort. The codebase has been through two adversarial-audit
+> cycles (the most recent being v0.15.0, 213 findings, 80 fix commits);
+> the full audit workspace is preserved at `docs/26-review/` if
+> you want to know exactly what's been tested and what hasn't.
+> Original work is **All Rights Reserved** (see `LICENSE`); the
+> `src/server/` subtree carries MIT (see `src/server/LICENSE` and
+> `NOTICE`).
 
-## Status (v0.14.3)
+## Hardware requirements
+
+- **GPU:** NVIDIA RTX 2070 or better. The engine has been measured
+  on an RTX 2070 Mobile + i7-10750H (`docs/26-review/benchmark-v0.7-to-v0.15.html`).
+  CUDA support is **required** — there's no CPU fallback (an honest
+  hard-fail since v0.15.0; pre-v0.15.0 falling back to CPU silently
+  was a P0 audit finding).
+- **System RAM:** measured engine RSS peaks at ~1.5 GB with the
+  foundation models + one RVC voice loaded. 8 GB total system RAM
+  is comfortable for the engine alongside Discord / a game / a
+  browser; 16 GB is generous. Below 4 GB free is not tested.
+- **VRAM:** ~1.1 GB peak (foundation models dominate; one RVC voice
+  adds ~150 MB).
+- **OS / audio:** Linux + PipeWire. PipeWire 1.2+ tested; PulseAudio
+  / bare-ALSA are not supported (the engine speaks to PipeWire
+  directly via `pw-cat` and `pactl`). The original development
+  target was CachyOS; other recent distros with PipeWire should work
+  but are unverified.
+- **Disk:** ~1 GB for the foundation weights + sample voice (more
+  if you bring your own RVC voices, typically 60-150 MB each).
+- **Internet:** required on first install to download the foundation
+  weights (~700 MB total) and the sample voice (~64 MB).
+
+## Quick Start
+
+Two tiers. Tier 1 is the "did it work?" path; Tier 2 is where you
+swap in your own voices once Tier 1 produces sound.
+
+### Tier 1 — install and hear your voice converted (5-10 minutes)
+
+```bash
+git clone https://github.com/alirexha/woys.git
+cd woys
+./install.sh                  # downloads weights, sets up the venv, registers `woys`
+woys run --autostart          # starts the engine + TUI; press `m` to monitor your output through your speakers
+```
+
+That's it. Speak into your default mic; press `m` inside the TUI to
+hear the converted output through your speakers (otherwise you need
+an app like Discord pointed at the new `woys-mic` source to hear it
+— see `docs/DISCORD-SETUP.md`).
+
+The `./install.sh` step is the slow one: it downloads ~700 MB of
+foundation weights (`contentvec-f.onnx`, `rmvpe_wrapped.onnx`) and
+a 64 MB sample voice (`amitaro_v2_16k.onnx`) from HuggingFace, then
+creates a Python venv and installs the engine. Plan for 5-15
+minutes depending on your internet; the foundation download is the
+load-bearing leg.
+
+### Tier 2 — add more voices
+
+The default install gives you ONE sample voice. To add more,
+download an RVC ONNX repo from HuggingFace and switch to it:
+
+```bash
+woys models download wok000/vcclient_model   # the sample repo install.sh already uses
+woys models list                              # see what's now in your library
+woys models use <model-name>                  # pick one by file stem, e.g. `woys models use amitaro_v2_16k`
+```
+
+The TUI picks up the new selection on the next engine restart (`q`,
+then `woys run --autostart`).
+
+## What You Get
+
+**The engine:** `woys` ships the inference engine, the PipeWire glue,
+a Textual TUI, and a CLI. The smoke-test sample voice
+(`amitaro_v2_16k.onnx`) ships via `./install.sh` so Tier 1 above
+produces audible output without an extra download.
+
+**No bundled voice models beyond the smoke-test sample.** RVC voice
+models are downloaded separately from HuggingFace. They're free.
+A typical RVC voice is 60-150 MB; download time is 10-60 seconds
+on a decent connection.
+
+**Finding more voices:**
+
+- **Start here:** [`wok000/vcclient_model`](https://huggingface.co/wok000/vcclient_model)
+  — the same repo `./install.sh` pulls the sample voice from.
+  Multiple known-licensed sample voices. Safe pick to verify your
+  setup works with multiple models.
+- **Browse more:** [`huggingface.co/models?other=rvc`](https://huggingface.co/models?other=rvc)
+  — search for "rvc" or "voice changer"; many community voice
+  models live here.
+- **Legal:** RVC voice clones are subject to whatever license the
+  uploader applied (often unclear). **For your own use anything you
+  have rights to is fine; for streaming or recording with someone
+  else's voice, get permission. Voice cloning of public figures
+  without consent is legally and ethically hazardous.** See
+  `docs/MODELS.md` for the full license discussion (including the
+  GPL-3.0 status of the foundation weights).
+
+**Converting your own `.pth`:** if you have an RVC checkpoint
+`.pth` file (the format most community RVC tools produce), `woys
+convert` exports it to `.onnx` for use with this engine. See
+`docs/MODELS.md`.
+
+## Status (v0.15.0)
+
+v0.15.0 is the post-review hardening release: 36-lens
+adversarial audit, 213 unique findings, 80 fix commits over the
+v0.14.3 → v0.15.0 span. The cycle focused on **correctness,
+observability, UX, security, and legal hygiene**, not perf — so
+the latency / VRAM / cuts-per-minute numbers below carry forward
+unchanged from v0.12.4 / v0.14.x. See `CHANGELOG.md` § [0.15.0]
+for the full set of fixes, deferred items, and audit transparency.
 
 Daily-use ready on RTX 2070 Mobile. The user's perceptual A/B
 test (Desktop WAV listening) ratified the v0.12.3 sweep top-1
-config as the new default profile in v0.12.4. Measured:
+config as the new default profile in v0.12.4. Measured (still
+current in v0.15.0; the audit didn't move these):
 
   * **cuts/min (TTS sustained content): 58.2** (was 78.0 in v0.11.0 — −25%)
   * **autocorr@chunk_period: 0.000** (was 0.136 — chunk-period
@@ -34,35 +147,6 @@ Configurations that minimise latency at the cost of more cuts (e.g.
 `chunk_seconds = 0.15`, the v0.11.0/v0.12.3-low-latency-tier defaults)
 remain available via `~/.config/woys/config.toml` for users who want
 that tradeoff.
-
-### v0.13.3 opt-in: RNNoise chain (`woys-by-alirexha`)
-
-If you want a further ~27 % cut reduction at +40 ms additional
-latency cost, install the LADSPA plugin and let `woys` manage the
-chain:
-
-```bash
-sudo pacman -S noise-suppression-for-voice
-woys chain enable    # systemd user unit; loads now + on every login
-# in your app, select `woys-by-alirexha` (the cleaned daily driver)
-# fallback option named `woys-no-cleanup` is the raw v0.12.4 path
-woys chain disable   # remove unit + tear down chain
-```
-
-For one-shot use without systemd:
-
-```bash
-woys chain setup
-woys chain status    # shows modules, sources, ALSA-leak self-check
-woys chain teardown
-```
-
-See `docs/23-rnnoise-chain.md` for the measured impact and the
-v0.13.0 → v0.13.3 history (v0.13.0 had a routing bug that leaked
-filter-chain output to ALSA hardware sinks; v0.13.2 fixed it; v0.13.3
-adds friendly source names so app dropdowns show
-`woys-by-alirexha` / `woys-no-cleanup` instead of a wall of internal
-plumbing names).
 
 ## What it is
 
@@ -93,31 +177,60 @@ A fork-and-trim of [w-okada/voice-changer](https://github.com/w-okada/voice-chan
 - Idle VRAM `< 500 MB` (currently misses at ~1.35 GiB — foundation
   models dominate).
 - CPU `< 15 %` while active.
-- Single `./install.sh`, runs in under 5 minutes on a fresh CachyOS.
+- `./install.sh` is the single command; expect 5-15 minutes on a
+  fresh CachyOS box depending on download speed (the foundation
+  weights + sample voice are ~760 MB total).
 
 See `docs/05-perf.md` for the actual measured numbers (some targets are
-currently missed; the path to closing the gap is documented).
+currently missed; the path to closing the gap is documented). See
+`docs/26-review/benchmark-v0.7-to-v0.15.html` for the v0.15.0
+cross-version benchmark on RTX 2070 + i7-10750H.
 
-## Quick start
+## Hooking up apps
 
-See `docs/INSTALL.md`. Short version:
+Once the engine is running, apps see a new audio input device called
+`woys-mic`. Point your app's input at it:
 
+- **Discord:** `docs/DISCORD-SETUP.md` (note: disable Discord's
+  Krisp noise suppression — it eats RVC output).
+- **CS2:** `docs/CS2-SETUP.md`.
+- **Any PipeWire-aware app:** pick `woys-mic` from its input-device
+  picker.
+
+If you enable the RNNoise post-processing chain (next section), apps
+see `woys-by-alirexha` (cleaned) and `woys-no-cleanup` (raw) instead
+of bare `woys-mic`.
+
+### Optional: RNNoise chain
+
+If you want a further ~27% cut reduction at +40 ms additional
+latency cost, install the LADSPA plugin and let `woys` manage the
+chain:
+
+```bash
+sudo pacman -S noise-suppression-for-voice  # Arch / CachyOS; other distros: look for `rnnoise` LADSPA
+woys chain enable    # systemd user unit; loads now + on every login
+# in your app, select `woys-by-alirexha` (the cleaned daily driver)
+# fallback option named `woys-no-cleanup` is the raw v0.12.4 path
+woys chain disable   # remove unit + tear down chain
 ```
-git clone https://github.com/alirexha/woys.git
-cd woys
-./install.sh
-woys run --autostart
+
+For one-shot use without systemd:
+
+```bash
+woys chain setup
+woys chain status    # shows modules, sources, ALSA-leak self-check
+woys chain teardown
 ```
 
-Then point Discord (`docs/DISCORD-SETUP.md`) or CS2 (`docs/CS2-SETUP.md`)
-at the `woys-mic` device that appears in their input-device pickers.
+See `docs/23-rnnoise-chain.md` for the measured impact and the
+v0.13.0 → v0.13.3 history.
 
-### AUR (pending repo de-privatisation)
+### AUR
 
-`pkg/PKGBUILD` and `pkg/.SRCINFO` are submission-ready. Once the GitHub
-repo is public, follow `pkg/README-AUR.md` to push to
-`aur.archlinux.org/packages/woys`. Until then, `./install.sh`
-is the supported install path.
+`pkg/PKGBUILD` and `pkg/.SRCINFO` are submission-ready. To push to
+`aur.archlinux.org/packages/woys`, follow `pkg/README-AUR.md`.
+Until then, `./install.sh` is the supported install path.
 
 ## Credits
 
