@@ -5268,7 +5268,7 @@ Headline: **e2e latency 280 ms → 30 ms** (88% reduction). Full numbers in `doc
 - `pyproject.toml` classifiers updated: `License :: Other/Proprietary License` + `Private :: Do Not Upload`.
 - `pkg/PKGBUILD` `license=('custom' 'MIT')` reflects the dual licensing; install also drops `NOTICE` into `/usr/share/licenses/$pkgname/`.
 - `the project notes` updated with private-repo + license-boundary rules in "Things to never do".
-- `docs/00-recon.md` had one absolute path (`/home/alireza/ai/vcclient-cachy/upstream/`) sanitized to `<repo>/upstream/`.
+- `docs/00-recon.md` had one absolute path (a `/home/<user>/.../vcclient-cachy/upstream/` reference) sanitized to `<repo>/upstream/`.
 
 ### Audit (clean — nothing scrubbed from history)
 - No model binaries (`*.onnx`, `*.pth`, `*.pt`, `*.bin`, `*.safetensors`) were ever committed (tree or history).
