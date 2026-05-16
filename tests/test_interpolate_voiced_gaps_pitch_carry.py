@@ -47,10 +47,14 @@ def test_default_kwargs_reproduce_pre_fix_behaviour() -> None:
 
 def test_leading_unvoiced_bridged_with_prior_anchor() -> None:
     """A pitchf starting with a short unvoiced run AND a voiced frame
-    in range gets the leading run bridged using the prior anchor."""
+    in range gets the leading run bridged using the prior anchor.
+
+    F-31-03 (commit-080): bridge is log-linear; expected values reflect
+    that domain change.
+    """
     from audio.engine import interpolate_voiced_gaps_np
 
-    # pitchf = [0, 0, 0, 200, voiced...] -- leading 3-frame unvoiced run.
+    # pitchf = [0, 0, 0, 220, voiced...] -- leading 3-frame unvoiced run.
     n = 20
     pitchf = np.full(n, 220.0, dtype=np.float32)
     pitchf[:3] = 0.0
@@ -58,13 +62,15 @@ def test_leading_unvoiced_bridged_with_prior_anchor() -> None:
     out = interpolate_voiced_gaps_np(pitchf, prior_voiced_f0=180.0, prior_voiced_age_frames=0)
 
     # The leading 3 frames must now be > 0 (bridged), interpolated
-    # linearly from 180 (at virtual index -1) to 220 (at index 3).
+    # log-linearly from 180 (at virtual index -1) to 220 (at index 3).
     # Span = 3 - (-1) = 4 frames.
+    log_lo = np.log(180.0)
+    log_hi = np.log(220.0)
     expected = []
     for i in range(3):
         alpha = (i - (-1)) / 4.0
-        expected.append(180.0 * (1.0 - alpha) + 220.0 * alpha)
-    np.testing.assert_allclose(out[:3], expected, atol=1e-4)
+        expected.append(np.exp(log_lo * (1.0 - alpha) + log_hi * alpha))
+    np.testing.assert_allclose(out[:3], expected, atol=1e-3)
 
 
 def test_leading_bridge_rejected_when_prior_too_old() -> None:
@@ -94,12 +100,20 @@ def test_leading_bridge_only_fires_when_no_in_window_anchor() -> None:
     pitchf[0] = 100.0  # in-window leading voiced anchor
     pitchf[1:4] = 0.0  # 3-frame gap
     out = interpolate_voiced_gaps_np(pitchf, prior_voiced_f0=999.0, prior_voiced_age_frames=0)
-    # The 999.0 prior must NOT show up; the bridge interpolates 100 → 220.
-    # alpha at i=1: (1-0)/4 = 0.25 -> 100*0.75 + 220*0.25 = 130
-    # alpha at i=2: 0.5  -> 160
-    # alpha at i=3: 0.75 -> 190
-    expected = [130.0, 160.0, 190.0]
-    np.testing.assert_allclose(out[1:4], expected, atol=1e-4)
+    # The 999.0 prior must NOT show up; the bridge interpolates 100 → 220
+    # log-linearly (F-31-03). Span = 4 frames; the in-window anchor at
+    # idx 0 (=100) is used, NOT the 999.0 prior.
+    log_lo = np.log(100.0)
+    log_hi = np.log(220.0)
+    expected = [
+        np.exp(log_lo * (1 - 0.25) + log_hi * 0.25),
+        np.exp(log_lo * (1 - 0.5) + log_hi * 0.5),
+        np.exp(log_lo * (1 - 0.75) + log_hi * 0.75),
+    ]
+    np.testing.assert_allclose(out[1:4], expected, atol=1e-3)
+    # Also assert the values are nowhere near the 999.0 prior -- the
+    # in-window anchor wins.
+    assert (out[1:4] < 250.0).all()
 
 
 def test_all_voiced_fast_path_unaffected_by_prior() -> None:

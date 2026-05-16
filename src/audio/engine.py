@@ -1411,11 +1411,28 @@ def interpolate_voiced_gaps_np(
     within ``_VOICED_GAP_MAX_FRAMES`` and a trailing voiced frame exists
     within this chunk, we synthesize a virtual anchor at index
     ``-prior_voiced_age_frames`` (negative, conceptually "outside the
-    chunk to the left") and linearly interpolate from `prior_voiced_f0`
-    through the run to the trailing in-window anchor. Defaults
-    ``(0.0, -1)`` reproduce the pre-F-31-12 behaviour exactly -- no
-    caller is forced to thread state through. Engine streaming path
-    passes carry state from `EngineWorker._pitch_carry_*`.
+    chunk to the left") and interpolate from `prior_voiced_f0` through
+    the run to the trailing in-window anchor. Defaults ``(0.0, -1)``
+    reproduce the pre-F-31-12 fall-back behaviour (no leading-edge
+    bridge) -- no caller is forced to thread state through. Engine
+    streaming path passes carry state from
+    `EngineWorker._pitch_carry_*`.
+
+    review F-31-03 (commit-080): bridging interpolates in
+    **log-f0** (geometric mean), not in Hz. A glide that is
+    perceptually linear (constant semitones / second) is linear in
+    log-frequency, not in Hz; bridging 100 Hz → 400 Hz in Hz puts
+    the midpoint at 250 Hz, while a perceptually-straight glide
+    crosses 200 Hz at midpoint (= sqrt(100 * 400)). Bridging over
+    ≤ ``_VOICED_GAP_MAX_FRAMES`` (8 frames ≈ 80 ms) frames in Hz
+    produces a sub-perceptual sag in the contour audible on
+    voiced->unvoiced->voiced syllable boundaries. One ``log/exp``
+    pair per gap; cost is negligible (≤ 8 frame-samples per gap).
+    Pitch shift downstream of this function is a constant
+    multiplicative factor in Hz, i.e. a constant additive offset
+    in log-f0, so the shape of the log-linear bridge is preserved
+    by the shift (verified in
+    ``test_pitch_shift_modifies_pitchf_and_pitch_coarse_consistently``).
     """
     if pitchf.size == 0:
         return pitchf
@@ -1433,8 +1450,8 @@ def interpolate_voiced_gaps_np(
         and prior_voiced_age_frames < _VOICED_GAP_MAX_FRAMES
     )
     # Walk the runs of invalid; bridge each ≤ _VOICED_GAP_MAX_FRAMES gap
-    # via vectorized linear interpolation between the bracketing voiced
-    # frames.
+    # via vectorized log-linear interpolation between the bracketing
+    # voiced frames (F-31-03). Pre-F-31-03 this was linear-in-Hz.
     last_valid = -1
     i = 0
     while i < n:
@@ -1453,10 +1470,12 @@ def interpolate_voiced_gaps_np(
             and out[last_valid] > 0.0
             and out[j] > 0.0
         ):
-            # Vectorized: alpha vector over the gap, single broadcast
-            # multiply replaces the Python `for k in range(i, j)` loop.
+            # F-31-03: log-linear bridge. alpha vector over the gap,
+            # interpolate in log space then exp back to Hz.
             alphas = (np.arange(i, j, dtype=np.float32) - last_valid) / (j - last_valid)
-            out[i:j] = out[last_valid] * (1.0 - alphas) + out[j] * alphas
+            log_lo = float(np.log(out[last_valid]))
+            log_hi = float(np.log(out[j]))
+            out[i:j] = np.exp(log_lo * (1.0 - alphas) + log_hi * alphas).astype(np.float32)
         elif (
             # F-31-12 leading-edge bridge: no in-window prior anchor, but
             # the previous chunk left a recent voiced f0 we can use.
@@ -1470,10 +1489,13 @@ def interpolate_voiced_gaps_np(
             # Synthetic anchor at index -prior_voiced_age_frames - 1
             # (one full frame "older" than i==0). Total span from the
             # virtual anchor to j is (prior_voiced_age_frames + 1 + j).
+            # F-31-03: log-linear here too.
             virt_anchor_offset = -(prior_voiced_age_frames + 1)
             span = float(j - virt_anchor_offset)
             alphas = (np.arange(i, j, dtype=np.float32) - virt_anchor_offset) / span
-            out[i:j] = np.float32(prior_voiced_f0) * (1.0 - alphas) + out[j] * alphas
+            log_lo = float(np.log(prior_voiced_f0))
+            log_hi = float(np.log(out[j]))
+            out[i:j] = np.exp(log_lo * (1.0 - alphas) + log_hi * alphas).astype(np.float32)
         i = j
     return out
 
