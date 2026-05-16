@@ -68,13 +68,19 @@ def test_exact_shift_recovers_same_offset(overlap: int, search: int, threshold: 
                 rng.standard_normal(head.shape[0] - post_start).astype(np.float32) * 0.01
             )
 
-        off_loop, fb_loop = _best_offset_loop_reference(tail, head, search, threshold)
-        off_vec, fb_vec = _best_offset(tail, head, search, threshold)
+        off_loop, fb_loop, cl_loop = _best_offset_loop_reference(tail, head, search, threshold)
+        off_vec, fb_vec, cl_vec = _best_offset(tail, head, search, threshold)
         assert off_loop == off_vec, (
             f"offset mismatch at overlap={overlap}, search={search}, "
             f"shift={true_shift}: loop={off_loop} vec={off_vec}"
         )
         assert fb_loop == fb_vec
+        # F-31-05 (commit-079): both impls must agree on the clipped
+        # predicate too. When `true_shift == search` and the corr
+        # cleared threshold, both should flag clipped=True.
+        assert cl_loop == cl_vec
+        if not fb_loop:
+            assert cl_loop == (off_loop == search)
 
 
 @pytest.mark.parametrize(("overlap", "search", "threshold"), _params())
@@ -86,8 +92,8 @@ def test_silence_tail_falls_back(overlap: int, search: int, threshold: float) ->
     tail = np.zeros(overlap, dtype=np.float32)
     head = np.random.default_rng(0).standard_normal(overlap + search).astype(np.float32)
 
-    assert _best_offset_loop_reference(tail, head, search, threshold) == (0, True)
-    assert _best_offset(tail, head, search, threshold) == (0, True)
+    assert _best_offset_loop_reference(tail, head, search, threshold) == (0, True, False)
+    assert _best_offset(tail, head, search, threshold) == (0, True, False)
 
 
 @pytest.mark.parametrize(("overlap", "search", "threshold"), _params())
@@ -104,7 +110,7 @@ def test_uncorrelated_falls_back_under_threshold(
 
     loop = _best_offset_loop_reference(tail, head, search, threshold)
     vec = _best_offset(tail, head, search, threshold)
-    assert loop == vec
+    assert loop == vec  # 3-tuple equality covers the F-31-05 clipped flag
 
 
 @pytest.mark.parametrize(("overlap", "search", "threshold"), _params())
@@ -128,11 +134,9 @@ def test_random_battery_parity(overlap: int, search: int, threshold: float) -> N
                 tail + rng.standard_normal(overlap).astype(np.float32) * scale
             )
 
-        off_loop, fb_loop = _best_offset_loop_reference(tail, head, search, threshold)
-        off_vec, fb_vec = _best_offset(tail, head, search, threshold)
-        assert (off_loop, fb_loop) == (off_vec, fb_vec), (
-            f"trial {trial}: loop=({off_loop},{fb_loop}) vec=({off_vec},{fb_vec})"
-        )
+        loop = _best_offset_loop_reference(tail, head, search, threshold)
+        vec = _best_offset(tail, head, search, threshold)
+        assert loop == vec, f"trial {trial}: loop={loop} vec={vec}"
 
 
 def test_too_short_head_falls_back_in_both() -> None:
@@ -142,8 +146,8 @@ def test_too_short_head_falls_back_in_both() -> None:
 
     tail = np.ones(64, dtype=np.float32)
     head = np.ones(64, dtype=np.float32)  # exactly overlap, no room for search
-    assert _best_offset_loop_reference(tail, head, search=4, threshold=0.25) == (0, True)
-    assert _best_offset(tail, head, search=4, threshold=0.25) == (0, True)
+    assert _best_offset_loop_reference(tail, head, search=4, threshold=0.25) == (0, True, False)
+    assert _best_offset(tail, head, search=4, threshold=0.25) == (0, True, False)
 
 
 def test_empty_tail_falls_back_in_both() -> None:
@@ -151,8 +155,8 @@ def test_empty_tail_falls_back_in_both() -> None:
 
     tail = np.zeros(0, dtype=np.float32)
     head = np.ones(100, dtype=np.float32)
-    assert _best_offset_loop_reference(tail, head, search=10, threshold=0.25) == (0, True)
-    assert _best_offset(tail, head, search=10, threshold=0.25) == (0, True)
+    assert _best_offset_loop_reference(tail, head, search=10, threshold=0.25) == (0, True, False)
+    assert _best_offset(tail, head, search=10, threshold=0.25) == (0, True, False)
 
 
 # ---------------------------------------------------------------------------
