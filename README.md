@@ -198,7 +198,7 @@ Once the engine is running, apps see a new audio input device called
   picker.
 
 If you enable the RNNoise post-processing chain (next section), apps
-see `woys-by-alirexha` (cleaned) and `woys-no-cleanup` (raw) instead
+see `woys-clean` (cleaned) and `woys-no-cleanup` (raw) instead
 of bare `woys-mic`.
 
 ### Optional: RNNoise chain
@@ -210,7 +210,7 @@ chain:
 ```bash
 sudo pacman -S noise-suppression-for-voice  # Arch / CachyOS; other distros: look for `rnnoise` LADSPA
 woys chain enable    # systemd user unit; loads now + on every login
-# in your app, select `woys-by-alirexha` (the cleaned daily driver)
+# in your app, select `woys-clean` (the cleaned daily driver)
 # fallback option named `woys-no-cleanup` is the raw v0.12.4 path
 woys chain disable   # remove unit + tear down chain
 ```

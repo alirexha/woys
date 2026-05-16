@@ -113,7 +113,7 @@ Since v0.13.3, when the optional RNNoise chain is enabled (`woys chain
 setup`), apps will additionally see two friendlier-named sources in their
 input device dropdown:
 
-- **`woys-by-alirexha`** — RNNoise-cleaned source (the recommended daily
+- **`woys-clean`** — RNNoise-cleaned source (the recommended daily
   driver; ~13 % cuts/min reduction at the cost of ~+40 ms latency).
 - **`woys-no-cleanup`** — raw v0.12.4 engine output, no RNNoise (the
   low-latency fallback). This is the same node `woys-mic` points at.

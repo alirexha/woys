@@ -43,7 +43,7 @@ CS2 picks up the system's *default* recording device. The cleanest path:
    Install if missing: `paru -S pavucontrol`.
 
 2. Switch to the **Configuration** tab.
-3. Make sure your real microphone (e.g. HyperX QuadCast) is set to a profile
+3. Make sure your real microphone (e.g. USB condenser mic) is set to a profile
    that captures audio.
 4. Hop to the **Input Devices** tab.
 5. Click the **Set as fallback** button (a gray check) on **woys-mic**.
@@ -109,5 +109,5 @@ competitive play it can still feel slow. Two knobs in
 ## Optional — separate woys-mic for game vs. Discord
 
 If you only want the voice changer in CS2 but real voice in Discord, set
-**Discord** to your real mic (e.g. HyperX) and **CS2** to woys-mic.
+**Discord** to your real mic (e.g. USB mic) and **CS2** to woys-mic.
 Different apps can use different mics on PipeWire — that's the whole point.

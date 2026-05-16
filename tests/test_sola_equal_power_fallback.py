@@ -16,7 +16,7 @@ transitions where fall_back fires most.
 
 The verdict-required test material (verdict line 896): "RMS of the
 crossfade region on two uncorrelated noise chunks + a fricative
-listener pass (Hard Rule 9)". The fricative pass is Alireza's
+listener pass (Hard Rule 9)". The fricative pass is the maintainer's
 ears-verify task; the unit tests here cover the RMS math.
 
 Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.

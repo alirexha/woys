@@ -42,7 +42,7 @@ SOURCE_NAME = "woys-mic"
 # CS2 input device dropdowns:
 #
 #   woys-no-cleanup      ← raw, low-latency woys-mic source (this file)
-#   woys-by-alirexha     ← cleaned RNNoise output (chain.py adds it)
+#   woys-clean     ← cleaned RNNoise output (chain.py adds it)
 #
 # WoysSink is internal plumbing and gets the `_internal-` prefix so its
 # auto-monitor (visible to apps as a source) is recognizable as
@@ -52,7 +52,7 @@ SOURCE_DESC = "woys-no-cleanup"
 
 # v0.14.1 - description applied to woys-mic when the RNNoise chain is
 # active (chain.setup() reloads the remap-source with this). Apps that
-# show descriptions then see only `woys-by-alirexha` as a non-internal
+# show descriptions then see only `woys-clean` as a non-internal
 # option in their input picker; users who explicitly want raw bypass
 # can still pick `woys-mic` by exact name. chain.teardown() reverts
 # back to SOURCE_DESC.

@@ -283,7 +283,7 @@ def test_import_older_than_current_with_registered_migration_migrates_and_warns(
     monkeypatch.setitem(vcprofile._VCPROFILE_MIGRATIONS, 0, _legacy_v0_to_v1)
 
     raw_in: dict[str, object] = {
-        "meta": {"format_version": 0, "author": "alirexha"},
+        "meta": {"format_version": 0, "author": "test-author"},
         "profile": {},
         "model": {},
     }
@@ -294,7 +294,7 @@ def test_import_older_than_current_with_registered_migration_migrates_and_warns(
         "the migrated dict's meta.format_version must be stamped "
         "to the current version after a successful walk"
     )
-    assert migrated["meta"]["author_hint"] == "alirexha"
+    assert migrated["meta"]["author_hint"] == "test-author"
     assert "author" not in migrated["meta"]
     assert "migrating v0 -> v1" in err, (
         f"the reader must print a stderr warning per migration leg; stderr was: {err!r}"

@@ -392,7 +392,7 @@ class EngineConfig:
     prefer_native_pw_buffer_ms: int = 0
 
     # v0.5.1: software input pre-attenuation, in dB. Default 0.0 (passthrough).
-    # Hot mics (HyperX QuadCast at high volume etc.) clip the signal which
+    # Hot mics (USB condenser mic at high volume etc.) clip the signal which
     # RVC amplifies as harsh distortion downstream. Setting a small
     # negative value (-3 to -6 dB) trims headroom without quieting much.
     # Applied per chunk before resample → embedder.
@@ -432,7 +432,7 @@ class EngineConfig:
     # v0.7.0-rc4 - gate threshold lowered -55 → -75. The audit
     # (`docs/16-audit/synthesis.md`, lens 06 / S1) traced rc1/rc2/rc3
     # cuts to this gate firing on intra-speech RMS dips: -55 dBFS is
-    # only ~6 dB below typical room noise on a QuadCast, and brief
+    # only ~6 dB below typical room noise on a USB condenser mic, and brief
     # speech valleys (between syllables, on plosive onsets, during
     # fricatives) routinely cross it. Each fire emits a full chunk
     # of zeros directly to the writer, bypassing SOLA, both
@@ -913,7 +913,7 @@ class EngineStats:
     _recent_rvc_post_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     # Set of `audio16k.shape[-1]` values seen at inference entry. The rc9
     # broader pre-warm targets soxr's polyphase alternation pattern (4
-    # shapes on alireza's QuadCast 2 S: 1957/1958/2446/2447). If runtime
+    # shapes seen on a 48 kHz USB condenser mic: 1957/1958/2446/2447). If runtime
     # introduces shapes outside the pre-warm set, cuDNN re-tunes on the
     # cold shape (~80 ms one-off cost vs ~25 ms cached). The brief lists
     # this as v0.10.x candidate #2; counter-evidence is "set size ≤ 4
@@ -3133,8 +3133,7 @@ class RealtimeEngine:
         path calls `_infer` with `model_input.shape[0] = history_len +
         audio16_len`, where `audio16_len` is whatever
         `_StreamResampler(48k → 16k).process(7200)` emits. Soxr
-        alternates between two specific values (1957 / 2447 in alireza's
-        QuadCast 2 S session, plus the typical 2400) - every chunk with
+        alternates between two specific values (1957 / 2447 in a sample 48 kHz USB-condenser session, plus the typical 2400) - every chunk with
         a non-cached shape costs cuDNN a fallback slow path, ~80 ms
         inference vs ~40 ms cached. See
         `docs/16-audit/12-rc5-writer-jitter-probe.md` and the rc8

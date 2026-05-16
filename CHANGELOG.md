@@ -430,7 +430,7 @@ strategy than `pytest` + `pw-dump on dev box` (see LESSONS §46).
 - **`src/woys/chain.py`** reverts to the v0.14.1 module-based pactl
   topology: `woys-mic` (raw) → `loopback` → `woys-mic-rnnoise-bridge`
   (LADSPA) → `woys-mic-clean` (null-sink) → `remap-source`
-  → `woys-by-alirexha`. All loaded via `pactl load-module` at runtime,
+  → `woys-clean`. All loaded via `pactl load-module` at runtime,
   no PipeWire conf files written, no daemon restarts.
 - **`src/woys/__init__.py`**, **`pyproject.toml`** version `0.14.3`.
 
@@ -449,7 +449,7 @@ strategy than `pytest` + `pw-dump on dev box` (see LESSONS §46).
 v0.14.1's app-dropdown footprint is the achievable ceiling on
 `module-*` + pipewire-pulse:
 
-  * `woys-by-alirexha` — daily-driver source (user-facing)
+  * `woys-clean` — daily-driver source (user-facing)
   * `woys-mic` — raw-bypass source, description `_internal-raw-bypass`
   * `woys-mic-clean.monitor` — auto-monitor of the LADSPA sink, tagged
     `_internal-clean-sink`
@@ -475,11 +475,11 @@ as final.
 ## [0.14.1] — 2026-05-10 — single-default chain visibility: relabel woys-mic and intermediates so apps show one daily-driver option
 
 When the RNNoise chain is active (`woys chain setup`), apps that show
-device descriptions now render `woys-by-alirexha` as the only
+device descriptions now render `woys-clean` as the only
 non-internal woys input source. The raw `woys-mic`, the LADSPA bridge
 monitor, and the clean-sink monitor are all marked `_internal-...` in
 their descriptions; users with chain enabled see one obvious daily-
-driver pick instead of two ("woys-no-cleanup" vs "woys-by-alirexha",
+driver pick instead of two ("woys-no-cleanup" vs "woys-clean",
 which v0.13.3 had as parallel options).
 
 ### Added
@@ -570,7 +570,7 @@ then setup, then `pactl list short sources` and `pw-dump`:
 - `woys-mic` description = `_internal-raw-bypass` ✓
 - `woys-mic-clean.monitor` description = `Monitor of _internal-clean-sink` ✓
 - `woys-mic-rnnoise-bridge.monitor` description = `Monitor of _internal-rnnoise-stage` ✓
-- `woys-by-alirexha` description = `woys-by-alirexha` (only non-internal) ✓
+- `woys-clean` description = `woys-clean` (only non-internal) ✓
 - `node.passive=True` and `session.suspend-timeout-seconds=0` confirmed
   on `woys-mic-clean` via pw-dump ✓
 - Audio chain end-to-end intact (pw-link shows all expected hops) ✓
@@ -763,10 +763,10 @@ in AppConfig as a passthrough no-op so users with `enable_dbus =
 true` in their config.toml don't see migration warnings.
 
 The v0.13.0 RNNoise chain (`woys chain enable`) is unchanged. The
-`woys-by-alirexha` daily-driver source name is unchanged. Hotkeys,
+`woys-clean` daily-driver source name is unchanged. Hotkeys,
 TUI bindings, socket protocol unchanged.
 
-## [0.13.3] — 2026-05-09 — friendly source descriptions; apps see `woys-by-alirexha` and `woys-no-cleanup`, internals tagged `_internal-...`
+## [0.13.3] — 2026-05-09 — friendly source descriptions; apps see `woys-clean` and `woys-no-cleanup`, internals tagged `_internal-...`
 
 Polish release on top of v0.13.2's chain. No audio path changes — same
 `-27 %` cuts/min from RNNoise, same +40 ms latency cost, same routing.
@@ -776,7 +776,7 @@ What changes is the names users see in app device dropdowns.
 
 | name in dropdown | description | what it is |
 |---|---|---|
-| **woys-by-alirexha** | woys-by-alirexha | RNNoise-cleaned source — daily driver |
+| **woys-clean** | woys-clean | RNNoise-cleaned source — daily driver |
 | **woys-mic** | woys-no-cleanup | raw v0.12.4 engine output, low latency, no RNNoise — fallback |
 | WoysSink.monitor | Monitor of _internal-woys-engine-output | plumbing |
 | woys-mic-clean.monitor | Monitor of _internal-clean-sink | plumbing |
@@ -790,7 +790,7 @@ else with the `_internal-` prefix so the user knows not to pick it.
 
 ### Implementation
 
-  * **new module:** `module-remap-source` named `woys-by-alirexha` that
+  * **new module:** `module-remap-source` named `woys-clean` that
     remaps `woys-mic-clean.monitor` to a freshly-named source. This
     is necessary because pipewire-pulse offers no API to override the
     "Monitor of <sink-description>" prefix on an auto-monitor source —
@@ -831,7 +831,7 @@ service unit file itself is unchanged. Existing apps that had
 `woys-mic-clean.monitor` selected as their input WILL keep recording
 the cleaned audio (the .monitor source still exists; it's just no
 longer the recommended endpoint), but you'll want to switch to
-`woys-by-alirexha` once for the friendlier name and to free up the
+`woys-clean` once for the friendlier name and to free up the
 `.monitor` source for power users.
 
 ## [0.13.2] — 2026-05-09 — fix v0.13.0 RNNoise speaker leak (`media.class` regression) + `woys chain` systemd lifecycle
@@ -1363,7 +1363,7 @@ revealed the prior closing claim was based on broken instruments.
 
 `pw-record --target=<name>` silently falls back to the host's
 default source when the named target isn't immediately recordable.
-On this host the default source is the user's HyperX QuadCast 2 S
+On this host the default source is the user's USB condenser mic
 mic; in a quiet room during synthetic-harness runs, the fallback
 recording is near-silent → the calibrated cut detector finds "no
 events" → tooling reports "audio is clean."
@@ -1372,7 +1372,7 @@ This bit twice in v0.12.x:
 
   * **v0.12.0 Phase 1** (LESSONS §36): three independent detectors
     all returned null on what was actually silence captured from
-    HyperX, not engine output.
+    USB mic, not engine output.
   * **v0.12.1** (LESSONS §38): same fallback on TTS-driven engine
     output. Same null detectors. The "objective floor reached,
     project closes" conclusion was based on silence.
@@ -1746,8 +1746,8 @@ For `clock_lock` or `both` modes, install
 `/etc/sudoers.d/woys-gpu-clock`:
 
 ```
-alireza ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc *
-alireza ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
+<your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc *
+<your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
 ```
 
 The wildcard is bounded by application logic — the engine validates
@@ -1851,8 +1851,8 @@ sustained utilization. The torch keepalive provides the continuous
 For "clock_lock" or "both" modes, install `/etc/sudoers.d/woys-gpu-clock`:
 
 ```
-alireza ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc *
-alireza ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
+<your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc *
+<your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
 ```
 
 Limited to those two subcommands; any other `nvidia-smi` call still
@@ -2456,7 +2456,7 @@ defensive without basis on four items. All landed:
 ## [0.7.0] — 2026-05-07 — Final release. v0.8.x experiment closed (multiprocessing null, TensorRT dead end).
 
 This is the v0.7.0 release. Functionally equivalent to rc12's
-realtime audio behavior (the irreducible floor on the alireza /
+realtime audio behavior (the irreducible floor on the the maintainer /
 RTX 2070 Mobile / RVC v2 stack) plus the safety / diagnostic
 improvements the v0.8.x rc series shipped. The two architectural
 pivots attempted in v0.8.x — multiprocessing inference (v0.8.0)
@@ -2795,7 +2795,7 @@ attribute 'with_name'`. Child sent RESP_ERROR. Parent's
 fallback branch which silently switched to in-process inference.
 
 The "garbled" audio was NOT from a corrupted IPC layer — it was
-from the in-process fallback running in a state alireza had never
+from the in-process fallback running in a state the maintainer had never
 heard before:
 
 - Production user runs subprocess by default (`inference_subprocess
@@ -3082,7 +3082,7 @@ target).
 
 ### Verification under contested GPU
 
-`woys diag --seconds 30` ran in CC's autonomous loop while alireza
+`woys diag --seconds 30` ran in CC's autonomous loop while the maintainer
 had CS2 running on the same GPU (3.5 GB VRAM, ~50% compute load
 shared). Side-by-side same-conditions A/B:
 
@@ -3235,7 +3235,7 @@ woys run --autostart    # talk into Telegram
 sudo nvidia-smi --reset-gpu-clocks
 ```
 
-If alireza's Telegram p99 drops below 50 ms after running the
+If the maintainer's Telegram p99 drops below 50 ms after running the
 above, the GPU clock hypothesis is confirmed. v0.8.x can then
 land a permanent fix:
 - A `tools/woys-lock-clocks.sh` helper that wraps the sudo calls
@@ -3271,7 +3271,7 @@ land a permanent fix:
 
 98/98 fast tests pass; mypy --strict clean; ruff format clean.
 
-DO NOT auto-tag. **Per alireza's stop condition (b): "tried rc10,
+DO NOT auto-tag. **Per the maintainer's stop condition (b): "tried rc10,
 rc11, rc12 and the tail spike won't budge (real hardware floor
 reached, time for v0.8.x architecture work)" — escalating.**
 Final report follows in conversation.
@@ -3294,7 +3294,7 @@ it.
 ```
 $ python -c "import os; os.sched_setscheduler(0, os.SCHED_FIFO,
   os.sched_param(60)); print(os.sched_getscheduler(0))"
-SCHED_FIFO 60 SET OK    (alireza's CachyOS allows ulimit -r = 99)
+SCHED_FIFO 60 SET OK    (the maintainer's CachyOS allows ulimit -r = 99)
 
 $ woys diag --seconds 30   (rc11)
 inference  p50=44.25  p95=83.30  p99=86.18  max=96.23  (n=32)
@@ -3311,7 +3311,7 @@ not CPU-side preemption variance.**
 The variance source is GPU-side. Candidates ranked:
 
 1. **GPU clock state changes.** RTX 2070 Mobile boost/throttle —
-   audit lens 07 saw clocks bouncing 360↔1260 MHz at idle, alireza's
+   audit lens 07 saw clocks bouncing 360↔1260 MHz at idle, the maintainer's
    earlier nvidia-smi correlation showed 1185–1755 MHz with brief
    boost spikes to 1905 MHz under load. If the GPU drops to base
    clock between inferences, that chunk takes longer.
@@ -3366,7 +3366,7 @@ runs to check measurement stability:
   Run 1: p50=44.34  p95=83.58  p99=84.78  max=95.16
   Run 2: p50=44.45  p95=83.61  p99=84.18  max=92.20
 
-vs rc9 (alireza's last manual test): p50=35.62 p95=91.69 p99=96.27
+vs rc9 (the maintainer's last manual test): p50=35.62 p95=91.69 p99=96.27
 max=96.75.
 
 p99 - p50 spread: rc9 = 60.65 ms → rc10 = 40 ms. Compressed
@@ -3378,7 +3378,7 @@ distribution.
 ### Verdict
 
 PARTIAL WIN. Tail tightened but p99 = 84 ms is still well above
-the 50 ms gate alireza set for "Telegram-equivalent success." The
+the 50 ms gate the maintainer set for "Telegram-equivalent success." The
 remaining 40 ms p50→p99 spread is most likely scheduling /
 preemption variance that EXHAUSTIVE can't address. rc11 will
 attack that with RT priority on the engine thread.
@@ -3422,7 +3422,7 @@ that doesn't occur in realtime. cuDNN's algo cache for the four
 shapes that DO occur (1957/1958/2446/2447) was being populated by
 the realtime path itself — the FIRST encounter of each shape paid
 the heuristic-lookup cost mid-Telegram-call, manifesting as the 80–
-100 ms tail spikes alireza heard.
+100 ms tail spikes the maintainer heard.
 
 ### What changed
 
@@ -3497,7 +3497,7 @@ DO NOT auto-tag. Telegram verdict + the rc9 tail dump gates ship.
 ## [0.7.0rc8] — 2026-05-07 — Inference tail-chunk capture (instrumentation only); no behavior change
 
 rc7's `gc.disable()` was a real win on the typical case (inference
-p50 65.7 → 39.9 ms in alireza's Telegram diag) but the tail spike
+p50 65.7 → 39.9 ms in the maintainer's Telegram diag) but the tail spike
 did NOT move (p99 was 97.5 → 95.9; max was 110.4 → 110.0). The
 spread *widened* because GC was a uniform tax on the typical case;
 the tail is a different mechanism with different cause.
@@ -3617,7 +3617,7 @@ generation triggers.
 
 A 30 ms GC pause on a chunk that would otherwise take 65 ms produces
 a 95 ms chunk. Repeated every ~14 s = 1 spike every ~90 chunks at
-6.7 chunks/s ≈ p99 territory. **The arithmetic matches alireza's
+6.7 chunks/s ≈ p99 territory. **The arithmetic matches the maintainer's
 observation: p99 is 32 ms above p50.**
 
 Numpy arrays don't need GC — they're reference-counted; refcount
@@ -3768,7 +3768,7 @@ The 14 pre-existing ruff line-length warnings in `engine.py` (cuDNN
 comment block) and `cli.py` are unchanged by rc6.
 
 DO NOT auto-tag. rc6 is diagnostic only — no audible behavior
-change is expected. After alireza confirms no regression in
+change is expected. After the maintainer confirms no regression in
 Telegram and posts the per-stage percentiles, rc7 fixes the
 dominant stage.
 
@@ -3786,7 +3786,7 @@ writer_jitter_ms=63.8             ← the LESSONS §19 threading tax
 Three of rc4's four P0s did not fire at all. The one that mattered —
 SOLA's per-call output contract — wasn't the fix the audit proposed;
 the rc4 zero-pad emitted ~6 cut-events / second of explicit silence
-into the audio. That was the audible degradation alireza heard.
+into the audio. That was the audible degradation the maintainer heard.
 
 rc5 fixes SOLA structurally instead of patching the symptom. Full
 diagnosis in `docs/16-audit/11-rc4-postmortem.md`.
@@ -3901,7 +3901,7 @@ If audible cuts persist with all the above counters clean, the next
 move is the threading-tax investigation. If cuts are gone, tag
 v0.7.0.
 
-DO NOT auto-tag. Alireza's verdict in Telegram is the gate.
+DO NOT auto-tag. the maintainer's verdict in Telegram is the gate.
 
 ## [0.7.0rc4] — 2026-05-07 — Stop tuning the wrong layer; bundle four root-cause fixes from the audit
 
@@ -3932,7 +3932,7 @@ underrun.
    RMS dips at -55 dBFS, emitting a full chunk of zeros directly to
    the writer — bypassing SOLA, both resamplers, and inference, and
    incrementing zero counters. -55 dBFS is only ~6 dB below typical
-   QuadCast room ambient; brief dips between syllables, on consonant
+   USB-condenser room ambient; brief dips between syllables, on consonant
    onsets, and on fricatives routinely cross it.
    - Default `input_gate_dbfs`: **-55 → -75** (well below room ambient).
    - New `input_gate_hysteresis_ms = 200`: gate must observe ≥200 ms
@@ -3942,7 +3942,7 @@ underrun.
    - Bug fix: `input_gate_dbfs` was on `EngineConfig` but never in
      `AppConfig`'s forwarded fields — user overrides in
      `~/.config/woys/config.toml` were silently ignored. The on-disk
-     `input_gate_dbfs = -200.0` alireza set during the rc3 falsifier
+     `input_gate_dbfs = -200.0` the maintainer set during the rc3 falsifier
      never reached the engine. rc4 plumbs it through.
 
 2. **SOLA fallback shortfall** (lens 03). When `_best_offset` picks
@@ -4384,7 +4384,7 @@ declaring victory:
 | Source                                            | Cuts/min |
 | ------------------------------------------------- | -------: |
 | Synthetic clean (math-perfect 60 s)               |        0 |
-| Direct HyperX mic, no engine in path              |        0 |
+| Direct USB mic mic, no engine in path              |        0 |
 | **woys v0.6.8** through `woys-mic` (e_girl voice) |     ~23 |
 | **woys v0.6.9** through `woys-mic` (e_girl voice) | **~12** |
 
@@ -4749,7 +4749,7 @@ tree (`tests/test_migrate_to_woys.py`).
 After v0.5.1's resampler fix removed the scratchy aliasing artifacts, the
 user reported a different artifact in Telegram: rapid sub-millisecond
 gaps that sound like the audio is "disconnecting and reconnecting in like
-0.0001 seconds" continuously — Persian word **"برفک"** for TV static.
+0.0001 seconds" continuously — a colloquial term for TV-static crackle.
 
 This is Hypothesis E from the v0.5.1 retrospective: PulseAudio output
 buffer underruns. Each underrun = brief silence = reconnection click; at
