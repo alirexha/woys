@@ -105,18 +105,6 @@ Scripts — all *.py and *.sh under scripts/:
   scripts/profile_engine.py
   scripts/smoke_rvc_onnx.py
   scripts/sweep_latency.py
-  scripts/v010_alloc_probe.py
-  scripts/v010_analyze.py
-  scripts/v010_harness.py
-  scripts/v012_1_tts_run.py
-  scripts/v012_2_proper_sweep.sh
-  scripts/v012_3_grid_sweep.py
-  scripts/v012_3_writeup.py
-  scripts/v012_phase2_sweep.sh
-  scripts/v012_run_and_record.sh
-  scripts/v012_spectral_flux.py
-  scripts/v012_spectrogram_analysis.py
-  scripts/v012_stationary_run.py
 
 Native helpers (C):
   bin/woys-pw-out.c                   (native PipeWire output client; v0.9.0+)
