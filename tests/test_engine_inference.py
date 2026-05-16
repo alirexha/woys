@@ -51,9 +51,12 @@ def test_interpolate_all_voiced_unchanged() -> None:
     np.testing.assert_array_equal(out, pitchf)
 
 
-def test_interpolate_short_gap_bridges_linearly() -> None:
-    """Gap of 4 frames between two voiced frames at 100 Hz / 200 Hz -
-    output should linearly interpolate."""
+def test_interpolate_short_gap_bridges_log_linearly() -> None:
+    """review F-31-03 (commit-080): the gap-bridge is log-linear
+    in f0, not linear-in-Hz. Pre-fix this test asserted the Hz-linear
+    contour; post-fix the values are the geometric interpolant. Pin
+    log-linear by checking each interior frame equals
+    `exp(log(lo)*(1-alpha) + log(hi)*alpha)`."""
     pitchf = np.array(
         [100.0, 100.0, 0.0, 0.0, 0.0, 0.0, 200.0, 200.0],
         dtype=np.float32,
@@ -61,20 +64,46 @@ def test_interpolate_short_gap_bridges_linearly() -> None:
     out = interpolate_voiced_gaps_np(pitchf)
     # Frames 2..5 are the gap; bridge from 100 (idx 1) to 200 (idx 6).
     # alpha = (k - 1) / (6 - 1) = (k - 1) / 5
+    log_lo = np.log(100.0)
+    log_hi = np.log(200.0)
     expected = np.array(
         [
             100.0,
             100.0,
-            100.0 * (1 - 1 / 5) + 200.0 * (1 / 5),
-            100.0 * (1 - 2 / 5) + 200.0 * (2 / 5),
-            100.0 * (1 - 3 / 5) + 200.0 * (3 / 5),
-            100.0 * (1 - 4 / 5) + 200.0 * (4 / 5),
+            np.exp(log_lo * (1 - 1 / 5) + log_hi * (1 / 5)),
+            np.exp(log_lo * (1 - 2 / 5) + log_hi * (2 / 5)),
+            np.exp(log_lo * (1 - 3 / 5) + log_hi * (3 / 5)),
+            np.exp(log_lo * (1 - 4 / 5) + log_hi * (4 / 5)),
             200.0,
             200.0,
         ],
         dtype=np.float32,
     )
     np.testing.assert_allclose(out, expected, rtol=1e-5)
+
+
+def test_interpolate_log_geometric_midpoint() -> None:
+    """review F-31-03 (commit-080) verdict-required test: bridge
+    100 Hz -> 400 Hz across a 5-frame gap. Midpoint must be ~200 Hz
+    (geometric mean, log-linear) and decidedly NOT 250 Hz (arithmetic
+    mean, Hz-linear). The 25% delta at the midpoint is the size of
+    the audible "sag" the fix removes from voiced->unvoiced->voiced
+    transitions."""
+    # 5-frame gap: indices 1..5; anchors at idx 0 (100) and idx 6 (400).
+    pitchf = np.array(
+        [100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 400.0],
+        dtype=np.float32,
+    )
+    out = interpolate_voiced_gaps_np(pitchf)
+    # Midpoint frame is idx 3. alpha = (3 - 0) / (6 - 0) = 0.5.
+    # log-linear midpoint = exp(0.5*log(100) + 0.5*log(400))
+    #                     = exp(log(sqrt(100*400))) = sqrt(40_000) = 200.
+    np.testing.assert_allclose(out[3], 200.0, rtol=1e-5)
+    # Refute the Hz-linear midpoint (== 250). Should miss by ~50.
+    assert abs(out[3] - 250.0) > 40.0, (
+        f"Midpoint at {out[3]:.2f} is suspiciously close to the Hz-linear "
+        "value (250). F-31-03 must put it at the geometric mean (200)."
+    )
 
 
 def test_interpolate_long_gap_left_as_zeros() -> None:
@@ -99,8 +128,11 @@ def test_interpolate_handles_nan() -> None:
     out = interpolate_voiced_gaps_np(pitchf)
     assert not np.isnan(out).any()
     # Bridge between idx 0 (100) and idx 3 (200): alphas at 1/3 and 2/3.
-    np.testing.assert_allclose(out[1], 100.0 * (2 / 3) + 200.0 * (1 / 3), rtol=1e-5)
-    np.testing.assert_allclose(out[2], 100.0 * (1 / 3) + 200.0 * (2 / 3), rtol=1e-5)
+    # F-31-03 (commit-080): log-linear interpolation.
+    log_lo = np.log(100.0)
+    log_hi = np.log(200.0)
+    np.testing.assert_allclose(out[1], np.exp(log_lo * (2 / 3) + log_hi * (1 / 3)), rtol=1e-5)
+    np.testing.assert_allclose(out[2], np.exp(log_lo * (1 / 3) + log_hi * (2 / 3)), rtol=1e-5)
 
 
 # ---- to_pitch_coarse --------------------------------------------------------
