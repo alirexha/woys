@@ -3,7 +3,7 @@
 # Fork of w-okada/voice-changer (MIT). RVC-only, ONNX Runtime CUDA, PipeWire-native, TUI.
 
 pkgname=woys
-pkgver=0.14.3
+pkgver=0.15.0
 pkgrel=1
 pkgdesc='Linux-native real-time voice changer (RVC + ONNX + PipeWire) — fork of w-okada/voice-changer'
 arch=('x86_64')
