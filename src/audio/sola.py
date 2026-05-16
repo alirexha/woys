@@ -72,7 +72,16 @@ class SOLAConfig:
 
 
 def _hann_fade(n: int) -> tuple[NDArrayF32, NDArrayF32]:
-    """Return (fade_out, fade_in) windows of length n. Hann shape, sums to 1."""
+    """Equal-gain (amplitude-preserving) Hann fade pair.
+
+    Returns `(fade_out, fade_in)` of length n where
+    `fade_out + fade_in == 1` pointwise (the canonical Hann²
+    crossfade). Used on the *aligned* SOLA branch where prev_tail
+    and the new emit share phase: the two waveforms add coherently
+    in amplitude, so an amplitude-summing crossfade preserves the
+    perceived loudness. Pre-F-31-04 (commit-078) this was the only
+    fade pair; both aligned and fall_back paths used it.
+    """
     if n <= 0:
         empty = np.zeros(0, dtype=np.float32)
         return empty, empty
@@ -80,6 +89,45 @@ def _hann_fade(n: int) -> tuple[NDArrayF32, NDArrayF32]:
     fade_out: NDArrayF32 = (np.cos(t / 2.0) ** 2).astype(np.float32)
     fade_in: NDArrayF32 = (np.sin(t / 2.0) ** 2).astype(np.float32)
     return fade_out, fade_in
+
+
+def _equal_power_fade(n: int) -> tuple[NDArrayF32, NDArrayF32]:
+    """Equal-power (energy-preserving) crossfade pair.
+
+    Returns `(fade_out, fade_in)` of length n where
+    `fade_out**2 + fade_in**2 == 1` pointwise -- the standard equal-
+    power crossfade with amplitude weights `cos(t/2)` and `sin(t/2)`.
+    Used on the *fall_back* SOLA branch (F-31-04, commit-078) where
+    the alignment search gave up and `prev_tail` and the new emit
+    are effectively uncorrelated -- de-correlated signals add as a
+    sum of powers, so an amplitude-summing fade like `_hann_fade`
+    produces `cos**4 + sin**4` of expected power. That hits a ~3 dB
+    dip at the crossfade midpoint, audible on fricatives / sibilants
+    / phoneme transitions where `fell_back` fires most often.
+
+    Equal-power preserves the total energy across the fade: the
+    listener hears no dip. The trade-off is that on *correlated*
+    signals equal-power produces a ~3 dB BUMP at midpoint
+    (`cos + sin > 1` for t near pi/2), which is why we only use it
+    on the fall_back branch -- the aligned branch keeps the
+    amplitude-preserving Hann² pair.
+    """
+    if n <= 0:
+        empty = np.zeros(0, dtype=np.float32)
+        return empty, empty
+    t = np.linspace(0.0, np.pi, n, endpoint=False, dtype=np.float32)
+    fade_out: NDArrayF32 = np.cos(t / 2.0).astype(np.float32)
+    fade_in: NDArrayF32 = np.sin(t / 2.0).astype(np.float32)
+    return fade_out, fade_in
+
+
+# review F-31-04 (commit-078): runtime A/B knob. The production
+# code always uses equal-power on `fell_back`; the SOLA A/B harness
+# monkey-patches this to `False` to reproduce the pre-fix behaviour
+# (equal-gain on both branches) so an `--legacy-fade` listener pass
+# can hear the ~3 dB dip on fricatives. Not part of the user-facing
+# API.
+_USE_EQUAL_POWER_ON_FALLBACK: bool = True
 
 
 def _best_offset(
@@ -246,7 +294,18 @@ class SOLAStream:
 
     def __init__(self, cfg: SOLAConfig | None = None) -> None:
         self.cfg = cfg or SOLAConfig()
+        # review F-31-04 (commit-078): precompute BOTH fade pairs
+        # so `process()` picks the right one per chunk with no
+        # per-chunk allocation. Equal-gain (Hann²) goes on the aligned
+        # branch -- prev_tail and the new emit share phase, amplitudes
+        # add coherently, so the canonical amplitude-summing Hann
+        # crossfade is the correct power model. Equal-power (cos/sin)
+        # goes on the fall_back branch -- the two are uncorrelated so
+        # the powers add, and only equal-power preserves total energy
+        # across the fade (Hann² would dip ~3 dB at midpoint, audibly
+        # on fricatives).
         self._fade_out, self._fade_in = _hann_fade(self.cfg.crossfade_samples)
+        self._fade_out_ep, self._fade_in_ep = _equal_power_fade(self.cfg.crossfade_samples)
         # The "kept tail" carries the *unfaded* tail of the previous
         # input so we can correlate against it next time. Length =
         # crossfade_samples. Sourced from `new_audio[-cf:]` of the
@@ -321,10 +380,21 @@ class SOLAStream:
         emit_end = offset + chunk_n
         emit = new_audio[emit_start:emit_end].astype(np.float32, copy=True)
 
-        # Crossfade the leading cf samples of emit with prev_tail. The
-        # Hann pair sums to 1, so amplitude is preserved.
+        # Crossfade the leading cf samples of emit with prev_tail.
+        # review F-31-04 (commit-078): branch on `fell_back`.
+        # On the aligned path prev_tail and the new emit share phase,
+        # so the equal-GAIN Hann pair (amplitudes sum to 1) preserves
+        # amplitude as expected. On the fall_back path the two are
+        # effectively uncorrelated, so equal-gain produces a ~3 dB
+        # power dip at midpoint -- equal-POWER (cos/sin, powers sum
+        # to 1) is the correct model for uncorrelated mix and keeps
+        # the perceived loudness flat through fricatives / sibilants
+        # / unvoiced transitions where `fell_back` fires.
         if emit.shape[0] >= cf:
-            emit[:cf] = self._prev_tail * self._fade_out + emit[:cf] * self._fade_in
+            if fell_back and _USE_EQUAL_POWER_ON_FALLBACK:
+                emit[:cf] = self._prev_tail * self._fade_out_ep + emit[:cf] * self._fade_in_ep
+            else:
+                emit[:cf] = self._prev_tail * self._fade_out + emit[:cf] * self._fade_in
 
         # Save new prev_tail from the END of new_audio - a fixed
         # temporal position regardless of which offset won. The next
