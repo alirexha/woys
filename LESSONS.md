@@ -3476,3 +3476,334 @@ dropdown footprint is accepted as the achievable ceiling on
     the project notes). The next person tempted to reduce row count past
     five should first re-read this section, then decide whether the
     user-visible benefit justifies revisiting either rejected path.
+
+## 47. v0.15.0 — review phase-6 hardening lessons (2026-05-16)
+
+**Audit scope:** 36-lens adversarial audit of `woys` v0.14.3
+post-baseline. Workspace at `docs/26-review/`. Phase 1-5 produced
+213 unique post-dedup findings (191 Agree, 6 Disagree-locked, 16
+Defer/Investigate). Phase 6 shipped 80 fix commits over ~3 weeks of
+human-pace work. Phase 7 listener gate ran on the 4 P0s + UX + SOLA;
+PASS on all gated scenarios.
+**Final outcome:** v0.15.0 CHANGELOG entry under `[Unreleased]`,
+branch `review-phase6` not yet merged (owner's choice).
+
+---
+
+### Methodology lessons
+
+- **Cross-examination (Phase 4) is the audit's load-bearing
+  innovation.** Without CX1-CX6 the maintainer's Phase 3 defenses
+  would be the last word. Several findings (F-CX3-02 race correction;
+  F-CX4-001 chained Hard Rule 1; F-CX6-01/02 broad-except surfaces)
+  were impossible to surface without an independent rebut. For
+  future cycles: budget proportional cross-exam time to Phase 3
+  defense breadth, not just to Phase 2 finding count.
+
+- **The Phase 5 per-commit roadmap is a sequencing pin, not a
+  per-commit gate.** Many P2 items batched cleanly (UX cluster
+  commit-075, mechanical batches 061/064, control-protocol 020).
+  The roadmap's "commits-081..." line was overtaken by batching
+  during the SOLA cluster (077-080) and the verdict-file should
+  be read as "approximate ordering" not "atomic commit list."
+
+- **Hard Rule 7 (listener verification) is structurally exempted
+  from autonomous Phase 6.** Listener gates need hardware + the
+  user's ears. The CI test suite cannot certify a PipeWire
+  daemon-startup change (§46) or a perceptual SOLA tuning. Future
+  autonomous Phase 6 runs must either defer such fixes with a
+  re-open-after-listener-pass condition (this cycle did
+  this for 077/078/079/080 SOLA quality work) or pause for the
+  user to ear-verify before continuing.
+
+- **"Verified moot" is a legitimate verdict.** F-05-03 zip-slip
+  was prescribed against `voice_library_import.py` which doesn't
+  exist in the repo. The verdict was honest; the commit was
+  zero-LOC; the paper trail
+  (`docs/26-review/deferred/F-05-03-zip-slip.md`) is the
+  load-bearing artifact. Future audits inheriting a roadmap should
+  check file existence before scheduling a fix commit.
+
+- **Math + reproducible-delta certifies SOLA-class changes where
+  listener tests are deferred.** F-31-04 (commit-078) shipped on
+  a synthetic-noise A/B showing -0.21 dB delta + 7 invariant tests;
+  the fricative listener pass was skipped by owner choice. The
+  decision was sound because the verdict's required RMS-preservation
+  property was independently testable. Future SOLA work should
+  pin the verdict's invariants as tests first, then decide whether
+  listener-verify is incremental.
+
+### Project-specific lessons
+
+- **`src/server/` runtime-import independence — confirmed for the
+  second audit cycle running.** F-11-01 verdict (commit-053
+  clarification): the woys runtime hot path has zero imports from
+  the 22 k-LOC vendored subtree (only `src/woys/cli.py` for sys.path
+  and `src/woys/convert.py` for `_export2onnx` + `EnumInferenceTypes`).
+  Future audits can skip lens passes over `src/server/` provided
+  the grep predicate
+  `from voice_changer\|import voice_changer\|from const import`
+  still returns only those two files. **Where it lives:** the
+  grep is canonical evidence.
+  **Watch for:** new imports from `audio/` or `tui/` into the
+  vendored subtree.
+
+- **`_infer` is the load-bearing pre-RVC pipeline seam.** Three
+  P1/P2 fixes this cycle (F-31-02 trailing-frame keep, F-31-03
+  log-f0 bridge, F-31-12 cross-chunk pitch carry) all touched
+  the same ~80-LOC region of `engine.py` `_infer`. Future audits
+  should treat that region as a single-author seam and look for
+  bundled-change candidates.
+  **Where it lives:** `src/audio/engine.py:2495-2660` (post-080).
+  **Watch for:** RMVPE / cv-feats / pitchf-shape changes in the
+  next audit; the right pattern is to extract `_infer` into a
+  `InferencePipeline` class (P-5 deferred work).
+
+- **`EngineStats` is the de-facto observability surface.** Every
+  silent-failure fix in this cycle added a counter to `EngineStats`
+  (`cpu_fallback_active`, `sola_search_clipped`, `feats_nan_chunks`,
+  `helper_exit_reasons`, `nan_chunks`, etc.). Future audits should
+  grep for `except.*:` sites that *don't* increment a counter as
+  candidate Hard Rule 2 silent-failures.
+  **Where it lives:** `src/audio/engine.py:670-870` (the
+  `EngineStats` dataclass).
+  **Watch for:** new `except` blocks without a `stats.X += 1`
+  side effect.
+
+- **Single AppConfig→EngineConfig forwarding helper.** Pre-fix
+  three places translated the same field set, drifting independently
+  (F-merged-008 / F-01-04). Resolution: one helper, one read site.
+  Future config-shape changes should add fields to the helper, not
+  fork translators.
+  **Where it lives:** `src/audio/engine.py:_apply_app_config`.
+  **Watch for:** anyone adding a new field translator at a fresh site.
+
+- **`subprocess.run` parsing wrappers split until consolidation.**
+  Pre-fix three nearly-identical `pactl` shellouts (F-merged-009);
+  consolidated to one `_pactl_run` helper that also handles
+  `LC_ALL=C` (F-15-05) and returncode parsing. Pattern likely
+  applies to `pw-cli` / `pw-dump` wrappers too — they survived
+  consolidation this cycle but should be reviewed in the next.
+
+### Failed approaches (don't repeat)
+
+- **Hz-linear pitch bridging in `interpolate_voiced_gaps_np`.**
+  Was the original spec from `docs/12-vad-misfire-investigation.md`
+  round-3; correct in implementation but perceptually wrong
+  (geometric-mean midpoint != arithmetic-mean midpoint on log-Hz
+  pitch). F-31-03 / commit-080 switched to log-f0.
+  **Re-open conditions:** none. Log-f0 is the correct domain;
+  pre-fix is a regression.
+
+- **Equal-gain (Hann²) crossfade on de-correlated SOLA fall_back.**
+  Mathematically correct for correlated content; produces a ~3 dB
+  midpoint power dip for uncorrelated content (fricatives, breath,
+  silence→voice transitions). F-31-04 / commit-078 fixed by
+  branching to equal-power on `fell_back` only.
+  **Re-open conditions:** none.
+
+- **One-sided SOLA search without edge-detection diagnostic.**
+  The "RVC bias is purely toward late emission" assumption was
+  unmeasured; if a model emitted early, SOLA silently picked
+  offset=0 with no observability. F-31-05 / commit-079 added
+  `sola_search_clipped` counter.
+  **Re-open conditions:** if the counter shows non-zero rates on
+  real audio sessions, the one-sided contract should be
+  re-evaluated (Investigate, F-merged-031 cluster).
+
+- **`module-filter-chain` via PipeWire conf file** (v0.14.2,
+  post-mortem in §46). Already documented; flagging here that
+  the review cycle did NOT revisit this — the §46 conclusions
+  stand.
+
+### New bug classes identified
+
+- **Silent CUDA → CPU fallback** (F-merged-001, P0).
+  - **Pattern:** ORT tries multiple execution providers; preferred
+    EP's failure is silently swallowed; downstream runs in degraded
+    mode at 10-50× the latency budget with `last_error` empty.
+  - **Root cause:** the EP-binding result isn't checked at
+    session-create.
+  - **Structural mitigation:** explicit `_make_session` post-condition
+    asserts the preferred EP is bound; raises `CpuFallbackError`
+    otherwise. The path is now hard-fail.
+  - **Already implemented:** yes, commit `3556654` (F-merged-001).
+
+- **Counter-less NaN sanitization.**
+  - **Pattern:** `np.nan_to_num` applied defensively without
+    incrementing a stats counter; voice-correlated NaN bursts go
+    undetected.
+  - **Examples this audit:** F-17-12 (cv-feats), F-31-* (RVC
+    output already counted pre-audit; cv-feats was the gap).
+  - **Structural mitigation:** every nan-sanitize site must
+    `stats.X_nan_chunks += 1` under `_stats_lock`.
+  - **Already implemented:** partial — F-17-12 deferred to the
+    P2 mechanical batch (commit 081+ in the roadmap, not yet
+    shipped). Re-open in next cycle.
+
+- **Single-broadcast Event for per-job completion** (F-03-02).
+  - **Pattern:** a shared `threading.Event` is `set()` on
+    completion but multiple waiters share it; one job's
+    completion releases all waiters.
+  - **Root cause:** copy-paste from a single-job synchronization
+    primitive into a multi-job context.
+  - **Structural mitigation:** per-call `Future` /
+    `_SwapRequest.completion` event per submitted job; queue
+    semantics instead of single-slot.
+  - **Already implemented:** yes, commit `793f214` (F-13-12 +
+    F-03-02 commit-042-043).
+
+- **Append-without-bound stats lists** (F-merged-026).
+  - **Pattern:** a `list` is appended for diagnostics
+    (`helper_exit_reasons`, `priority_warnings`); grows unboundedly
+    over long sessions; eventual OOM or sluggish TUI refresh.
+  - **Root cause:** copy-paste of a debug-print loop into a
+    long-running stats path.
+  - **Structural mitigation:** `collections.deque(maxlen=N)` at
+    every diagnostic append site.
+  - **Already implemented:** yes, commit `<commit-073>`
+    (F-merged-026).
+
+- **Locale-dependent subprocess output parsing** (F-15-05).
+  - **Pattern:** `pactl` / `pw-*` output parsed with English-only
+    string predicates; non-English locale breaks teardown silently
+    (and not just on parse — on `grep "Module: ..."` ID lookups).
+  - **Structural mitigation:** `LC_ALL=C` (not `LANG=C`, which
+    doesn't override `LC_MESSAGES`) on every parsing subprocess.
+    Now centralized in `_pactl_run`.
+  - **Already implemented:** yes, commit `034daa8` (F-15-05).
+
+### Architectural patterns surfaced
+
+- **`engine.py` decomposition is on a slow-burn path.**
+  - **Scope of impact:** ~4700 LOC, three load-bearing classes
+    intertwined (`GpuClockLock`, `PlaybackWriter`, `Inference
+    Pipeline`-equivalent code).
+  - **Resolved as:** deferred to next audit cycle
+    (`docs/26-review/deferred/P-5-engine-py-decomposition.md`).
+    Re-open trigger: file exceeds 5000 LOC.
+
+- **`EngineStats` evolved into the project's observability surface
+  without an explicit decision.**
+  - **Scope of impact:** ~30 fields, +5 added this cycle, read by
+    CLI / TUI / `woys diag` / monitor consumers.
+  - **Resolved as:** documented in this LESSONS section as a
+    deliberate pattern; future fixes that need observability
+    add to `EngineStats` rather than introducing parallel surfaces.
+
+### Anti-patterns to avoid going forward
+
+- **"Tune a threshold to reduce how often the bad path fires."**
+  - **Why it's tempting:** sounds like a knob that lets the user
+    trade off quality.
+  - **Why it's wrong:** if the bad path's behaviour is the actual
+    bug, the threshold is masking it. v0.7.0 tuned
+    `sola_corr_threshold = 0.30` "to reduce fallback" — the right
+    fix was F-31-04 (correct the fallback's crossfade math), not
+    tuning around it.
+  - **What to do instead:** identify what makes the path "bad" and
+    fix that. Knobs are for legitimate trade-offs, not for hiding
+    bad paths.
+
+- **Padding to fix length mismatches.**
+  - **Why it's tempting:** silences a downstream `assert` /
+    error.
+  - **Why it's wrong:** silently produces wrong output (silence,
+    chipmunk, zero-padded SOLA emits).
+  - **Examples in this audit:** F-merged-001 silent fp32-vs-fp16
+    fallback; F-merged-016 chipmunk rate-guess; (already-fixed)
+    rc4 SOLA zero-pad.
+  - **What to do instead:** when lengths don't match, raise; if
+    the caller can recover, return a typed `Result` / `Optional`
+    they must handle.
+
+- **Doc-anticipation drift.**
+  - **Why it's tempting:** writing the design doc before the
+    implementation captures the intent crisply.
+  - **Why it's wrong:** the implementation evolves; the doc
+    silently becomes a lie about what the code does.
+  - **Example this audit:** `docs/12-vad-misfire-investigation.md`
+    round-3 spec said "linearly interpolate"; commit-080 made it
+    log-linear; the doc didn't update until the lens-9 drift
+    sweep caught it.
+  - **What to do instead:** when a finding changes the
+    implementation, grep for design docs that prescribed the old
+    behaviour and add a forward-ref parenthetical. Lens 9 final
+    pass catches the leakage.
+
+### Tooling / infrastructure improvements
+
+- **`docs/26-review/` audit workspace** — full 36-lens
+  audit preserved file-by-file (phase-1-scoping.md through
+  phase-7-listener-gate.md + per-lens findings).
+  - **Where:** `docs/26-review/`
+  - **How to use:** future audits diff against this baseline
+  - **When to re-run:** next audit cycle
+
+- **`scripts/sola_ab_harness.py`** — A/B testing harness for SOLA
+  changes. Supports `--ab` (commit-077 vectorisation parity),
+  `--legacy-fade` (commit-078 equal-power reproduction),
+  `--per-chunk-noise` (F-31-04 stress test),
+  `--synthetic-fricatives` (weak fall_back trigger, document the
+  realistic case).
+  - **Where:** `scripts/sola_ab_harness.py`
+  - **How to use:** `python scripts/sola_ab_harness.py <out_dir>
+    --per-chunk-noise 4`
+  - **When to re-run:** any SOLA change that touches `_best_offset`,
+    crossfade math, or the state machine.
+
+- **Per-commit design docs** at `docs/26-review/phase-6-fixes/
+  commit-NNN.md`. Each Phase 6 commit has a doc covering: finding
+  addressed, diff summary, risk, verification. Future audits can
+  read the per-commit doc instead of reverse-engineering the
+  diff.
+
+### Performance / quality measurements
+
+| Metric                   | v0.14.3 baseline | v0.15.0 |
+|--------------------------|------------------|---------|
+| Fast tests passing       | 238              | 493     |
+| Slow tests               | 15               | 16      |
+| `ruff` / `mypy --strict` | clean            | clean   |
+| Audit findings           | 309 (v0.14.0)    | 213     |
+| Phase-6 fix commits      | 14 (v0.14.0)     | 80      |
+| Engine warm inference    | ~45 ms           | ~45 ms  |
+| VRAM (foundation+1 RVC)  | ~1.35 GiB        | ~1.35 GiB |
+| Total e2e latency        | ~640 ms          | ~640 ms |
+
+Audit duration: ~3 weeks human-pace (baseline 2026-04-23 lens 1
+to last fix-commit 2026-05-16 commit-080), with the user's day-job
+pauses and v0.14.x intermissions.
+
+The audit did not move the perf / VRAM / latency needles. Those
+were stable from v0.11.0 (clock-lock) and v0.12.4 (chunk_seconds
+default). The cycle's investment is in correctness / observability /
+UX / security / legal hygiene, not perf.
+
+### Deferred items (for next audit cycle)
+
+See `CHANGELOG.md` § [0.15.0] "Known issues / deferred items" for
+the full list with re-open conditions. Highlights:
+
+- **F-11-01** — `_export2onnx` + `EnumInferenceTypes` extraction
+  from `src/server/` (scope-inflation deferral).
+- **P-5** — `engine.py` decomposition (needs CUDA box for per-class
+  GPU smoke).
+- **F-merged-031 / F-merged-033** — perf-floor + full-deletion
+  Investigate.
+- **F-31-10** — fp16 foundation models (paired quality-vs-VRAM
+  eval required).
+- **Remaining P2 mechanical batch** (commits 081+ in roadmap):
+  F-03-03/05/12, F-13-08/10, F-14-07, F-15-10/14, F-16-05/11/12,
+  F-17-07/12/13, F-19-07/10/12/13/14, F-32-06/07/08/09/10,
+  F-08-08/10/12/14, F-09-11/19, F-01-06/07/08, F-07-14, F-11-04,
+  F-02-* cluster — owner declared phase 6 done; these re-open in
+  next audit cycle.
+
+### Cross-references
+
+- Audit workspace: `docs/26-review/`
+- Release notes: `CHANGELOG.md` § [0.15.0]
+- Phase 7 listener gate: `docs/26-review/phase-7-listener-gate.md`
+- Per-commit design docs: `docs/26-review/phase-6-fixes/commit-NNN.md`
+- Deferred re-open conditions: `docs/26-review/deferred/`
