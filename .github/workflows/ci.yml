@@ -24,7 +24,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv python install 3.11
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra dev
       - name: ruff check
         run: uv run ruff check src/ scripts/ tests/
       - name: ruff format --check
@@ -40,7 +40,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv python install 3.11
-      - run: uv sync --frozen
+      - run: uv sync --frozen --extra dev
       - name: pytest (fast — hardware-gated tests are `slow`-marked and skipped)
         run: uv run pytest -m "not slow"
 
@@ -59,10 +59,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.11
       # requirements.txt must be the exact `uv pip compile` output of
       # pyproject.toml. F-merged-004 (commit-029) regenerated the file
       # after F-merged-029 (commit-027) made hatch read the version
-      # dynamically; this gate keeps it that way.
+      # dynamically; this gate keeps it that way. `uv python install 3.11`
+      # above pins the resolver to the project's floor Python so the
+      # output is deterministic — without it, the runner's default Python
+      # (3.12+) pulls in `setuptools` via torch's `python_full_version >=
+      # '3.12'` marker, diverging from the committed requirements.txt.
       - name: requirements.txt is in sync with pyproject.toml
         run: |
           uv pip compile pyproject.toml -o requirements.txt --quiet

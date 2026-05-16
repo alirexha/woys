@@ -14,6 +14,7 @@ def test_python_version() -> None:
     assert sys.version_info[:2] == (3, 11), f"woys targets Python 3.11; got {sys.version_info[:2]}"
 
 
+@pytest.mark.pipewire
 def test_pactl_available() -> None:
     assert shutil.which("pactl") is not None, "pactl missing - install pipewire-pulse"
 
