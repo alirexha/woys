@@ -1,4 +1,4 @@
-# Maintainer: Alireza Hamayeli <alireza.hmyl@gmail.com>
+# Maintainer: Alireza Hamayeli <alireza@hamayeli.com>
 # woys: Linux-native, CachyOS-optimized real-time voice changer.
 # Fork of w-okada/voice-changer (MIT). RVC-only, ONNX Runtime CUDA, PipeWire-native, TUI.
 

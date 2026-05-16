@@ -45,7 +45,7 @@ inside the engine on dedicated soxr stream objects.
 
 PipeWire on Arch / CachyOS negotiates 48 000 Hz / 1024 quantum by
 default. Aligning woys's I/O to that rate means: (a) capture from a
-typical USB mic (HyperX QuadCast 2S, 48 000 native) does not pay an
+typical USB mic (USB condenser mic, 48 000 native) does not pay an
 extra resample, (b) the virtual `woys-mic` source presents at 48 000
 to apps and matches PipeWire's quantum-native rate so apps don't
 re-resample either, (c) `bin/woys-pw-out.c` (decision 0009) operates

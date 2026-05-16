@@ -23,7 +23,7 @@ when chain is active:
                                      but is the wrong endpoint for apps
                                      because it cannot be renamed away from
                                      the auto-derived "Monitor of …" prefix
-    woys-by-alirexha               (description: woys-by-alirexha)
+    woys-clean               (description: woys-clean)
                                    ← module-remap-source that exposes the
                                      cleaned audio under a friendly name
                                      with no "Monitor of" prefix
@@ -48,7 +48,7 @@ description containing spaces (the value is split on whitespace before
 the proplist parser sees it), and the auto-monitor of a sink takes its
 description from the sink prefixed with "Monitor of ". Routing the
 cleaned audio through a `module-remap-source` lets us set a clean
-`device.description=woys-by-alirexha` directly on the user-facing node.
+`device.description=woys-clean` directly on the user-facing node.
 
 v0.13.0 history (now mostly relevant only as background): an earlier
 version of this chain used `media.class=Audio/Source/Virtual` on the
@@ -85,14 +85,14 @@ SINK_BRIDGE = "woys-mic-rnnoise-bridge"
 SOURCE_RAW = "woys-mic"
 
 # v0.13.3 - the user-facing remap-source. Apps see this in their input
-# device dropdown as the friendly name `woys-by-alirexha`, with no
+# device dropdown as the friendly name `woys-clean`, with no
 # "Monitor of" prefix.
-SOURCE_USER_FACING = "woys-by-alirexha"
+SOURCE_USER_FACING = "woys-clean"
 
 # v0.13.3 device descriptions. Hyphens substitute for spaces (pactl on
 # pipewire-pulse breaks values containing whitespace). The two leading
 # underscores in the internals push them down in alphabetical sorts.
-DESC_USER_FACING = "woys-by-alirexha"
+DESC_USER_FACING = "woys-clean"
 DESC_BRIDGE = "_internal-rnnoise-stage"
 DESC_FINAL_SINK = "_internal-clean-sink"
 
@@ -396,7 +396,7 @@ def setup() -> int:
     #    have to pick `woys-mic-clean.monitor` whose description is
     #    auto-derived as "Monitor of <sink description>" - pipewire-
     #    pulse offers no API to override that. A remap-source gives us
-    #    a brand-new node we name `woys-by-alirexha` with matching
+    #    a brand-new node we name `woys-clean` with matching
     #    `device.description`, so apps see one obvious daily-driver
     #    option in their dropdown.
     r4 = _pactl(
@@ -417,7 +417,7 @@ def setup() -> int:
         return 2
 
     # 5. v0.14.1 - relabel woys-mic as `_internal-raw-bypass` so apps
-    #    that show descriptions render `woys-by-alirexha` as the only
+    #    that show descriptions render `woys-clean` as the only
     #    non-internal option. The source NAME stays `woys-mic` for
     #    back-compat with apps that pin by exact name. node.passive=
     #    true is also set on the relabel.
@@ -620,7 +620,7 @@ def status(check: bool = False) -> int:
     if len(woys_user_facing) > 1:
         print(
             "  WARNING: more than one user-facing woys source. The chain expects\n"
-            "  exactly one (`woys-by-alirexha`) when active. Check your chain state."
+            "  exactly one (`woys-clean`) when active. Check your chain state."
         )
 
     leaks = _alsa_leak_links()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """SOLA A/B harness -- runs an input WAV through `SOLAStream` chunk by
 chunk, optionally with the pre-F-07-03 loop reference monkey-patched
-in, and writes the output WAVs side-by-side so Alireza can flip
+in, and writes the output WAVs side-by-side so the maintainer can flip
 between them in his audio player.
 
 Usage:

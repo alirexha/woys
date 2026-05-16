@@ -4,7 +4,7 @@
 
 RNNoise denoising is shipped as an opt-in pipewire-pulse module chain
 (setup via `scripts/v013_0_rnnoise_chain.sh setup`) that sources from
-`woys-mic` and exposes a cleaned `woys-by-alirexha` source; it is not
+`woys-mic` and exposes a cleaned `woys-clean` source; it is not
 integrated into the engine and is not on by default.
 
 ## Status
@@ -21,14 +21,14 @@ Result: a 27 % cuts/min reduction (corrected from the original 13 %
 in `LESSONS.md` §43 once the v0.13.2 routing leak in §44 was fixed),
 at +40 ms latency, depending on the system package
 `noise-suppression-for-voice` (Arch extras). v0.13.3 polished naming
-so apps see `woys-by-alirexha` (clean default-pick) and
+so apps see `woys-clean` (clean default-pick) and
 `woys-no-cleanup` (raw fallback) with internals tagged `_internal-...`
 (`LESSONS.md` §45).
 
 ## Decision
 
 Ship as an opt-in chain, sourcing from `woys-mic`, exposing
-`woys-by-alirexha` as the user-facing cleaned endpoint.
+`woys-clean` as the user-facing cleaned endpoint.
 
 ## Alternatives considered
 
@@ -65,7 +65,7 @@ v0.13.2 already solved with PipeWire modules.
 
 ## Trade-offs accepted
 
-Apps must re-select `woys-by-alirexha` instead of `woys-mic` after
+Apps must re-select `woys-clean` instead of `woys-mic` after
 running setup — UX cost for the cleaner output. The chain depends on
 a non-woys system package; install instructions document this.
 +40 ms latency on top of v0.12.4 lands total e2e near the

@@ -8,7 +8,7 @@ name = "woys"
 # `src/woys/__init__.py` then running `python scripts/release.py`.
 dynamic = ["version"]
 description = "Linux-native real-time voice changer. RVC-only on ONNX Runtime CUDA, PipeWire-native, terminal-controlled."
-authors = [{ name = "Alireza Hamayeli", email = "alireza.hmyl@gmail.com" }]
+authors = [{ name = "Alireza Hamayeli", email = "alireza@hamayeli.com" }]
 license = { file = "LICENSE" }
 readme = "README.md"
 # v0.14.0 (Lens 14 / C230): bumped <3.12 -> <3.13. fairseq was the

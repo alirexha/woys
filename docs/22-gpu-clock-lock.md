@@ -77,12 +77,12 @@ the engine to invoke this without prompting on every start, add a
 passwordless entry for those two specific subcommands.
 
 Create `/etc/sudoers.d/woys-gpu-clock` with the following contents
-(replace `alireza` with your username):
+(replace `<your-username>` with your username):
 
 ```
 # woys v0.11.0 — passwordless nvidia-smi for GPU clock lock anti-jitter.
-alireza ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc *
-alireza ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
+<your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc *
+<your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
 ```
 
 Set permissions to 0440 and verify with visudo:

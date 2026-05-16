@@ -92,7 +92,7 @@ def _patch_relabel_noop() -> Any:
 def test_setup_loads_audio_sink_class_and_mono_chain() -> None:
     """v0.13.2 routing fix + v0.13.3 friendly-naming topology. Regression guard
     for: media.class=Audio/Sink, channels=1 throughout, and a user-facing
-    remap-source named `woys-by-alirexha` with matching device.description."""
+    remap-source named `woys-clean` with matching device.description."""
     router = _PactlRouter(
         sources="1\twoys-mic\tdummy-driver\t1\tIDLE\n",
         modules="",  # no stale chain
@@ -332,7 +332,7 @@ def test_disable_no_unit_still_unloads_modules() -> None:
 def test_setup_relabels_woys_mic_to_internal_raw_bypass() -> None:
     """v0.14.1 promise: when chain is active, woys-mic shows up to apps
     as `_internal-raw-bypass` (description), so users see only
-    `woys-by-alirexha` as a non-internal woys option in their picker.
+    `woys-clean` as a non-internal woys option in their picker.
     The source NAME `woys-mic` is preserved for back-compat."""
     router = _PactlRouter(
         sources="1\twoys-mic\tdummy-driver\t1\tIDLE\n",
@@ -419,13 +419,13 @@ Source #337
 \tDriver: PipeWire
 Source #354
 \tState: RUNNING
-\tName: woys-by-alirexha
-\tDescription: woys-by-alirexha
+\tName: woys-clean
+\tDescription: woys-clean
 \tDriver: PipeWire
 Source #58
 \tState: RUNNING
-\tName: alsa_input.usb-HyperX_QuadCast.analog-stereo
-\tDescription: HyperX QuadCast 2 S
+\tName: alsa_input.usb-Generic_USB_Mic.analog-stereo
+\tDescription: USB condenser mic
 \tDriver: PipeWire
 """
     rows = chain._user_facing_sources(sample)
@@ -434,17 +434,17 @@ Source #58
 
     # woys-mic is hidden (description starts with `_internal-`).
     assert "woys-mic" not in names
-    # woys-by-alirexha is the user-facing chain endpoint.
-    assert "woys-by-alirexha" in names
-    assert descs["woys-by-alirexha"] == "woys-by-alirexha"
+    # woys-clean is the user-facing chain endpoint.
+    assert "woys-clean" in names
+    assert descs["woys-clean"] == "woys-clean"
     # Real hardware mic comes through as user-facing too.
-    assert "alsa_input.usb-HyperX_QuadCast.analog-stereo" in names
+    assert "alsa_input.usb-Generic_USB_Mic.analog-stereo" in names
 
     # Crucial: only ONE woys* source should be user-facing when chain
     # is active. This is the test that fails if a regression makes
     # `_internal-` markers get dropped somewhere.
     woys_user_facing = [n for n in names if "woys" in n]
-    assert woys_user_facing == ["woys-by-alirexha"], (
+    assert woys_user_facing == ["woys-clean"], (
         f"expected exactly one user-facing woys source, got {woys_user_facing}"
     )
 
@@ -482,10 +482,10 @@ def test_is_user_facing_description() -> None:
     - Descriptions starting with `_internal-` are plumbing.
     - Descriptions containing `_internal-` anywhere are plumbing
       (catches `Monitor of _internal-...`).
-    - Real device names and `woys-by-alirexha` are user-facing.
+    - Real device names and `woys-clean` are user-facing.
     """
-    assert chain._is_user_facing_description("woys-by-alirexha") is True
-    assert chain._is_user_facing_description("HyperX QuadCast 2 S") is True
+    assert chain._is_user_facing_description("woys-clean") is True
+    assert chain._is_user_facing_description("USB condenser mic") is True
     assert chain._is_user_facing_description("woys-no-cleanup") is True
     assert chain._is_user_facing_description("_internal-raw-bypass") is False
     assert chain._is_user_facing_description("_internal-clean-sink") is False

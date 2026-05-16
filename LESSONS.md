@@ -621,7 +621,6 @@ user audibly suffers.
 | harley_quinn | -108.7 dB | +0.8 dB | +24.1 dB |
 | lana_del_rey | -96.2 dB | +1.1 dB | +38.3 dB |
 | megan_fox | -97.0 dB | +0.4 dB | +45.4 dB |
-| spongebob_persian | -87.4 dB | +0.9 dB | +14.9 dB |
 
 Aliasing rejection has 50+ dB headroom over the failure threshold.
 Boundary impulses peak at +3.6 dB (well under 12 dB). SNR is voice-prior
@@ -1127,7 +1126,7 @@ called it: "we may have hit a floor where the cuts are dominated by
 something woys-diag detects but woys can't fix."
 
 The fix was to run two control captures — synthetic-clean (mathematically
-zero events) and direct-HyperX-no-engine (real human voice, no woys in
+zero events) and direct-USB mic-no-engine (real human voice, no woys in
 the path) — and confirm the detector reports 0 cuts/min on both. It did.
 That validated cuts/min ~12 as a real engine number, not measurement
 noise, **and** capped further iteration: anything below run-to-run
@@ -1252,7 +1251,7 @@ operating point.
 
 ### Defaults migration pulled real weight
 
-Alireza's existing config had `chunk_seconds = 0.25`, `output_latency_ms
+the maintainer's existing config had `chunk_seconds = 0.25`, `output_latency_ms
 = 300`, and `sola_search_ms = 4.0` written explicitly into the
 top-level config and into every profile section. Just bumping
 EngineConfig defaults wouldn't have moved his actual session — his
@@ -1274,7 +1273,7 @@ preservation, and round-trip stability.
 | Discord codec | ~30 ms | ~30 ms | unchanged (out of scope) |
 | **total** | **~660 ms** | **~340 ms** | **−320 ms (−48 %)** |
 
-Tag v0.7.0 only after Alireza confirms in CS2 (brief §8 step 7).
+Tag v0.7.0 only after the maintainer confirms in CS2 (brief §8 step 7).
 
 ### Lesson — every "well-known optimization" needs a measurement before shipping
 
@@ -2712,7 +2711,7 @@ recording layer.
 `pw-record --target=<name>` silently FALLS BACK to the default
 source when the named target isn't immediately recordable (e.g.,
 SUSPENDED, not yet linked to its master, or otherwise unreadable).
-On this host the default source is the user's HyperX QuadCast 2 S
+On this host the default source is the user's USB condenser mic
 mic, which during synthetic-harness runs is in a quiet room → the
 fallback recording is near-silent → woys-diag's calibrated cut
 detector finds "no events" → the prior tooling reports "audio is
@@ -2722,7 +2721,7 @@ The bug bit twice in v0.12.x:
 
   * v0.12.0 Phase 1 (LESSONS §36) used
     `pw-record --target=WoysSink.monitor` to capture engine output.
-    The recording was silence (HyperX fallback). All three
+    The recording was silence (USB mic fallback). All three
     detectors (spectral flux, envelope autocorrelation, Hilbert
     phase-jump spectrum) ran on silence, predictably returned
     null. Conclusion "NSF reset hypothesis NOT confirmed" was
@@ -3280,7 +3279,7 @@ the audio path: their app dropdowns showed a wall of opaque names
 (`woys-mic_(woys)`, `Monitor of woys_(sink)`, `Monitor of
 woys-mic-clean_rnnoise`, `Monitor of woys-mic-rnnoise-bridge.monitor`)
 with no obvious "pick this one" signal. They asked for a friendly
-description like "woys by alirexha" on the daily-driver source and
+description like "woys clean" on the daily-driver source and
 clear "(internal)" tags on the others.
 
 This turned into a longer fight than expected.
@@ -3291,7 +3290,7 @@ I started by trying the obvious:
 
 ```
 pactl load-module module-null-sink \
-    sink_properties=device.description="woys by alirexha" \
+    sink_properties=device.description="woys clean" \
     sink_name=test ...
 ```
 
@@ -3310,7 +3309,7 @@ form is `device.description=value-with-no-whitespace`.
 
 So friendly descriptions with real spaces are off the table on
 pipewire-pulse. The pragmatic answer is hyphens-as-spaces:
-`woys-by-alirexha`. Readable, sortable, immune to the parser.
+`woys-clean`. Readable, sortable, immune to the parser.
 
 A regression test (`test_descriptions_have_no_spaces` in
 `tests/test_chain.py`) now asserts this constraint so a future
@@ -3325,8 +3324,8 @@ no `monitor_properties=` arg, no post-load API in pactl, and
 policy or doesn't write to the property keys apps actually read
 (`device.description`).
 
-So if we name the sink "woys-by-alirexha", the monitor users record
-from gets the prefix and shows up as "Monitor of woys-by-alirexha"
+So if we name the sink "woys-clean", the monitor users record
+from gets the prefix and shows up as "Monitor of woys-clean"
 — still recognizable but with the awkward "Monitor of " ahead of it.
 
 Fix: insert a `module-remap-source` between the sink's monitor and
@@ -3344,12 +3343,12 @@ woys-mic-clean        ← null-sink, description "_internal-clean-sink"
    ↓ auto monitor
 woys-mic-clean.monitor   (description still "Monitor of _internal-clean-sink")
    ↓ remap-source
-woys-by-alirexha      ← user-facing, description "woys-by-alirexha"
+woys-clean      ← user-facing, description "woys-clean"
 ```
 
 The remap-source is a passthrough — no audio change, just renaming.
 Apps now see two clean options (`woys-no-cleanup` and
-`woys-by-alirexha`) plus the auto-monitors of internals tagged
+`woys-clean`) plus the auto-monitors of internals tagged
 `_internal-...`. The hierarchy is finally legible at a glance.
 
 ### Lessons
@@ -3383,13 +3382,13 @@ monitors, and a remap-source). v0.14.2 attempted to collapse all of
 that into a single PipeWire-native `libpipewire-module-filter-chain`
 with internal `Stream/Input/Audio` + `Stream/Output/Audio` nodes that
 libpulse does not enumerate. On paper, this would drop the dropdown
-from five rows to two (`woys-by-alirexha` + `woys-mic`).
+from five rows to two (`woys-clean` + `woys-mic`).
 
 The mechanism worked in isolation. The CI gates were green (23 chain
 tests, 189 fast tests, ruff, format, mypy --strict). `pw-dump` on the
 dev box confirmed the expected node topology: capture pinned to
 `woys-mic` via `target.object`, internal LADSPA RNNoise stage,
-playback `Audio/Source` named `woys-by-alirexha`, and the
+playback `Audio/Source` named `woys-clean`, and the
 `Stream/*/Audio` middle nodes invisible to pulse-side apps as
 predicted. Empirically (verified on the dev box on PipeWire 1.6.4)
 `media.class` was the determining factor for pulse visibility, not

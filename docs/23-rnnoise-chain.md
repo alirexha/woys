@@ -1,6 +1,6 @@
 # 23 — RNNoise chain after woys-mic (v0.13.x)
 
-> **v0.13.3 update.** Apps now see `woys-by-alirexha` (cleaned, daily
+> **v0.13.3 update.** Apps now see `woys-clean` (cleaned, daily
 > driver) and `woys-no-cleanup` (raw fallback) directly in their
 > input device dropdown. Internal plumbing nodes are tagged
 > `_internal-...` in their descriptions so users know not to pick
@@ -91,7 +91,7 @@ isn't on PATH, install it.
 ## Selecting the cleaned mic in apps (v0.13.3)
 
 In Discord / Telegram / CS2's input-device picker, choose
-**`woys-by-alirexha`**. That's it. If the app doesn't expose the
+**`woys-clean`**. That's it. If the app doesn't expose the
 new source (rare; some apps cache device lists), restart the app
 after `setup`.
 
@@ -109,7 +109,7 @@ distinct from the two daily-use options.
 
 If you previously selected `woys-mic-clean.monitor` (the v0.13.2
 recommendation), it'll still work — that source still exists and
-still carries the cleaned audio. But `woys-by-alirexha` is the
+still carries the cleaned audio. But `woys-clean` is the
 recommended endpoint going forward; it's friendlier-named and
 doesn't collide with users opening a power-user `.monitor` of the
 internal sink.
@@ -117,7 +117,7 @@ internal sink.
 ## Architecture (v0.13.2 — Architecture B)
 
 ```
-HyperX → woys engine → WoysSink → loopback → woys-mic (v0.12.4)
+USB mic → woys engine → WoysSink → loopback → woys-mic (v0.12.4)
                                         ↓
                                    module-loopback (30 ms, mono)
                                         ↓

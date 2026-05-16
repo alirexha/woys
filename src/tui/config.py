@@ -57,7 +57,7 @@ class AppConfig:
     # v0.7.0-rc4 - added to AppConfig's forwarded set. Pre-rc4 these
     # lived only on EngineConfig, so user overrides in `config.toml`
     # were silently ignored (the audit `docs/16-audit/synthesis.md`
-    # confirmed alireza's `input_gate_dbfs = -200.0` never made it
+    # confirmed the maintainer's `input_gate_dbfs = -200.0` never made it
     # to the engine - every prior rc ran the dataclass default).
     # `prefer_pw_cat` had the same drift since rc1.
     input_gate_dbfs: float = _E.input_gate_dbfs
