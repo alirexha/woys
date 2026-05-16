@@ -27,9 +27,10 @@ def _pactl_lists(short: str) -> list[str]:
     ).splitlines()
 
 
+@pytest.mark.pipewire
 def test_ensure_pipewire_passes_on_host() -> None:
-    # The conftest already skips this whole file on non-PW hosts via the
-    # `pipewire` marker, but ensure_pipewire() should also pass directly.
+    # conftest auto-skips when no PipeWire daemon is reachable; this test
+    # then verifies ensure_pipewire() passes directly when one is.
     ensure_pipewire()
 
 

@@ -102,7 +102,7 @@ def _preload_trt_dlls() -> bool:
     import ctypes
 
     try:
-        import tensorrt_libs  # type: ignore[import-untyped]
+        import tensorrt_libs
     except ImportError:
         return False
 
