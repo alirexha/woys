@@ -45,9 +45,13 @@ def test_best_offset_finds_aligned_shift() -> None:
     for true_shift in (0, 3, 7, 11, 16):
         head[:] = rng.standard_normal(head_len).astype(np.float32) * 0.05  # background noise
         head[true_shift : true_shift + overlap] = tail
-        recovered, fell_back = _best_offset(tail, head, search=search, threshold=0.5)
+        recovered, fell_back, clipped = _best_offset(tail, head, search=search, threshold=0.5)
         assert recovered == true_shift, f"expected {true_shift}, got {recovered}"
         assert not fell_back, f"unexpected threshold-fallback at shift {true_shift}"
+        # F-31-05: `clipped` mirrors `best_idx == search`. The fixture
+        # walks through true_shift == search (16) on the last iteration,
+        # so the predicate is exercised in both states.
+        assert clipped == (true_shift == search)
 
 
 def test_best_offset_below_threshold_returns_zero() -> None:
@@ -58,9 +62,11 @@ def test_best_offset_below_threshold_returns_zero() -> None:
     tail = rng.standard_normal(overlap).astype(np.float32)
     head = rng.standard_normal(overlap + search).astype(np.float32)
     # Threshold high enough that random noise won't beat it.
-    offset, fell_back = _best_offset(tail, head, search=search, threshold=0.9)
+    offset, fell_back, clipped = _best_offset(tail, head, search=search, threshold=0.9)
     assert offset == 0
     assert fell_back
+    # F-31-05: clipped never fires when we fell back (offset is forced to 0).
+    assert not clipped
 
 
 def test_best_offset_silent_tail() -> None:
@@ -69,9 +75,10 @@ def test_best_offset_silent_tail() -> None:
     search = 8
     tail = np.zeros(overlap, dtype=np.float32) + 1e-9
     head = np.random.default_rng(0).standard_normal(overlap + search).astype(np.float32)
-    offset, fell_back = _best_offset(tail, head, search=search, threshold=0.1)
+    offset, fell_back, clipped = _best_offset(tail, head, search=search, threshold=0.1)
     assert offset == 0
     assert fell_back
+    assert not clipped
 
 
 def test_sola_first_chunk_emits_chunk_n() -> None:

@@ -132,14 +132,22 @@ _USE_EQUAL_POWER_ON_FALLBACK: bool = True
 
 def _best_offset(
     tail: NDArrayF32, head: NDArrayF32, search: int, threshold: float
-) -> tuple[int, bool]:
+) -> tuple[int, bool, bool]:
     """Find the integer shift `k` in `[0, search]` that maximizes the
     normalized correlation between `tail[-overlap:]` and
     `head[k : k + overlap]`.
 
-    Returns `(offset, fell_back)`. `fell_back=True` means the peak
-    correlation was below `threshold` (silence / de-correlated content)
-    and `offset` is `0` in that case.
+    Returns `(offset, fell_back, clipped)`.
+
+    * `fell_back=True` means the peak correlation was below `threshold`
+      (silence / de-correlated content) and `offset` is `0` in that
+      case. `clipped` is False on this branch.
+    * `clipped=True` (only when `fell_back=False`) means the peak
+      landed at `best_idx == search` -- the far edge of the one-sided
+      search window. That's the signature of "the true alignment may
+      lie beyond the window" (F-31-05). Counted but not acted on; the
+      offset is still emitted because the correlation cleared the
+      threshold and using it is strictly better than offset=0.
 
     v0.7.0-rc5: switched from bidirectional `[-search, +search]` to
     one-sided `[0, search]` to match upstream w-okada's SOLA contract
@@ -174,12 +182,12 @@ def _best_offset(
     """
     overlap = len(tail)
     if overlap == 0 or len(head) < overlap + search:
-        return 0, True
+        return 0, True, False
 
     # Normalise tail once (fp32 -> Python float; matches the reference).
     tail_norm = float(np.linalg.norm(tail))
     if tail_norm < 1e-6:
-        return 0, True
+        return 0, True, False
 
     # Numerator: cross-correlation `sum(head[k : k + overlap] * tail)`
     # for k in [0, search]. `np.correlate(head, tail, mode='valid')`
@@ -213,29 +221,35 @@ def _best_offset(
     best_corr = float(corr[best_idx])
 
     if best_corr >= threshold:
-        return best_idx, False
-    return 0, True
+        # F-31-05 (commit-079): flag peak-at-far-edge as `clipped` so
+        # SOLAStream can count "alignment may lie beyond the search
+        # window" separately from fall_back. `best_idx` counts in
+        # [0, search] so `best_idx == search` is the far edge.
+        clipped = best_idx == search
+        return best_idx, False, clipped
+    return 0, True, False
 
 
 def _best_offset_loop_reference(
     tail: NDArrayF32, head: NDArrayF32, search: int, threshold: float
-) -> tuple[int, bool]:
+) -> tuple[int, bool, bool]:
     """Pre-F-07-03 reference implementation, kept in-module exclusively
     for the parity test in `tests/test_sola_best_offset_vectorised.py`.
     Do NOT call from the streaming path -- the vectorised
     `_best_offset` above is the production hot-path.
 
     The behavioural contract pinned by the parity test:
-      * Same `(offset, fell_back)` return on identical inputs.
+      * Same `(offset, fell_back, clipped)` return on identical inputs.
       * Same tie-break (lowest-index winner on equal correlations).
       * Same fallback predicate (`peak_corr >= threshold`).
+      * Same far-edge predicate (`best_idx == search`) for clipped.
     """
     overlap = len(tail)
     if overlap == 0 or len(head) < overlap + search:
-        return 0, True
+        return 0, True, False
     tail_norm = float(np.linalg.norm(tail))
     if tail_norm < 1e-6:
-        return 0, True
+        return 0, True, False
 
     best_offset = 0
     best_corr = -np.inf
@@ -252,8 +266,8 @@ def _best_offset_loop_reference(
             best_offset = k
 
     if best_corr >= threshold:
-        return best_offset, False
-    return 0, True
+        return best_offset, False, best_offset == search
+    return 0, True, False
 
 
 class SOLAStream:
@@ -318,10 +332,22 @@ class SOLAStream:
         # search_ms tuning is off; they no longer indicate output drain
         # (rc5 emits constant `chunk_n` samples per call regardless).
         self.fallback_count: int = 0
+        # review F-31-05 (commit-079): "alignment peak landed at
+        # the FAR edge of the [0, search] window" events. Distinct
+        # from `fallback_count`: the corr cleared the threshold (so
+        # we trusted the offset), but the peak hit `best_idx == search`
+        # -- the signature of "true alignment may lie beyond the
+        # search window." Spikes here mean the one-sided contract
+        # (LESSONS / `_best_offset` docstring "RVC bias is purely
+        # toward late emission") is being violated and a click is
+        # plausible at chunk seams. Surface as `sola_search_clipped`
+        # in EngineStats for `woys diag`.
+        self.search_window_clipped: int = 0
 
     def reset(self) -> None:
         self._prev_tail = None
         self.fallback_count = 0
+        self.search_window_clipped = 0
 
     @property
     def context_samples(self) -> int:
@@ -369,11 +395,17 @@ class SOLAStream:
 
         # Subsequent chunks: search for the offset in [0, search] that
         # best aligns prev_tail with new_audio[k : k + cf].
-        offset, fell_back = _best_offset(
+        offset, fell_back, clipped = _best_offset(
             self._prev_tail, new_audio[: cf + search], search, cfg.corr_threshold
         )
         if fell_back:
             self.fallback_count += 1
+        elif clipped:
+            # F-31-05: peak at the far edge of the one-sided window.
+            # We still use the offset (better than 0), but count the
+            # event so a real-world run can refute the "RVC bias is
+            # purely toward late emission" assumption with evidence.
+            self.search_window_clipped += 1
 
         # Emit window: chunk_n samples starting at `offset`.
         emit_start = offset

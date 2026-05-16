@@ -832,6 +832,18 @@ class EngineStats:
     #                        regardless of fallback - so this counter is
     #                        purely a "how often is the search giving up"
     #                        diagnostic, not a cuts driver.
+    #   sola_search_clipped - review F-31-05 (commit-079). Counts
+    #                        chunks where the alignment search's peak
+    #                        landed at the FAR edge of the [0, search]
+    #                        window with corr above threshold. Distinct
+    #                        from `sola_fallback_count`: the offset was
+    #                        trusted, but the peak hit `best_idx ==
+    #                        search`, signaling the true alignment may
+    #                        lie beyond the one-sided window. A non-zero
+    #                        rate on real audio is evidence against the
+    #                        "RVC bias is purely toward late emission"
+    #                        assumption that motivates the one-sided
+    #                        contract (`sola._best_offset` docstring).
     #
     # rc4's `sola_drain_ms` (cumulative ms of zero-padding) was removed
     # in rc5 because the pad path itself was removed. SOLA emits
@@ -841,6 +853,7 @@ class EngineStats:
     gated_chunks: int = 0
     nan_chunks: int = 0
     sola_fallback_count: int = 0
+    sola_search_clipped: int = 0
 
     # v0.7.0-rc6 - per-stage producer-side timing for the writer-jitter
     # investigation. The rc5 postmortem
@@ -1375,7 +1388,12 @@ def _make_session(
 _VOICED_GAP_MAX_FRAMES = 8  # ~80 ms at the RMVPE 100 fps frame rate
 
 
-def interpolate_voiced_gaps_np(pitchf: NDArrayF32) -> NDArrayF32:
+def interpolate_voiced_gaps_np(
+    pitchf: NDArrayF32,
+    *,
+    prior_voiced_f0: float = 0.0,
+    prior_voiced_age_frames: int = -1,
+) -> NDArrayF32:
     """B16 / perf-002: vectorized version. The pre-v0.8.0 implementation
     walked an inner `for k in range(i, j)` Python loop that ran ~50-200
     iterations per chunk under typical RMVPE pitch tracks. numpy slicing
@@ -1384,6 +1402,20 @@ def interpolate_voiced_gaps_np(pitchf: NDArrayF32) -> NDArrayF32:
     Also keeps the dtype path in float32 throughout (pre-v0.8.0 cast to
     float64 for the linspace arithmetic, then back to float32) - minor
     alloc churn reduction for B16's perf-001 partial.
+
+    review F-31-12 (commit-079): optional ``prior_voiced_f0`` +
+    ``prior_voiced_age_frames`` carry the last-voiced anchor from the
+    PREVIOUS chunk so a chunk-leading unvoiced run can still be bridged
+    when its in-window `last_valid` is -1. The semantics match the
+    in-window path: if the leading run length plus the prior age stays
+    within ``_VOICED_GAP_MAX_FRAMES`` and a trailing voiced frame exists
+    within this chunk, we synthesize a virtual anchor at index
+    ``-prior_voiced_age_frames`` (negative, conceptually "outside the
+    chunk to the left") and linearly interpolate from `prior_voiced_f0`
+    through the run to the trailing in-window anchor. Defaults
+    ``(0.0, -1)`` reproduce the pre-F-31-12 behaviour exactly -- no
+    caller is forced to thread state through. Engine streaming path
+    passes carry state from `EngineWorker._pitch_carry_*`.
     """
     if pitchf.size == 0:
         return pitchf
@@ -1395,6 +1427,11 @@ def interpolate_voiced_gaps_np(pitchf: NDArrayF32) -> NDArrayF32:
         return np.nan_to_num(pitchf, nan=0.0).astype(np.float32, copy=False)
     out = np.nan_to_num(pitchf, nan=0.0).astype(np.float32, copy=True)
     n = len(invalid)
+    have_prior = (
+        prior_voiced_f0 > 0.0
+        and prior_voiced_age_frames >= 0
+        and prior_voiced_age_frames < _VOICED_GAP_MAX_FRAMES
+    )
     # Walk the runs of invalid; bridge each ≤ _VOICED_GAP_MAX_FRAMES gap
     # via vectorized linear interpolation between the bracketing voiced
     # frames.
@@ -1420,6 +1457,23 @@ def interpolate_voiced_gaps_np(pitchf: NDArrayF32) -> NDArrayF32:
             # multiply replaces the Python `for k in range(i, j)` loop.
             alphas = (np.arange(i, j, dtype=np.float32) - last_valid) / (j - last_valid)
             out[i:j] = out[last_valid] * (1.0 - alphas) + out[j] * alphas
+        elif (
+            # F-31-12 leading-edge bridge: no in-window prior anchor, but
+            # the previous chunk left a recent voiced f0 we can use.
+            run_len <= _VOICED_GAP_MAX_FRAMES
+            and last_valid < 0
+            and j < n
+            and have_prior
+            and out[j] > 0.0
+            and prior_voiced_age_frames + run_len <= _VOICED_GAP_MAX_FRAMES
+        ):
+            # Synthetic anchor at index -prior_voiced_age_frames - 1
+            # (one full frame "older" than i==0). Total span from the
+            # virtual anchor to j is (prior_voiced_age_frames + 1 + j).
+            virt_anchor_offset = -(prior_voiced_age_frames + 1)
+            span = float(j - virt_anchor_offset)
+            alphas = (np.arange(i, j, dtype=np.float32) - virt_anchor_offset) / span
+            out[i:j] = np.float32(prior_voiced_f0) * (1.0 - alphas) + out[j] * alphas
         i = j
     return out
 
@@ -1523,11 +1577,39 @@ class _StreamResampler:
 
     Identity case (`src_rate == dst_rate`) is a passthrough - no soxr
     object created.
+
+    review F-31-11 (commit-079) -- ``cold_fade_in_samples``. The
+    *steady-state* per-chunk warmup is eliminated by carrying filter
+    state, but a freshly-constructed `_StreamResampler` still cold-
+    starts on its first emit: the soxr filter delay line begins zero-
+    filled, so the first ~few-ms of output has a sub-unity gain.
+    Engine.run_loop tolerates this on engine startup (silence before
+    the first chunk anyway) but the model-swap path in
+    `_apply_one_swap` builds a NEW _StreamResampler when the post-swap
+    voice's native rate differs from the previous one -- the cold-
+    start blip lands inside live, voiced audio. We mask the transient
+    by applying a linear fade-in across the first `cold_fade_in_samples`
+    of *output*; the swap path passes ~5 ms of dst_rate samples so the
+    listener hears a brief amplitude ramp instead of a hard step.
+    Default 0 means "no fade-in" -- the engine-startup constructor
+    leaves it zero because the engine emits silence on startup anyway.
     """
 
-    def __init__(self, src_rate: int, dst_rate: int, *, quality: str = "HQ") -> None:
+    def __init__(
+        self,
+        src_rate: int,
+        dst_rate: int,
+        *,
+        quality: str = "HQ",
+        cold_fade_in_samples: int = 0,
+    ) -> None:
         self.src_rate = src_rate
         self.dst_rate = dst_rate
+        # F-31-11: remaining cold-fade-in budget. Decremented per emitted
+        # sample; once exhausted the resampler is fully primed and
+        # subsequent calls bypass the fade-in path entirely.
+        self._cold_fade_remaining = int(max(0, cold_fade_in_samples))
+        self._cold_fade_total = self._cold_fade_remaining
         if src_rate == dst_rate:
             self._stream = None
             return
@@ -1535,16 +1617,40 @@ class _StreamResampler:
 
         self._stream = soxr.ResampleStream(src_rate, dst_rate, num_channels=1, quality=quality)
 
+    def _apply_cold_fade(self, out: NDArrayF32) -> NDArrayF32:
+        """F-31-11: scale the leading samples of `out` by a linear ramp
+        that completes the budgeted fade-in. Mutates `out` in place
+        (a fresh array each call from soxr) and decrements the
+        remaining budget. Cheap path when remaining is 0.
+        """
+        if self._cold_fade_remaining <= 0 or out.size == 0:
+            return out
+        total = self._cold_fade_total
+        consumed = total - self._cold_fade_remaining
+        n_fade_this_chunk = min(self._cold_fade_remaining, out.size)
+        if n_fade_this_chunk > 0:
+            # Ramp from consumed/total → (consumed + n_fade_this_chunk)/total
+            start = consumed / total
+            end = (consumed + n_fade_this_chunk) / total
+            ramp = np.linspace(start, end, n_fade_this_chunk, endpoint=False, dtype=np.float32)
+            out[:n_fade_this_chunk] *= ramp
+        self._cold_fade_remaining -= n_fade_this_chunk
+        return out
+
     def process(self, audio: NDArrayF32) -> NDArrayF32:
         """Consume `audio` (1-D float32 mono); return whatever soxr emits
         for this chunk. Output length will lag input length slightly while
         the internal buffer fills - flush() drains the rest."""
         if self._stream is None:
-            return audio.astype(np.float32, copy=False)
+            # Identity path: still honour the cold-fade-in budget so the
+            # F-31-11 contract holds even when no rate change is needed.
+            out = audio.astype(np.float32, copy=True)
+            return self._apply_cold_fade(out)
         if audio.size == 0:
             return np.zeros(0, dtype=np.float32)
         out = self._stream.resample_chunk(audio, last=False)
-        return np.asarray(out, dtype=np.float32).reshape(-1)
+        out = np.asarray(out, dtype=np.float32).reshape(-1)
+        return self._apply_cold_fade(out)
 
     def flush(self) -> NDArrayF32:
         """Drain any audio held in soxr's internal buffer. Call once before
@@ -1552,7 +1658,8 @@ class _StreamResampler:
         if self._stream is None:
             return np.zeros(0, dtype=np.float32)
         out = self._stream.resample_chunk(np.zeros(0, dtype=np.float32), last=True)
-        return np.asarray(out, dtype=np.float32).reshape(-1)
+        out = np.asarray(out, dtype=np.float32).reshape(-1)
+        return self._apply_cold_fade(out)
 
 
 class RvcSessionPool:
@@ -1808,6 +1915,26 @@ class RealtimeEngine:
             self._sola_input_cfg.context_samples + self._sola_input_cfg.crossfade_samples,
             dtype=np.float32,
         )
+        # review F-31-12 (commit-079): cross-chunk pitch carry.
+        # `_interpolate_voiced_gaps_np` bridges short unvoiced runs (≤8
+        # frames ≈80 ms at RMVPE 100 fps) between two voiced anchors
+        # within a single pitchf vector. A voiced-run that is followed
+        # by a short unvoiced run that straddles the chunk boundary
+        # leaves the NEXT chunk's leading unvoiced run with no in-window
+        # `last_valid` anchor -- the dropout the bridge exists to
+        # prevent surfaces in the listener path.
+        #
+        # We carry the last-voiced f0 + its age in frames across calls
+        # to `_infer` so the next chunk's interpolate-pass can use it
+        # as a synthetic `last_valid` for a chunk-leading unvoiced run.
+        # State updates only on the legacy in-process inference path;
+        # the subprocess path (`inference_subprocess=True`) does not
+        # currently carry pitch state across the IPC boundary -- the
+        # leading-edge dropout is preserved there (documented in
+        # `_infer`). Default to (0.0, -1) meaning "no prior voiced
+        # frame known."
+        self._pitch_carry_f0: float = 0.0
+        self._pitch_carry_age_frames: int = -1
 
         # v0.4.1 hot-swap + review F-03-02 + F-13-12 (commit-042-
         # 043): queued model-swap requests with PER-CALL completion
@@ -2376,8 +2503,17 @@ class RealtimeEngine:
                 # if the SOLA flush above finalized the existing soxr stream.
                 # Same-rate swap with a non-identity stream pre-v0.14.0
                 # crashed the engine on the next chunk.
+                # review F-31-11 (commit-079): ~5 ms cold-fade-in
+                # masks the soxr filter-warmup transient when the rebuild
+                # lands inside live audio (model swap). 5 ms at sink_rate
+                # = sink_rate // 200; below the ~10 ms perception window
+                # for amplitude steps.
                 if new_sr != self._rvc_output_sr or resampler_out_was_flushed:
-                    self._resampler_out = _StreamResampler(new_sr, self.cfg.sink_rate)
+                    self._resampler_out = _StreamResampler(
+                        new_sr,
+                        self.cfg.sink_rate,
+                        cold_fade_in_samples=self.cfg.sink_rate // 200,
+                    )
                 if new_sr != self._rvc_output_sr:
                     self._rebuild_sola_for_rate(new_sr)
                 self._rvc_output_sr = new_sr
@@ -2414,8 +2550,14 @@ class RealtimeEngine:
         # the existing soxr stream (`last=True`). Without this, a same-rate
         # swap left a finalized stream in place and the next chunk raised
         # `RuntimeError: Input after last input` from soxr, killing engine.
+        # review F-31-11 (commit-079): cold-fade-in (see subprocess
+        # branch above for rationale). 5 ms at sink_rate.
         if new_sr != self._rvc_output_sr or resampler_out_was_flushed:
-            self._resampler_out = _StreamResampler(new_sr, self.cfg.sink_rate)
+            self._resampler_out = _StreamResampler(
+                new_sr,
+                self.cfg.sink_rate,
+                cold_fade_in_samples=self.cfg.sink_rate // 200,
+            )
         self._rvc_output_sr = new_sr
         self.reset_streaming_state()
         # B5: signal "swap complete" AFTER all the work. TUI poll sites
@@ -2454,7 +2596,7 @@ class RealtimeEngine:
         """
         return self._infer(audio16k)
 
-    def _infer(self, audio16k: NDArrayF32) -> NDArrayF32:
+    def _infer(self, audio16k: NDArrayF32, *, update_pitch_carry: bool = False) -> NDArrayF32:
         """Raw model invocation; no streaming bookkeeping.
 
         v0.8.0 - when `cfg.inference_subprocess=True` AND the
@@ -2469,6 +2611,17 @@ class RealtimeEngine:
         propagates up to `_safe_process_streaming_16k` which catches
         it and bumps `dropped_chunks` like any other inference
         failure.
+
+        review F-31-12 (commit-079): when ``update_pitch_carry=True``
+        AND we're on the legacy in-process path, read
+        `self._pitch_carry_*` to provide a leading-edge anchor to
+        `_interpolate_voiced_gaps_np`, and update the carry from the
+        trailing voiced frame of this chunk's pitchf. The subprocess
+        path does not carry pitch state across the IPC boundary -- the
+        leading-edge dropout case (a brief unvoiced run starting a
+        chunk where the prior chunk ended voiced) is preserved there.
+        Documented limitation; the IPC protocol does not currently
+        ship the prior/posterior pitch-carry tuple.
         """
         if self._inf_client is not None:
             from audio.inference_client import InferenceError
@@ -2522,6 +2675,26 @@ class RealtimeEngine:
         # Legacy in-process path.
         assert self._cv is not None and self._rmvpe is not None and self._rvc is not None
 
+        # review F-31-06 (commit-079) -- documented omission of upstream's
+        # `silence_front` lead-in trim. Upstream RVC's `Pipeline.py:254/272/306`
+        # tracks `silence_front` (how many leading samples are known-silent)
+        # and trims that region from the contentvec features + RMVPE pitchf
+        # before inference and index search:
+        #     npyOffset = math.floor(silence_front * 16000) // 360
+        #     feats = feats[:, npyOffset * 2 :, :]
+        # woys deliberately omits this for two reasons:
+        #   (1) the input gate (`engine.py` `_safe_process_streaming_16k`) zeros
+        #       sub-hysteresis chunks entirely, so silence-only chunks never hit
+        #       this path -- the trim is a no-op gain for the most common case;
+        #   (2) faiss index retrieval (F-31-01) is currently not implemented, so
+        #       the "silent frames pollute the nearest-neighbour search" risk
+        #       upstream's trim was protecting against is currently null.
+        # The cost we pay: when speech leads with a partially-silent history
+        # window, contentvec + RMVPE still run on the silent prefix (small
+        # latency tax, no quality impact). If F-31-01 ever lands, this comment
+        # is the marker to revisit -- index search WILL be polluted by silent
+        # frames at that point. Hard Rule 1: this is a documented design
+        # choice, not an unaudited omission.
         t_cv0 = time.perf_counter()
         feats = self._extract_feats(audio16k)
         # v0.6.9: silently zero NaN bursts in feats before they propagate
@@ -2541,7 +2714,34 @@ class RealtimeEngine:
         # v0.6.9: sanitize + interpolate short voiced→voiced gaps so a transient
         # RMVPE failure mid-utterance doesn't zero the NSF harmonic source.
         # Live diagnostic on e_girl voice traced 8 of 14 dropouts to this path.
-        pitchf = _interpolate_voiced_gaps_np(pitchf)
+        # review F-31-12 (commit-079): pass cross-chunk pitch carry so a
+        # leading-edge unvoiced run can be bridged using the prior chunk's
+        # trailing voiced anchor. Streaming wrapper sets `update_pitch_carry`.
+        if update_pitch_carry:
+            pitchf = _interpolate_voiced_gaps_np(
+                pitchf,
+                prior_voiced_f0=self._pitch_carry_f0,
+                prior_voiced_age_frames=self._pitch_carry_age_frames,
+            )
+            # Update carry from the trailing voiced frame of THIS pitchf.
+            # `age_frames` measured at the END of this pitchf so the next
+            # call's interpretation is conservative-recency (the slight
+            # under-aging vs the overlap window is harmless because the
+            # next call's in-window `last_valid` catches the same frame
+            # if it falls in the history portion -- the carry only fires
+            # when it's genuinely outside).
+            voiced_mask = pitchf > 0.0
+            if bool(voiced_mask.any()):
+                last_voiced_idx = int(np.flatnonzero(voiced_mask)[-1])
+                self._pitch_carry_f0 = float(pitchf[last_voiced_idx])
+                self._pitch_carry_age_frames = (len(pitchf) - 1) - last_voiced_idx
+            elif self._pitch_carry_age_frames >= 0:
+                # No voiced this chunk; the carry ages by the full pitchf
+                # length. Once age >= _VOICED_GAP_MAX_FRAMES the predicate
+                # `have_prior` in interpolate_voiced_gaps_np rejects it.
+                self._pitch_carry_age_frames += len(pitchf)
+        else:
+            pitchf = _interpolate_voiced_gaps_np(pitchf)
         t_rmvpe1 = time.perf_counter()
 
         # v0.10.0-rc2 - split RVC stage into pre / run / post so the
@@ -2686,7 +2886,10 @@ class RealtimeEngine:
         # the combined buffer (these will be the leading samples next time).
         self._input_history = model_input[-history_len:].copy()
 
-        full_out = self._infer(model_input)
+        # review F-31-12 (commit-079): the streaming path carries
+        # pitch state across `_infer` calls so a leading-edge unvoiced
+        # run that straddles a chunk boundary can still be bridged.
+        full_out = self._infer(model_input, update_pitch_carry=True)
 
         # Map the trim from input space to output space proportionally -
         # the model is roughly 1:1 in time, but RVC trims a few samples at
@@ -2724,6 +2927,11 @@ class RealtimeEngine:
         )
         if self._sola is not None:
             self._sola.reset()
+        # review F-31-12 (commit-079): the pitch carry must drop
+        # too -- the next session's first chunk is logically the start
+        # of a new utterance, no prior voiced anchor is in scope.
+        self._pitch_carry_f0 = 0.0
+        self._pitch_carry_age_frames = -1
 
     # ---- realtime loop ------------------------------------------------------
 
@@ -4546,6 +4754,8 @@ class RealtimeEngine:
                     # diagnostic, not a cuts driver.
                     if self._sola is not None:
                         self.stats.sola_fallback_count = self._sola.fallback_count
+                        # F-31-05 (commit-079): far-edge-clipped peak count.
+                        self.stats.sola_search_clipped = self._sola.search_window_clipped
 
                     # review F-07-17 (commit-049): push to the
                     # bounded monitor queue (non-blocking). The
