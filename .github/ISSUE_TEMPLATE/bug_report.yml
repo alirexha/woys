@@ -1,0 +1,110 @@
+name: Bug report
+description: Something broke — file a structured report so triage doesn't take a week.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug.
+
+        This is a personal alpha project — response time is best-effort,
+        but structured reports get triaged faster. The required fields
+        below are the minimum needed to make a bug actionable; the
+        optional fields meaningfully speed up diagnosis when they apply.
+
+        **Security issues should NOT be filed here.** Email
+        `alireza@hamayeli.com` instead — see
+        [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: woys version
+      description: Output of `woys --version`.
+      placeholder: "0.15.0"
+    validations:
+      required: true
+
+  - type: input
+    id: distro
+    attributes:
+      label: Distro + kernel
+      description: Distro name and kernel version. `uname -a` is fine.
+      placeholder: "Ubuntu 22.04, kernel 5.15.0-91-generic"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro steps
+      description: |
+        The exact sequence to reproduce. If it's a race / timing bug, say
+        how often it reproduces.
+      placeholder: |
+        1. `woys run --profile default`
+        2. Speak into mic for ~30 seconds
+        3. <bug happens here>
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-vs-actual
+    attributes:
+      label: Expected vs actual
+      description: What did you expect to happen? What happened instead?
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command(s) run
+      description: The literal commands you ran. Helps reconstruct flags / profile / options.
+      placeholder: |
+        $ woys run --profile high-quality
+        $ woys chain start
+      render: shell
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `.venv/bin/python --version`.
+      placeholder: "Python 3.11.15"
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU + driver
+      description: From `nvidia-smi -L` and the driver line of `nvidia-smi`.
+      placeholder: "RTX 3060, driver 550.78"
+
+  - type: textarea
+    id: pipewire
+    attributes:
+      label: PipeWire info
+      description: Output of `pactl info | head -10`.
+      render: shell
+
+  - type: textarea
+    id: chain-status
+    attributes:
+      label: woys chain status
+      description: Output of `woys chain status` (if the bug is chain-related).
+      render: shell
+
+  - type: textarea
+    id: journalctl
+    attributes:
+      label: journalctl excerpt
+      description: |
+        Relevant lines from `journalctl --user -u woys-chain.service` or
+        `journalctl --user -u woys-mic.service` — only if the bug looks
+        like a systemd-unit lifecycle issue.
+      render: shell
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Logs, screenshots, stack traces, theories.
