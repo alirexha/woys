@@ -7,4 +7,4 @@ imports it from here. Bump the literal below, then run
 `python scripts/release.py` to propagate it to README/PROGRESS/PKGBUILD.
 """
 
-__version__ = "0.14.3"
+__version__ = "0.15.0"
