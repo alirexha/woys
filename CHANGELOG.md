@@ -11,6 +11,391 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.15.0] — UNRELEASED — review phase-6 hardening (213-finding adversarial audit, 80 fix commits)
+
+**Status:** branch `review-phase6`, not yet merged to `main`. Date
+will be filled in on merge.
+
+This release is the result of the project's second review cycle:
+a 36-lens adversarial audit using the `review` skill methodology.
+Phase 1-5 produced 213 unique post-dedup findings (191 Agree, 6
+Disagree-locked, 16 Defer/Investigate) across the 8 phase doc set
+under `docs/26-review/`. Phase 6 shipped 80 fix commits between
+`11ab560` (audit baseline) and `d9add98` (this release's doc-refresh
+tip). Phase 7 listener-gate ran on the 4 P0s + UX (075/076) + SOLA
+quality (077/078); see "How this release was tested" below.
+
+The v0.14.0 release was the first review-driven release (20-lens,
+309 findings). This release covers everything that survived that pass
+plus the new findings the larger 36-lens net caught (UX onboarding,
+log-f0 perceptual nuance, streaming-state continuity, pactl wrapper
+divergence, control-protocol framing, CI absence, legal-distribution
+gap on the MIT subtree).
+
+### What's new
+
+#### Correctness & reliability
+
+- **Hard-fail the silent CUDA→CPU fallback in `_make_session`** —
+  pre-fix, a healthy box with broken CUDA EP fell through to CPU
+  silently and ran at 10-50× the latency budget with `last_error`
+  empty. Now raises `CpuFallbackError` at startup. Closes F-merged-001
+  (P0).
+- **Single-instance lock on the TUI `woys run` path** — the lock
+  acquired on `woys engine` was never acquired on the actual primary
+  entry point; concurrent invocations corrupted the WoysSink. Closes
+  F-merged-002 (P0).
+- **Async-signal-safe SIGTERM/SIGINT handler** — `signal.signal`,
+  `os.kill`, and context-manager work in the handler caused hangs on
+  Ctrl-C under the recommended latency config; replaced with a
+  signal-safe write-to-pipe pattern. Closes F-merged-010 (P0).
+- **`_probe_rvc_output_sr` re-raises instead of guessing the rate**
+  — the silent 16 kHz fallback produced chipmunk audio on 40 kHz v2
+  voices when the probe failed for unrelated reasons. Closes
+  F-merged-016 / F-31-07 (P1).
+- **`to_pitch_coarse` keeps the trailing pitch frames** — matches
+  upstream `Pipeline.py:288 pitch[:, -feats_len:]`. Pre-fix
+  `pitchf[:n]` scrambled the F0 contour against the content features
+  for any over-length pitchf. Closes F-31-02 (P1).
+- **Apply pitch shift BEFORE deriving `pitch_coarse`** — upstream's
+  `RMVPEOnnxPitchExtractor` shifts f0 first, then derives both
+  coarse and pitchf from the shifted result. Pre-fix any non-zero
+  `f0_up_key` produced mismatched harmonic-source vs
+  pitch-class-embedding pairs. Closes F-31-* (Lens 4 / Lens 7 / C001).
+- **Swap queue + per-call completion futures** — the pre-fix shared
+  Event released all waiters when only one swap had applied; the
+  single-slot `_pending_model_swap` dropped voiceA when voiceB
+  overwrote it. Both Hard Rule 2 silent-failures. Closes F-13-12 +
+  F-03-02 (P1).
+- **Cross-thread deque-iteration safety** — `_recent_*_ms` deques
+  could `RuntimeError: deque mutated during iteration` from the
+  TUI/diag side; clustered all `append`+`pop` sites under
+  `_stats_lock`. Closes F-merged-017 (P1).
+- **Lifecycle locks + `_stopped` guard** — `RealtimeEngine.start()` /
+  `stop()` now serialized by `_lifecycle_lock`; double-stop is a
+  no-op instead of a crash. Closes F-merged-018 (P1).
+- **Offload blocking teardown off the asyncio event loop** —
+  `stop()` did synchronous subprocess waits inside an event-loop
+  callback, freezing the TUI for seconds. Now off-loop. Closes
+  F-13-03 + F-CX3-02 (P1).
+- **`stop()` releases the in-process ONNX sessions** —
+  `_make_session` outputs were retained across `stop()`, so a
+  subsequent `start()` couldn't free the old VRAM. Closes F-14-05.
+- **Engine `crashed` flag + headless crash detection** — async
+  engine failures now surface to both TUI and CLI; pre-fix headless
+  callers got silence. Closes F-17-06.
+- **Playback-helper liveness check + capped respawn loop** — a
+  helper dying in a tight loop could runaway-respawn. Now bounded.
+  Closes F-17-10.
+- **Atomic `relabel_source` + loud chain-relabel failures** — chain
+  rename used two-step move-then-rename that left an orphan node on
+  partial failure. Now single-call atomic + non-zero exit. Closes
+  F-merged-006.
+- **`PR_SET_PDEATHSIG` on the playback-helper spawns** — pre-fix a
+  parent crash left orphan playback subprocesses. Closes F-14-02.
+
+#### Security & legal
+
+- **MIT license present in the distributed artifact** — `upstream/`
+  was gitignored but `src/server/` shipped 112 MIT-licensed files
+  with no `LICENSE` next to them; the MIT copyright-notice condition
+  was unsatisfied in every wheel / sdist. Now `src/server/LICENSE`
+  (132 lines verbatim) + `src/server/NOTICE` ship with every
+  artifact. Closes F-36-01 (P0).
+- **`SO_PEERCRED` UID check on the control socket** — control socket
+  accepted any local connection; now verifies the peer's UID matches
+  the daemon's. Closes F-05-01.
+- **Validate `ExecStart` path in the systemd unit installer** —
+  pre-fix wrote whatever path the user supplied; now resolves +
+  validates. Closes F-05-13.
+- **`int()` hygiene + load-time module-ID tracking** — `load_module`
+  return value parsed loosely; now strict + the loaded module IDs
+  are tracked for clean teardown. Closes F-05-14 split (F-cx4-001
+  P2a + P2b).
+- **Defense-in-depth nits batch** — F-05-05 / F-05-09 / F-05-11 /
+  F-05-12 + F-05-10/F-03-13 TOCTOU on `save_config`.
+- **Force `LC_ALL=C` on every `pactl` / `pw-*` parsing subprocess**
+  — locale-dependent output broke chain teardown on non-English
+  systems. Closes F-15-05.
+
+#### Performance
+
+- **Vectorised SOLA `_best_offset`** — pre-fix this was a Python
+  loop over `range(search+1)` (default 65 iterations per call) doing
+  two BLAS calls each; now one `np.correlate` + a cumsum-based
+  rolling-norm. 10-30× faster on the hot path. Closes F-07-03 (P1,
+  in F-merged-031 floor).
+- **Engine warm-state inference: ~45 ms** — measurement preserved
+  from v0.11.0 with `gpu_anti_jitter_mode='both'`. No new perf
+  claims in this release.
+
+#### Audio quality (SOLA + pitch)
+
+- **Equal-power crossfade on the SOLA `fell_back` branch** —
+  aligned-path keeps the equal-gain Hann² pair (correct for
+  correlated content); fall_back-path now uses equal-power
+  (cos/sin) so uncorrelated chunks no longer hit a ~3 dB midpoint
+  dip on fricatives / sibilants. Closes F-31-04 (P2).
+- **Streaming-state-continuity cluster** — F-31-05 `SOLAStream
+  .search_window_clipped` counter (signals "true alignment may lie
+  beyond the search window"); F-31-06 documented omission of
+  upstream's `silence_front` lead-in trim; F-31-11
+  `_StreamResampler` cold-fade-in budget masks filter-warmup blip
+  on rate-changing model swaps; F-31-12 cross-chunk pitch carry so
+  a chunk-leading unvoiced run that straddles a chunk boundary can
+  still be bridged. Closes F-31-05 / F-31-06 / F-31-11 / F-31-12.
+- **Log-f0 gap-bridge interpolation** — bridged contour follows a
+  perceptually-straight glide (geometric mean midpoint) instead of
+  the Hz-arithmetic-mean midpoint. Closes F-31-03 (P2).
+- **fp16 post-export numerical quality gate** — `convert.py
+  --fp16` now runs a smoke A/B against the fp32 reference and
+  refuses to write if the per-frame RMSE exceeds the gate. Closes
+  F-31-09.
+
+#### UX / TUI / CLI
+
+- **TUI engine-error surfacing** — `_refresh_stats` no longer
+  swallows engine errors; the headless and TUI surfaces now agree.
+  Closes F-08-09 / F-23-03 (P1).
+- **`models use` persists config on all 3 ERR strings + sets
+  `state=error`** — pre-fix some ERR paths silently dropped the
+  config write. Closes F-16-07 / F-23-05.
+- **PipeWire-setup failure is blocking in the TUI** — pre-fix the
+  failure was a non-blocking toast; the engine started anyway and
+  produced silence. Closes F-23-06.
+- **Control protocol** — read-until-`\n` framing + version
+  handshake; socket-routed CLI commands return non-zero on ERR;
+  multi-field cfg apply routed through the chunk-boundary barrier.
+  Closes F-merged-020 / F-merged-021 / F-merged-017 (commit-040b).
+- **UX onboarding cluster** — first-run experience cleanup
+  (F-23-04 / F-23-09 / F-23-11 / F-23-12 / F-23-13 / F-23-14 /
+  F-23-19).
+- **Quit overlay + swap-error surfacing** — F-23-10 / F-23-17.
+- **`woys`** (bare) now equals `woys run` (no autostart) — F-16-04.
+- **`woys info`** reports ONNX Runtime / CUDA EP / active model
+  state — F-merged-013.
+- **`woys chain status --check`** health gate + systemd
+  `ExecStartPost` integration — F-08-06.
+
+#### Architecture / quality
+
+- **Single `AppConfig`→`EngineConfig` forwarding helper** — pre-fix
+  the same field-set translation existed in 3 places, drifting.
+  Closes F-merged-008 / F-01-04.
+- **Consolidate 3 divergent `pactl` wrappers** — `_pactl_run`
+  helper unifies argv build + LC_ALL=C + returncode parsing.
+  Closes F-merged-009.
+- **Concurrent connection handling in `ControlServer._loop`** —
+  thread-pool the accept loop so slow handlers don't block other
+  clients. Closes F-merged-025.
+- **Bounded `helper_exit_reasons` / `priority_warnings` at all
+  append sites** — pre-fix grew unbounded over long sessions.
+  Closes F-merged-026.
+- **Top-level traceback guard for CLI + TUI engine start** —
+  pre-fix `raise SystemExit(main())` let the full traceback hit
+  the terminal raw on early startup errors. Closes F-merged-022.
+- **Single version source + stale-metadata sweep** — pre-fix
+  version was hardcoded in 4 places. Closes F-merged-029 /
+  F-CX2-03.
+- **Logging framework keystone** — `RotatingFileHandler` +
+  `~/.local/share/woys/logs/` + level-via-env. Closes F-merged-014.
+
+#### Build / packaging / install
+
+- **Minimal GitHub Actions pipeline** — lint + format + mypy
+  --strict + fast test suite on every push. Closes F-19-04.
+- **`install.sh`** — runs prereq checks before the destructive
+  migration (F-19-05); installs the pinned closure first, then
+  `--no-deps -e .` (F-19-03); hard-fails on no-GPU + verifies all
+  3 weight files (F-19-16 / F-15-06); regenerates `requirements
+  .txt` from `pyproject.toml` (F-merged-004).
+- **`uninstall.sh`** tears down the RNNoise chain (F-merged-005).
+- **Move the web stack to a `[convert]` optional extra** —
+  pre-fix the base install pulled in faiss-cpu unconditionally.
+  Closes F-19-11 / F-CX6-03.
+- **`.vcprofile` forward-compat reader + migration ladder** —
+  F-16-08.
+- **`config.toml` header template + `config.example.toml`** —
+  F-16-06.
+- **Config-migration honors `_user_overrides`** + the false
+  comment that said otherwise — F-16-01.
+- **`validate()` boundary for TOML config + `.vcprofile`** —
+  F-merged-012.
+- **Remove dead `enable_dbus` field, hardcoded `~/ai/woys` dev
+  paths from user docs** — F-merged-019 / F-merged-028.
+
+### Breaking changes
+
+No user-facing API breaks. The two semi-breaking changes:
+
+⚠️ **CUDA EP is now hard-required at startup.** Pre-v0.15.0
+silently fell through to CPU. If you were unknowingly running on
+CPU (10-50× the latency budget), `woys run` now raises
+`CpuFallbackError` and refuses to start. The CPU-mode fallback was
+never a supported configuration; this is an honest-error-vs-silent-
+degradation alignment. Migration: ensure
+`onnxruntime-gpu` is installed against a CUDA EP that loads — see
+`docs/INSTALL.md` and `woys info` output.
+
+⚠️ **`woys engine convert --fp16`** now fails closed if the
+fp16-vs-fp32 post-export A/B exceeds the per-frame RMSE gate.
+Pre-v0.15.0 it would write the fp16 file silently. Migration: run
+without `--fp16` if the model fails the gate, or pass
+`--allow-quality-regression` (added for this release) if you've
+audited the resulting quality yourself.
+
+### Deprecations
+
+None in this release.
+
+### Known issues / deferred items
+
+These findings were identified during the audit and intentionally
+deferred. Each has a documented re-open condition.
+
+- **F-05-03 (P3)** — `zip-slip` containment in
+  `voice_library_import.py` — VERIFIED MOOT. The file does not
+  exist in the repo; the verdict was written against a stale
+  inventory. Re-open if a real voice-library-import path lands.
+  See `docs/26-review/deferred/F-05-03-zip-slip.md`.
+- **F-11-01 (P2)** — extract `_export2onnx` +
+  `EnumInferenceTypes` from `src/server/` as original work, delete
+  the rest of the 22k-LOC vendored subtree. Deferred per the
+  verdict's explicit guidance ("Do NOT do the extraction in this
+  audit — scope inflation"). Re-open: when `src/server/` causes a
+  real maintenance issue, or when an MIT-licensing question forces
+  the move. See
+  `docs/26-review/deferred/F-11-01-extract-export2onnx.md`.
+- **P-5 (architectural)** — `engine.py` decomposition (extract
+  `GpuClockLock`, `PlaybackWriter`, `InferencePipeline` — one
+  class per commit, GPU smoke test after each). Deferred because
+  the autonomous Phase 6 run did not have a CUDA box to run the
+  per-commit GPU smoke. Re-open: next audit cycle, or when
+  `engine.py` exceeds 5000 LOC (currently ~4700). See
+  `docs/26-review/deferred/P-5-engine-py-decomposition.md`.
+- **F-merged-031 (Investigate cluster)** — perf-floor items
+  whose individual fixes have a floor (F-07-03 vectorised
+  `_best_offset` landed) but the keep-or-rewrite-the-whole-SOLA
+  question is deferred. Re-open: if `sola_search_clipped` (the
+  new F-31-05 counter) shows non-zero rates on real audio.
+- **F-merged-033 (Investigate)** — full-deletion question for
+  the `src/server/` engine code that isn't on the runtime hot
+  path; floor sub-findings landed, the deletion decision pends
+  the F-11-01 extraction.
+- **F-31-10 (Investigate)** — fp16 foundation models (cv +
+  rmvpe). Deferred behind a paired quality-vs-VRAM evaluation
+  (per `the project notes` "Conditional / requires-quality-evaluation").
+- **F-09-18 (Investigate)** — docs-vs-code ELI5 gap.
+  Owner-acknowledged style choice (per `the project notes`).
+- **F-13-13 (Investigate)** — concurrency edge case.
+  Investigation pending real-world surface evidence.
+- **F-36-02 (Defer)** — legal core item kept open for the
+  copyright holder to instruct on.
+- **F-11-03b (Defer)** — `chunk_seconds` default revisited. The
+  v0.12.4 listener A/B picked 0.25 over the 100 ms latency win;
+  the deferral notes that the determination was n=1 on WAV
+  playback and is not validated in the production Discord / CS2
+  VoIP path.
+- **Remaining P2 mechanical batch** (commits 081+ on the verdict
+  roadmap) — F-03-03/05/12, F-13-08/10, F-14-07, F-15-10/14,
+  F-16-05/11/12, F-17-12/13, F-19-07/10/12/13/14, F-32-06/07/08/09
+  /10, F-08-08/10/12/14, F-09-11/19, F-01-06/07/08, F-17-07,
+  F-07-14, F-11-04, F-02-* cluster. Owner-declared
+  "phase 6 done — P2s addressed" includes these via the batch
+  commits 061-074 + the new SOLA cluster 077-080; the verdict-
+  file roadmap's "commits-081…" line is from the original Phase 5
+  sequencing plan and was overtaken by batching. Any item not
+  closed by an explicit commit ref in `docs/26-review/
+  phase-5-verdicts.md` is re-opened in the next audit cycle.
+
+### How this release was tested
+
+- **36-lens audit** using the `review` skill methodology
+  (`docs/26-review/`):
+  - Phase 1 scoping: `phase-1-scoping.md`
+  - Phase 2 findings: `phase-2-findings/lens-01..36.md`
+  - Phase 3 synthesis: `phase-3-synthesis.md`
+  - Phase 4 cross-examination: `phase-4-cross-examination/`
+  - Phase 5 verdicts: `phase-5-verdicts.md` (213 unique post-dedup;
+    191 Agree, 6 Disagree-locked, 16 Defer/Investigate)
+  - Phase 6 implementation: 80 commits between `11ab560` and
+    `d9add98` (see `docs/26-review/phase-6-fixes/` for the
+    per-commit design docs)
+  - Phase 7 listener gate: `phase-7-listener-gate.md` — PASS on
+    the 4 P0 fixes + CI; the UX cluster (075/076) and SOLA quality
+    (077/078) had their own listener gates run separately
+- **493 fast tests pass** (was 238 at v0.14.3 baseline; +255 tests
+  added during the audit covering the new invariants).
+- **16 slow tests** (GPU-dependent; gated by `slow` marker).
+- **`ruff check`, `ruff format --check`, `mypy --strict src/{woys
+  ,audio,tui}/`** — all clean.
+- **Listener gate** ✅ PASS on the scope above. The remaining
+  audio-quality fixes (079 streaming-state, 080 log-f0) had their
+  invariants pinned by math + tests; no production ears-verify
+  was performed for those — see commit-079.md / commit-080.md
+  for the rationale.
+
+### Compatibility
+
+- **Required platform:** Linux + PipeWire ≥ 1.2 + CUDA-capable
+  GPU (no CPU fallback as of this release).
+- **Backward compatibility:** profile `.vcprofile` files from
+  v0.14.x carry forward; the migration ladder handles the
+  schema-version field. Config `~/.config/woys/config.toml`
+  forward-migrates.
+- **No database / no daemon migration required.**
+
+### Installation / upgrade
+
+For most users:
+
+```bash
+./install.sh
+```
+
+For users upgrading from v0.14.3:
+
+```bash
+./uninstall.sh --keep-models  # tears down the v0.14.1 RNNoise chain
+./install.sh                  # re-creates with the post-079 cold-fade-in
+```
+
+If `woys run` raises `CpuFallbackError` after upgrade, see
+`docs/22-gpu-clock-lock.md` and `woys info` to diagnose the CUDA
+EP state — that's the v0.15.0 hard-fail on what was previously a
+silent CPU fallback.
+
+### Audit transparency
+
+The full audit findings, defenses, cross-examination dialogues,
+and verdict reasoning are preserved at:
+
+- `docs/26-review/phase-1-scoping.md` — scope decisions
+- `docs/26-review/phase-2-findings/` — independent agent
+  observations (lens-01..36)
+- `docs/26-review/phase-3-synthesis.md` — maintainer's
+  Agree / Disagree / Investigate response
+- `docs/26-review/phase-4-cross-examination/` — cross-exam
+  dialogues (CX1..CX6)
+- `docs/26-review/phase-5-verdicts.md` — final
+  classifications with code evidence
+- `docs/26-review/phase-6-fixes/commit-NNN.md` —
+  per-commit design docs (61-80 in this cycle)
+- `docs/26-review/phase-7-listener-gate.md` — verification
+- `docs/26-review/deferred/` — re-open conditions for
+  deferred items
+
+The repo is private; the audit workspace is internal documentation
+not intended for external publication.
+
+### Next release
+
+The deferred items above and any P3-class hygiene items not closed
+by explicit commits will be re-evaluated in the next audit cycle.
+No date scheduled.
+
+---
+
 ## [0.14.3] — 2026-05-10 — rollback v0.14.2: filter-chain conf broke real-world system audio enumeration
 
 v0.14.2 shipped a `~/.config/pipewire/pipewire.conf.d/99-woys-chain.conf`
