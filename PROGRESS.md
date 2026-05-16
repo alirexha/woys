@@ -38,7 +38,7 @@ view.
 
 Dev-environment snapshot, defaults, and DoD status as of v0.14.3:
 
-- 238 fast tests + 15 slow tests; ruff + mypy --strict clean over `src/{woys,audio,tui}/` and `tests/`.
+- 493 fast tests + 16 slow tests; ruff + mypy --strict clean over `src/{woys,audio,tui}/` and `tests/`.
 - Total e2e latency: ~640 ms (v0.12.4 listener-test optimum). Inference ~45 ms warm with `gpu_anti_jitter_mode='both'`.
 - VRAM: ~1.35 GiB stable for foundation + a single RVC voice loaded.
 - The PipeWire SOURCE name `woys-mic` is unchanged since v0.6.5; v0.13.x adds `woys-by-alirexha` (RNNoise-cleaned) and `woys-no-cleanup` (raw fallback) as friendly aliases when the chain is enabled.
