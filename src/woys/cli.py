@@ -350,6 +350,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     from audio.engine import RealtimeEngine
     from audio.pipewire import PipeWireError, VirtualMic, get_state
     from tui.config import app_config_to_engine_config, load_config
+    from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
 
     print("---- pipewire ----")
     try:
@@ -369,18 +370,27 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     # non-48k hardware.
     engine_cfg = app_config_to_engine_config(cfg, rvc_model=rvc_path)
     engine = RealtimeEngine(engine_cfg)
-    engine.start()
+    # Hold the single-instance lock for the self-test: a diag run that overlaps
+    # a live `woys run` / `woys engine` would open a second capture+convert path
+    # on the same mic and produce out-of-phase, double-converted audio (the same
+    # hazard the run/engine paths already guard against).
     try:
-        # Sample stats every 0.5 s so the user sees progress on long runs.
-        deadline = time.perf_counter() + seconds
-        while time.perf_counter() < deadline:
-            time.sleep(0.5)
-            s = engine.stats
-            if s.last_error and "respawned" not in s.last_error:
-                # Surface non-recovery errors immediately.
-                print(f"  [warn] {s.last_error}")
-    finally:
-        engine.stop(timeout=2.0)
+        with acquire_instance_lock():
+            engine.start()
+            try:
+                # Sample stats every 0.5 s so the user sees progress on long runs.
+                deadline = time.perf_counter() + seconds
+                while time.perf_counter() < deadline:
+                    time.sleep(0.5)
+                    s = engine.stats
+                    if s.last_error and "respawned" not in s.last_error:
+                        # Surface non-recovery errors immediately.
+                        print(f"  [warn] {s.last_error}")
+            finally:
+                engine.stop(timeout=2.0)
+    except InstanceLockBusy as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
     s = engine.stats
     print("---- results ----")
