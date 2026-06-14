@@ -58,6 +58,7 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import gc
+import logging
 import os
 import queue
 import shutil
@@ -3239,6 +3240,11 @@ class RealtimeEngine:
             # failure. The ring keeps the history; this field is the
             # *current* sticky-error timestamp.
             self.stats.last_error_ts = now
+        # Mirror to the rotating file log (outside the lock - file I/O). The
+        # error ring above is RAM-only and dies with the process; this leaves a
+        # durable, wall-clock-stamped trace so a transient fault is
+        # reconstructable from woys.log after the fact.
+        logging.getLogger("woys.engine").warning(msg)
 
     def recent_errors(self, n: int = 5) -> list[tuple[float, str, str]]:
         """Return the most recent up-to-`n` error entries from the ring,
