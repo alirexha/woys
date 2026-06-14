@@ -2988,6 +2988,11 @@ class RealtimeEngine:
             self._stop_event.clear()
             self.stats.crashed = False
             self._stopped = False
+            # Reset the signal-handler re-entrancy guard so a restarted engine
+            # (e.g. the TUI stop->start toggle) can still handle SIGINT/SIGTERM;
+            # otherwise a signal seen during a prior run would suppress clean
+            # teardown (incl. reverting an active GPU clock lock) on the next.
+            self._signal_received = None
             self.stats.warmup_stage = "starting"
 
             # FAST caller-thread setup (sub-millisecond): GC + signal
