@@ -1023,9 +1023,9 @@ class EngineStats:
     helper_exit_reasons: list[str] = field(default_factory=list)
 
     # v0.9.0-rc4 - back-compat alias for the field renamed from
-    # `pacat_restarts` to `player_restarts`. External callers (tests,
-    # scripts that scrape EngineStats) reading the old name still work
-    # for one release; v0.10 deletes the alias.
+    # `pacat_restarts` to `player_restarts`. Retained as a permanent alias:
+    # first-party readers (the TUI status panel) and any external scripts
+    # that scrape EngineStats by the old name keep working.
     @property
     def pacat_restarts(self) -> int:
         return self.player_restarts
