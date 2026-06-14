@@ -2688,7 +2688,7 @@ class RealtimeEngine:
                 self.stats._recent_cv_ms.append(timings.cv_ms)
                 self.stats._recent_rmvpe_ms.append(timings.rmvpe_ms)
                 self.stats._recent_rvc_ms.append(timings.rvc_ms)
-            self.stats.unique_audio16_lens.add(int(audio16k.shape[-1]))
+                self.stats.unique_audio16_lens.add(int(audio16k.shape[-1]))
             self.stats.nan_chunks = timings.nan_chunks_total
             ipc_typed: NDArrayF32 = ipc_result
             return ipc_typed
@@ -2838,7 +2838,7 @@ class RealtimeEngine:
             self.stats._recent_rvc_pre_ms.append(rvc_pre_ms)
             self.stats._recent_rvc_run_ms.append(rvc_run_ms)
             self.stats._recent_rvc_post_ms.append(rvc_post_ms)
-        self.stats.unique_audio16_lens.add(int(audio16k.shape[-1]))
+            self.stats.unique_audio16_lens.add(int(audio16k.shape[-1]))
         result_typed: NDArrayF32 = result
         return result_typed
 
