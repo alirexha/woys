@@ -1,4 +1,4 @@
-"""review F-07-17 (commit-049): monitor writes decoupled from
+"""monitor writes decoupled from
 the engine main thread via a bounded queue + dedicated writer thread.
 
 Pre-fix `_run_loop` opened `sd.OutputStream` lazily on `cfg.monitor`

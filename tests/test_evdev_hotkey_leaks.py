@@ -1,4 +1,4 @@
-"""review F-merged-027: evdev hotkey fd/thread leak fix.
+"""evdev hotkey fd/thread leak fix.
 
 Pre-fix `EvdevHotkey._loop` had three concrete defects:
 

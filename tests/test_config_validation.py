@@ -1,4 +1,4 @@
-"""review F-merged-012: per-field type + sane-range validation
+"""per-field type + sane-range validation
 for AppConfig and `.vcprofile` import.
 
 Pre-fix:
@@ -124,7 +124,7 @@ def test_load_config_warns_and_defaults_on_string_for_float(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The verdict's test: a `chunk_seconds = "fast"` in config gives a
+    """The review's test: a `chunk_seconds = "fast"` in config gives a
     clear per-field error on stderr, not a deep traceback. The user
     keeps a working config; only the bad field is reset."""
     from audio.engine import EngineConfig
@@ -226,7 +226,7 @@ def _write_vcprofile_with_bad_field(path: Path, body: str) -> None:
 
 
 def test_vcprofile_import_refuses_chunk_seconds_negative(tmp_path: Path) -> None:
-    """The verdict's bug-class test: a `.vcprofile` with
+    """The review's bug-class test: a `.vcprofile` with
     `chunk_seconds = -1` is a DoS class -- the importer must REFUSE,
     not warn-and-default. (`.vcprofile` is the untrusted-artifact
     surface; `load_config` is the user-owned surface.)"""

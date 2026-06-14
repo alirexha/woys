@@ -32,7 +32,7 @@ Defensive features for cross-version compatibility:
 - Writes a partial JSON with `status="failed"` + an `error` field
   if anything raises during import or engine build.
 
-Hard Rule 9: every measured field is a real number from this run.
+every measured field is a real number from this run.
 Fields that can't be measured for a given version are JSON `null`.
 
 Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.

@@ -2,7 +2,7 @@
 
 ## v0.2.0 (2026-05-04, this run)
 
-| Metric | v0.1.1 actual | v0.2.0 actual | v0.2.0 brief target | Verdict |
+| Metric | v0.1.1 actual | v0.2.0 actual | v0.2.0 brief target | Review |
 |---|---:|---:|---:|---|
 | Warm `avg_total_ms` (chunk=0.1, SOLA on) | ~280 ms (chunk=0.25) | **30.48 ms** | < 120 ms | **HIT** |
 | Warm `avg_inference_ms` | ~60 ms | **30.31 ms** | n/a | improved |

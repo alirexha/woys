@@ -1,4 +1,4 @@
-"""review F-31-01 + F-CX6-03 (commit-051): woys is INDEX-FREE.
+"""woys is INDEX-FREE.
 
 Pre-fix `woys models download <repo>` snapshot-fetched any `.index`
 file present in the HF repo (RVC's optional faiss speaker-similarity
@@ -102,6 +102,3 @@ def test_models_md_documents_index_free_contract() -> None:
     be loaded."""
     text = (REPO / "docs" / "MODELS.md").read_text()
     assert "index-free" in text, "docs/MODELS.md must explicitly state woys is index-free"
-    assert "F-31-01" in text or "F-CX6-03" in text, (
-        "docs/MODELS.md must reference the verdict that closed this"
-    )

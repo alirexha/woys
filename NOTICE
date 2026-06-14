@@ -133,7 +133,6 @@ Documentation (original) — all *.md under docs/, plus top-level prose:
   docs/05-perf.md
   docs/22-gpu-clock-lock.md
   docs/23-rnnoise-chain.md
-  docs/26-review/                (v0.15.0 review audit materials)
   docs/decisions/                     (architectural decision records)
   docs/CS2-SETUP.md
   docs/DISCORD-SETUP.md
@@ -218,8 +217,8 @@ weights downloaded by scripts/download_weights.py at install time:
   contentvec-f.onnx                    huggingface.co/wok000/weights_gpl —
                                        distributed under GPL-3.0 (the
                                        upstream repo name explicitly
-                                       declares this). See review
-                                       F-cx1-new-D below.
+                                       declares this). See the note
+                                       below.
   amitaro_v2_16k.onnx                  huggingface.co/wok000/vcclient_model
                                        (sample voice for smoke testing)
 
@@ -227,9 +226,9 @@ weights downloaded by scripts/download_weights.py at install time:
 fallback. The fairseq path was removed in v0.8.0; the embedder is now
 ONNX contentvec exclusively, and `hubert_base.pt` is no longer fetched.)
 
-review F-cx1-new-D (commit-060): the previous wording above
+An earlier wording above
 characterized `contentvec-f.onnx` as merely "upstream-licensed; see
-that repo." That was a Hard Rule 1 understatement: the upstream
+that repo." That was an understatement: the upstream
 repo name `wok000/weights_gpl` explicitly declares the GPL-3.0
 licensing posture. The correct, explicit statement:
 

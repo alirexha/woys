@@ -47,22 +47,22 @@ from tui.control import ControlServer, JobRegistry
 from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
 from woys.profiles import apply_profile, cycle_profile, list_profiles
 
-# review F-08-09 / F-23-03: `_refresh_stats` ticks at 0.25 s; the
+# `_refresh_stats` ticks at 0.25 s; the
 # widget tree isn't realized for the first couple of seconds. Within this
 # many ticks a render failure is expected and stays silent; after it, a
 # render failure is logged + counted.
 _REFRESH_STARTUP_TICKS = 8
 
-# review F-23-15 (commit-075): RVC f0 shifts past ±24 st mangle the
+# RVC f0 shifts past ±24 st mangle the
 # voice (formants and pitch decouple to where the output stops sounding
-# like a voice). The verdict picked WARN over hard-clamp -- the pitch
+# like a voice). The review picked WARN over hard-clamp -- the pitch
 # action still applies, but a toast fires on the threshold crossing so a
 # user who tap-keyed past it can back off if they hit it by accident. Tap
 # counter: only the *first* tap past ±24 in each direction toasts; further
 # taps in the same direction stay silent so the toast doesn't spam.
 _PITCH_WARN_ST = 24
 
-# review F-23-19 (commit-075): "no mic signal" hint. `_refresh_stats`
+# "no mic signal" hint. `_refresh_stats`
 # ticks at 0.25 s and reads `stats.last_input_rms`. If the engine is
 # running but RMS stays below `_MIC_SILENCE_RMS` for `_MIC_SILENCE_TICKS`
 # consecutive ticks (~6 s), the StatusPanel renders a hint and a single
@@ -90,7 +90,7 @@ def _fmt_age(seconds: float) -> str:
 
 
 class HelpScreen(ModalScreen[None]):
-    """review F-23-13 (commit-075): `?` opens a modal listing every
+    """`?` opens a modal listing every
     keybinding. The footer renders binding *labels* but truncates on a
     narrow terminal and never explains what each action does; the
     module docstring is comprehensive but only readable by opening the
@@ -130,7 +130,7 @@ class HelpScreen(ModalScreen[None]):
 
 
 class ShutdownScreen(ModalScreen[None]):
-    """review F-23-10 (commit-076): a persistent "shutting down…"
+    """a persistent "shutting down…"
     overlay so the quit feedback survives the 2-10 s teardown window.
 
     Pre-fix `action_quit` fired a `notify("shutting down…")` toast then
@@ -197,7 +197,7 @@ class StatusPanel(Static):
         error_age_s: float | None = None,
         mic_silent: bool = False,
     ) -> str:
-        # review F-23-04 (commit-075): an idle/stopped engine
+        # an idle/stopped engine
         # previously rendered "○ status: stopped" with no next-step.
         # First-run users had no on-screen prompt that the engine even
         # COULD be started from this view -- the only way to find out
@@ -219,7 +219,7 @@ class StatusPanel(Static):
             state = "stopped"
             idle_hint = "\n   [dim]press [bold]t[/bold] to start, [bold]?[/bold] for help[/dim]"
         prof = f"[italic]{profile}[/]" if profile else "[dim](none)[/]"
-        # review F-23-14 (commit-075): render the error with an age
+        # render the error with an age
         # so the user can tell a stale 4-minute-old transient from a
         # fresh failure. `error_age_s` is None when the engine has not
         # populated `last_error_ts` yet (older pickle, pre-fix readers).
@@ -227,7 +227,7 @@ class StatusPanel(Static):
         if error:
             age = f" [dim]({_fmt_age(error_age_s)})[/dim]" if error_age_s is not None else ""
             err = f"\n[bold red]error:[/] {error}{age}"
-        # review F-23-19 (commit-075): a persistent on-panel
+        # a persistent on-panel
         # banner for "engine running, mic dead" -- the toast that fires
         # on the threshold crossing fades, but the StatusPanel must
         # still tell the eyes-only viewer why their voice isn't going
@@ -303,7 +303,7 @@ class WoysApp(App[int]):
         Binding("p", "cycle_profile", "profile"),
         Binding("m", "toggle_monitor", "monitor"),
         Binding("s", "save_cfg", "save"),
-        # review F-23-13 (commit-075): `?` opens HelpScreen. Both
+        # `?` opens HelpScreen. Both
         # `question_mark` and `?` are accepted so the literal key works
         # on shift-layouts where `?` is shift+/.
         Binding("question_mark,?", "help", "help"),
@@ -331,7 +331,7 @@ class WoysApp(App[int]):
             if self.cfg.rvc_model and Path(self.cfg.rvc_model).exists()
             else DEFAULT_RVC_MODEL
         )
-        # review F-merged-008 / F-01-04: one forwarding helper, not a
+        # one forwarding helper, not a
         # hand-written EngineConfig(...) block. The helper iterates
         # USER_VISIBLE_ENGINE_FIELDS, so a new user-tunable field is
         # forwarded to every entry point by adding it to that one tuple.
@@ -348,26 +348,26 @@ class WoysApp(App[int]):
         # v0.5.0: track the latest swap target so the TUI can show "loading X..."
         # while the swap is in flight (~10 ms cached, ~600 ms cold).
         self._swap_in_flight: str | None = None
-        # review F-08-09 / F-23-03: `_refresh_stats` tick + error
+        # `_refresh_stats` tick + error
         # counters. The first few ticks run before the widget tree is
         # realized (expected, silent); after that a render failure is
         # logged + counted instead of being swallowed by a bare `pass`.
         self._refresh_ticks = 0
         self._refresh_errors = 0
-        # review F-23-19 (commit-075): mic-silence detector state.
+        # mic-silence detector state.
         # `_silence_ticks` counts consecutive refresh ticks where the
         # engine is running but `last_input_rms < _MIC_SILENCE_RMS`;
         # `_silence_warned` gates the one-shot toast so the user gets
         # one explicit nudge per silence episode, not one every tick.
         self._silence_ticks = 0
         self._silence_warned = False
-        # review F-23-15 (commit-075): track which extreme of the
+        # track which extreme of the
         # ±_PITCH_WARN_ST window the user has already been warned about,
         # so a tap-key drag past the threshold toasts ONCE per crossing
         # rather than every tap.
         self._pitch_warned_high = False
         self._pitch_warned_low = False
-        # review F-08-09 / F-23-03 + F-23-14 (commit-075): track
+        # track
         # the most recent `last_error` we toasted so the same error is
         # not re-toasted on every refresh tick. Cleared when the engine
         # clears its `last_error` so a *new* error matching an earlier
@@ -375,10 +375,10 @@ class WoysApp(App[int]):
         self._last_notified_error: str | None = None
 
     def on_mount(self) -> None:
-        # review F-23-06 (P1): a PipeWire-setup failure is BLOCKING.
+        # a PipeWire-setup failure is BLOCKING.
         # Pre-fix this recorded an 8 s toast then fell straight through to
         # autostart -- the app showed a green RUNNING status on a setup
-        # with no woys-mic device (Hard Rule 2: degraded behavior pretending
+        # with no woys-mic device (degraded behavior pretending
         # all is fine, on the product's core function, on the *default*
         # `woys` invocation). Now: no autostart, and a persistent error on
         # the status panel (rendered every refresh tick) with the remedy.
@@ -446,7 +446,7 @@ class WoysApp(App[int]):
                 f"late_chunks={s.late_chunks}/{s.chunks_processed} "
                 # v0.7.0-rc4/rc5 - silent-drop counters. rc5 dropped
                 # `sola_drain_ms` (zero-pad bookkeeping) - see
-                # `docs/16-audit/11-rc4-postmortem.md`. `sola_fallback`
+                # internal notes. `sola_fallback`
                 # now means "alignment search gave up" only; it doesn't
                 # affect emit length under rc5's constant-output SOLA.
                 f"gated={s.gated_chunks} "
@@ -497,7 +497,7 @@ class WoysApp(App[int]):
             # swap and waits for the worker to apply it.
             def do_swap() -> None:
                 self._swap_in_flight = new_path.name
-                # review F-03-02 / F-23-17: capture the PER-CALL
+                # capture the PER-CALL
                 # `_SwapRequest`. Pre-F-03-02 the waiter watched a
                 # shared `engine._swap_done` which released ALL pending
                 # waiters on the first completion -- rapid swaps
@@ -547,7 +547,7 @@ class WoysApp(App[int]):
                     req_holder.append(self._apply_profile_named(target))
 
                 self.call_from_thread(apply_main)
-                # review F-03-02 / F-23-17: wait on the PER-CALL
+                # wait on the PER-CALL
                 # request the profile-apply returned (None if the model
                 # didn't change -- in that case there's nothing to wait
                 # for). On failure, route to record_error so the
@@ -593,7 +593,7 @@ class WoysApp(App[int]):
     # ---- actions ------------------------------------------------------------
 
     def action_toggle_engine(self) -> None:
-        """review F-13-03: a running engine.stop() can take up to
+        """a running engine.stop() can take up to
         ~10 s (engine._thread join 2 s + InferenceClient kill ladder
         3.5 s + gc.collect + GPU clock-lock revert subprocess.run
         timeout 4 s). Pre-fix this method called `self.engine.stop()`
@@ -621,7 +621,7 @@ class WoysApp(App[int]):
         """Start the engine. Returns True on success, False if start failed
         (the failure is surfaced via `notify()` + `stats.last_error`).
 
-        review F-merged-022 (P1): `engine.start()` can raise on common
+        `engine.start()` can raise on common
         first-run failures -- missing model (`FileNotFoundError`), a broken
         CUDA EP (`CpuFallbackError` <: `RuntimeError`), a missing PipeWire
         sink (`PipeWireError`). Pre-fix that propagated out of `on_mount`
@@ -638,7 +638,7 @@ class WoysApp(App[int]):
         return True
 
     def _apply_pitch(self, new_pitch: int) -> None:
-        """review F-23-11 (commit-075): unified pitch-set path so
+        """unified pitch-set path so
         every pitch action emits the same toast + the F-23-15 soft-warn
         check, instead of three identical assignment blocks. Pre-fix
         action_pitch_up/down/reset duplicated four-line bodies and the
@@ -688,7 +688,7 @@ class WoysApp(App[int]):
         self._apply_pitch(0)
 
     def action_help(self) -> None:
-        """review F-23-13 (commit-075): open the HelpScreen modal.
+        """open the HelpScreen modal.
         The footer renders the binding labels but truncates on narrow
         terminals and never spells out what each action does; this
         modal gives the full list with a one-line gloss per binding."""
@@ -735,7 +735,7 @@ class WoysApp(App[int]):
                 req_holder.append(self._apply_profile_named(next_name))
 
             self.call_from_thread(apply_main)
-            # review F-03-02 / F-23-17: wait on the per-call
+            # wait on the per-call
             # request and check its `.error` after completion so a
             # swap failure on the cycle key surfaces through the
             # designed engine-error escalation surface, not into
@@ -778,13 +778,13 @@ class WoysApp(App[int]):
         active model). The PROFILE socket handler waits on
         `req.completion` so the JobRegistry reports done only when the
         swap actually completes, and reads `req.error` so a failed
-        swap routes to `engine.record_error()`. review F-03-02 /
+        swap routes to `engine.record_error()`. /
         F-23-17."""
         if not apply_profile(self.cfg, name):
             self.notify(f"failed to apply profile {name!r}", severity="error", timeout=4)
             return None
         self._active_profile = name
-        # review F-merged-017 (commit-040b): route the multi-field
+        # route the multi-field
         # cfg update through `request_cfg_update`. Pre-fix the four
         # `self.engine.cfg.X = ...` assignments below were issued one
         # at a time, and the engine worker reads those fields at
@@ -835,7 +835,7 @@ class WoysApp(App[int]):
         self.notify("config saved", severity="information")
 
     async def action_quit(self) -> None:
-        """review F-13-03 + F-CX3-02 + F-23-10 (commit-076): offload
+        """offload
         the blocking teardown trio off the event loop AND render a
         persistent overlay so the user sees something is happening for
         the full duration of the teardown.
@@ -867,7 +867,7 @@ class WoysApp(App[int]):
         s = self.engine.stats
         self._refresh_ticks += 1
 
-        # review F-08-09 / F-23-03: surface a fresh `last_error` to the
+        # surface a fresh `last_error` to the
         # user as a toast. This is the *designed* engine-error escalation
         # path -- it MUST run outside the widget-render `try` below. Pre-fix
         # it sat inside a blanket `except Exception: pass`, so any widget
@@ -884,7 +884,7 @@ class WoysApp(App[int]):
         if not s.last_error:
             self._last_notified_error = None
 
-        # review F-23-19 (commit-075): mic-silence detector. The
+        # mic-silence detector. The
         # engine reports last_input_rms each chunk; if it sits at ~0
         # while we are RUNNING, the meter alone is ambiguous (a quiet
         # second looks the same as a dead mic). After
@@ -984,7 +984,7 @@ def run_tui(
         cfg.autostart_engine = True
     if monitor is not None:
         cfg.monitor = monitor
-    # review F-merged-002 (P0): the single-instance lock used to be
+    # the single-instance lock used to be
     # wired only into `woys engine`. `woys run` -- the primary entry point,
     # the one instance_lock.py's own docstring names *first* -- never
     # acquired it, leaving the documented double-engine WoysSink corruption

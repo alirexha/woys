@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="woys",
         description="Linux-native real-time voice changer (RVC + ONNX + PipeWire).",
-        # review F-merged-021: socket-routed commands (toggle / status /
+        # socket-routed commands (toggle / status /
         # pitch / slow) inspect the reply and return non-zero on `ERR ...`
         # so window-manager keybindings can chain commands.
         epilog=(
@@ -247,7 +247,7 @@ def cmd_info() -> int:
     print(f"woys {__version__}")
     print(f"  python: {sys.version.split()[0]}")
 
-    # ONNX Runtime + CUDA EP. review F-merged-013: cmd_info used to
+    # ONNX Runtime + CUDA EP. cmd_info used to
     # print Python/PipeWire/GPU but never import onnxruntime, so a user
     # whose CUDA EP silently fell back to CPU (the F-merged-001 P0) had no
     # command that revealed it. `_make_session` now hard-fails that case;
@@ -259,7 +259,7 @@ def cmd_info() -> int:
         try:
             ort.preload_dlls()  # required for the CUDA EP -- see LESSONS.md
         except Exception as e:
-            # Report any preload failure, never hide it (Hard Rule 2).
+            # Report any preload failure, never hide it.
             print(f"  ort.preload_dlls() FAILED: {type(e).__name__}: {e}")
         providers = ort.get_available_providers()
         cuda_ok = "CUDAExecutionProvider" in providers
@@ -363,7 +363,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     print(f"---- engine self-test ({seconds:.1f} s) ----")
     cfg = load_config()
     rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
-    # review F-merged-008 / F-01-04: one forwarding helper, not a
+    # one forwarding helper, not a
     # hand-written EngineConfig(...) block. The pre-fix block here silently
     # omitted mic_rate / sink_rate, so `woys diag` ran 48 kHz defaults on
     # non-48k hardware.
@@ -420,7 +420,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     # v0.7.0-rc4/rc5 - silent-drop counters previously invisible to
     # woys-diag. rc5 dropped `sola_drain_ms` (zero-pad bookkeeping) -
     # SOLA emits constant-size chunks now and never pads silence; see
-    # `docs/16-audit/11-rc4-postmortem.md`. `sola_fallback_count` is
+    # internal notes. `sola_fallback_count` is
     # now a pure "alignment search gave up" diagnostic and does NOT
     # imply audio cuts under rc5.
     print(f"  input overflows  : {s.input_overflows}")
@@ -444,7 +444,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         )
 
     # v0.7.0-rc6 - per-stage producer-side timing percentiles. The rc5
-    # writer-jitter probe (docs/16-audit/12-rc5-writer-jitter-probe.md)
+    # writer-jitter probe
     # ruled out the writer side. Producer-side cadence variance is
     # what writer_jitter_ms reflects; this breakdown attributes it to
     # mic_read vs inference vs enqueue_lag. Pure instrumentation -
@@ -621,7 +621,7 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
     spawn path the TUI uses, minus Textual's terminal hijacking. SIGINT
     triggers a clean stop+teardown.
 
-    v0.14.0 (Lens 17 / C009): wrapped in an instance lock. Two concurrent
+    v0.14.0 (area 17 / C009): wrapped in an instance lock. Two concurrent
     `woys engine` invocations used to unlink each other's control socket
     and write into WoysSink simultaneously, producing out-of-phase
     double-converted audio.
@@ -630,7 +630,7 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
 
     print(f"woys engine - {__version__}")
     # v0.14.0 (C009) used manual __enter__/__exit__ scattered across three
-    # error-path exit sites. review F-merged-002 / F-cx1-new-B: a real
+    # error-path exit sites. a real
     # `with` block, so no future early return can leak the lock. The body
     # is in _cmd_engine_locked so the lock spans the whole run.
     try:
@@ -644,7 +644,7 @@ def cmd_engine(seconds: float, quiet: bool) -> int:
 def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
     """Engine-run body; executes while the single-instance lock is held.
 
-    Split out of cmd_engine in the review Phase 6 (F-merged-002 /
+    Split out of cmd_engine in the Phase 6 (F-merged-002 /
     F-cx1-new-B) so the instance lock is a single `with` block rather
     than manual __enter__/__exit__ at every exit site.
     """
@@ -670,19 +670,19 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
 
     cfg = load_config()
     rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
-    # review F-merged-008 / F-01-04: one forwarding helper, not a
+    # one forwarding helper, not a
     # hand-written EngineConfig(...) block. The pre-fix block here silently
     # omitted mic_rate / sink_rate, so `woys engine` ran 48 kHz defaults on
     # non-48k hardware.
     engine_cfg = app_config_to_engine_config(cfg, rvc_model=rvc_path)
 
-    # review F-merged-014: log the effective config at startup so a
+    # log the effective config at startup so a
     # post-mortem can see exactly what the engine ran with.
     logging.getLogger("woys.engine-cli").info("effective engine config: %r", engine_cfg)
 
     eng = RealtimeEngine(engine_cfg)
 
-    # v0.14.0 (Lens 12 / Lens 17 / C217): install SIGINT/SIGTERM handler
+    # v0.14.0 (area 12 / area 17 / C217): install SIGINT/SIGTERM handler
     # BEFORE eng.start(). Pre-v0.14.0 the handler was installed AFTER
     # start() returned, so a Ctrl-C during the multi-second warmup
     # (cuDNN tune + clock-lock + subprocess spawn) hit Python's default
@@ -739,7 +739,7 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
     started_with_subprocess = eng.cfg.inference_subprocess
 
     deadline = _time.perf_counter() + seconds if seconds > 0 else float("inf")
-    # review F-17-06 (P1): the loop must also break when `_run_loop`
+    # the loop must also break when `_run_loop`
     # exits via an unhandled exception. Pre-fix it checked only
     # `stop["now"]` / `deadline`, so a crashed worker left this loop
     # printing frozen `chunks=0` stats for the full --seconds (and, for
@@ -802,7 +802,7 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
                 f"  ⚠ playback backend respawned {s.player_restarts}x during "
                 f"the session (helper exited mid-run; check stderr capture "
                 f"with WOYS_HELPER_STDERR_LOG=$XDG_RUNTIME_DIR/woys/helper.log "
-                f"to find why -- F-05-11 (commit-061): the path must live "
+                f"to find why -- F-05-11: the path must live "
                 f"under $XDG_RUNTIME_DIR/woys/)"
             )
         if s.player_underruns > 0 and s.chunks_processed > 0:
@@ -815,7 +815,7 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
                 f"  player_underruns rate: ~{rate:.1f}/sec "
                 f"({'engine writer jitter likely cause' if rate > 1.0 else 'within normal slack'})"
             )
-    # review F-17-06: exit non-zero on a mid-run crash so the headless
+    # exit non-zero on a mid-run crash so the headless
     # / WM-scripting layer can tell "crashed" from "ran cleanly". `crashed`
     # (not just `running == False`) is the discriminator -- a clean stop()
     # also leaves running False.
@@ -892,7 +892,7 @@ def _prewarm_mp_resource_tracker() -> None:
 def main(argv: list[str] | None = None) -> int:
     # MUST run before any Textual import. See `_prewarm_mp_resource_tracker`.
     _prewarm_mp_resource_tracker()
-    # review F-merged-014 (P1): configure the rotating file log before
+    # configure the rotating file log before
     # anything else, so every `getLogger("woys.*")` call (hotkey, control,
     # the guard below, ...) lands in $XDG_STATE_HOME/woys/woys.log instead
     # of Python's lastResort stderr, which Textual hijacks.
@@ -903,7 +903,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)  # argparse SystemExit on bad args is intentional
     logger.info("woys %s starting -- argv=%s -- log=%s", __version__, sys.argv[1:], log_file)
-    # review F-merged-022 (P1): top-level guard so the most common
+    # top-level guard so the most common
     # first-run failures (missing model, PipeWire not set up, broken CUDA
     # EP) reach a non-developer as one actionable stderr line + exit 1, not
     # a raw Python traceback. WOYS_DEBUG=1 preserves the traceback for devs.
@@ -943,7 +943,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
-    """Command dispatch. review F-merged-022: split out of `main()` so
+    """Command dispatch. split out of `main()` so
     `main()` can wrap the whole dispatch in a single top-level guard while
     leaving `parser.parse_args` (whose `SystemExit` is intentional) outside
     it."""
@@ -952,7 +952,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     # ergonomics. `woys --help` and `woys --version` still work because
     # argparse intercepts those before reaching this dispatch.
     if args.cmd is None:
-        # review F-16-04 (commit-067): bare `woys` used to
+        # bare `woys` used to
         # silently autostart the engine (= `woys run --autostart`);
         # `woys run` without `--autostart` did NOT. Undocumented
         # least-surprise wart -- a non-developer typing the program
@@ -1057,7 +1057,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.cmd in ("toggle", "status", "pitch", "slow"):
         from tui.control import send_command
 
-        # review F-merged-021: route `ERR ...` replies to stderr and
+        # route `ERR ...` replies to stderr and
         # return 1. Pre-v0.14.4 these commands printed the reply verbatim
         # and `return 0` regardless, so `woys toggle && notify-send "on"`
         # would report success even when the TUI wasn't running (the reply

@@ -50,7 +50,7 @@ What evidence would make us revisit this decision. Examples:
 
 - Hardware change (new GPU class, new CPU, different OS).
 - Upstream/library version bumps (e.g. ORT 1.25 fixes the int64 issue).
-- A measured listener-test verdict that contradicts the current default.
+- A measured listener-test review that contradicts the current default.
 - A new alternative entering the ecosystem (e.g. a successor to RVC).
 
 If revisiting is unlikely on any realistic timescale, write

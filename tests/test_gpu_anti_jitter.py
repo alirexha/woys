@@ -336,7 +336,7 @@ def test_revert_gpu_clock_lock_calls_rgc_when_active() -> None:
 
 
 def test_revert_gpu_clock_lock_failure_keeps_active_and_flags_revert_failed() -> None:
-    """v0.14.0 (Lens 17 / Lens 19 / C019): if -rgc fails (sudo revoked,
+    """v0.14.0 (area 17 / area 19 / C019): if -rgc fails (sudo revoked,
     driver flicker), keep `gpu_clock_lock_active=True` AND set the new
     `gpu_clock_lock_revert_failed=True` flag. Pre-v0.14.0 the function
     flipped active=False whether or not -rgc succeeded -- a sudo-revoked

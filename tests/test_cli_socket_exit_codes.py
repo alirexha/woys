@@ -1,4 +1,4 @@
-"""review F-merged-021: socket-routed CLI commands (toggle / status /
+"""socket-routed CLI commands (toggle / status /
 pitch / slow) must return non-zero on `ERR ...` replies, route them to
 stderr, and document the convention.
 

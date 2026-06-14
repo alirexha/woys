@@ -1,4 +1,4 @@
-"""review F-31-04 (commit-078): equal-power crossfade on the
+"""equal-power crossfade on the
 SOLA fall_back branch only; equal-gain (Hann²) on the aligned branch.
 
 The aligned branch sees prev_tail and head sharing phase (the
@@ -14,9 +14,9 @@ sin**4` power envelope that dips ~3 dB at midpoint; equal-power
 flat across the fade. Audible on fricatives / sibilants / phoneme
 transitions where fall_back fires most.
 
-The verdict-required test material (verdict line 896): "RMS of the
+The review-required test material (review line 896): "RMS of the
 crossfade region on two uncorrelated noise chunks + a fricative
-listener pass (Hard Rule 9)". The fricative pass is the maintainer's
+listener pass". The fricative pass is the maintainer's
 ears-verify task; the unit tests here cover the RMS math.
 
 Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
@@ -152,7 +152,7 @@ def test_fallback_fires_when_chunks_are_independent() -> None:
 
 
 def test_equal_power_preserves_power_better_than_equal_gain() -> None:
-    """F-31-04 verdict 'RMS of the crossfade region on two
+    """F-31-04 review 'RMS of the crossfade region on two
     uncorrelated noise chunks' (line 896). Compare integrated RMS
     of the SOLA output between equal-power (production) and
     equal-gain (legacy). The legacy path should be measurably

@@ -1,4 +1,4 @@
-"""review F-merged-017 commit-040b: multi-field cfg apply
+"""commit-040b: multi-field cfg apply
 consistency.
 
 Pre-fix `_apply_profile_named` wrote four `engine.cfg.X = ...`
@@ -99,7 +99,7 @@ def test_unknown_field_in_update_is_ignored_not_raises() -> None:
 
 
 def test_multi_field_profile_apply_is_atomic_no_half_applied_state() -> None:
-    """Bug-class test (the verdict's stated case).
+    """Bug-class test (the review's stated case).
 
     Simulate the engine's per-chunk read pattern. Worker thread reads
     the four runtime-tunable fields one at a time at scattered points

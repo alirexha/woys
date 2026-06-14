@@ -1,4 +1,4 @@
-"""review F-merged-022 (P1): the most common first-run failures must
+"""the most common first-run failures must
 reach a non-developer as one actionable line, not a raw Python traceback or
 a crashed TUI mount.
 

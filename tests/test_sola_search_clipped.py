@@ -1,4 +1,4 @@
-"""review F-31-05 (commit-079): SOLAStream.search_window_clipped.
+"""SOLAStream.search_window_clipped.
 
 The one-sided alignment search `[0, search]` can only delay the emit
 window. If real-world audio ever has its true alignment beyond `search`,

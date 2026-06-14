@@ -1,11 +1,11 @@
-"""review F-23-06 (P1): a PipeWire-setup failure in the TUI must be
+"""a PipeWire-setup failure in the TUI must be
 blocking.
 
 Pre-fix `WoysApp.on_mount` caught the `PipeWireError`, recorded an 8 s
 toast, then fell straight through to `_start_engine()` -- so the app
 showed a green RUNNING status on a setup with no `woys-mic` device. Bare
 `woys` passes `autostart=True`, so this was the *default* invocation: a
-clean Hard Rule 2 violation on the product's core function.
+clean contract violation on the product's core function.
 
 Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """

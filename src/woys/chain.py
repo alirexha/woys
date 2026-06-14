@@ -58,7 +58,7 @@ routed to the default ALSA sink (= laptop speakers). v0.13.2 fixed the
 routing (Architecture B with `media.class=Audio/Sink` and the `.monitor`
 consumption pattern); v0.13.3 polishes the naming on top of that.
 
-v0.14.0 (Lens 1 / Lens 19 / C034 + C043): the parallel
+v0.14.0 (area 1 / area 19 / C034 + C043): the parallel
 `scripts/v013_*_rnnoise_chain.sh` shell implementations were deleted.
 They duplicated this module's topology without `set -euo pipefail` or
 return-code checks on `pactl load-module`, so partial chain failures
@@ -108,7 +108,7 @@ def _systemd_unit_path() -> Path:
 
 
 def _c_locale_env() -> dict[str, str]:
-    """review F-15-05: env for parsing subprocesses. pactl / pw-link /
+    """env for parsing subprocesses. pactl / pw-link /
     systemctl output is localised; our parsers key off literal English
     tokens (`Description: `, `Source #`, ...), so on a non-English `$LANG`
     every parse silently misses and `woys chain status` shows zero devices
@@ -120,7 +120,7 @@ def _pactl(*args: str) -> subprocess.CompletedProcess[str]:
     """Run `pactl <args>` with the same hardening
     `audio.pipewire._run_pactl` provides.
 
-    review F-merged-009 (commit-070): pre-fix chain.py and
+    pre-fix chain.py and
     audio/pipewire.py had two divergent pactl shell-out wrappers.
     chain.py's pre-fix version used bare `"pactl"` (no `shutil.
     which` + missing-tool guard); audio/pipewire.py's had both.
@@ -172,7 +172,7 @@ def _default_sink() -> str:
 def _list_modules() -> list[tuple[str, str, str]]:
     """Return [(id, type, args)] for currently loaded pipewire-pulse modules.
 
-    review F-cx4-001 / F-05-14 P2a (commit-064): match
+    P2a: match
     `pipewire.py:_list_modules` by validating that the first column
     is a non-negative integer. Pre-fix any garbage in column 0
     propagated as a module ID to `_unload_chain_modules`'s
@@ -292,7 +292,7 @@ def _alsa_leak_links() -> list[str]:
         text=True,
         timeout=3,
         check=False,
-        env=_c_locale_env(),  # review F-15-05: English-token parsing
+        env=_c_locale_env(),  # English-token parsing
     ).stdout
     leaks: list[str] = []
     section = ""
@@ -426,7 +426,7 @@ def setup() -> int:
     #    actually carries audio) is already running. We log a warning
     #    and return success, because the chain is functionally fine
     #    even if the cosmetic relabel didn't take.
-    # review F-merged-006: the pre-fix code caught a relabel failure,
+    # the pre-fix code caught a relabel failure,
     # printed a stderr "warning", and `return 0` -- so `woys-chain.service`
     # reported `active` even when (pre-F-merged-006) the relabel had
     # destroyed woys-mic. `relabel_source` is now atomic (it rolls back, so
@@ -471,7 +471,7 @@ def teardown() -> int:
 
     # v0.14.1 - restore woys-mic's daily-driver description so users
     # without the chain (or after teardown) see a sensible label.
-    # review F-merged-006: a failed restore is reported via a non-zero
+    # a failed restore is reported via a non-zero
     # exit, not swallowed as a "warning" + return 0.
     relabel_failed = False
     try:
@@ -505,7 +505,7 @@ def teardown() -> int:
 
 
 def _health_check() -> int:
-    """review F-08-06: the assertions wired into woys-mic.service and
+    """the assertions wired into woys-mic.service and
     woys-chain.service as `ExecStartPost`. Exits non-zero if the woys audio
     plumbing is in the broken state the v0.14.2 incident produced -- the
     only thing that would otherwise catch it is a human noticing dead audio,
@@ -571,7 +571,7 @@ def _health_check() -> int:
 
 
 def status(check: bool = False) -> int:
-    # review F-08-06: `--check` runs only the health assertions and
+    # `--check` runs only the health assertions and
     # exits non-zero on failure, so the systemd units' ExecStartPost can
     # turn a broken-audio chain into a `failed` unit instead of a green
     # `active (exited)` that hides the v0.14.2 regression class.
@@ -659,7 +659,7 @@ def enable() -> int:
         )
         return 2
 
-    # review F-05-13 (commit-065): resolve + validate the
+    # resolve + validate the
     # `woys` binary path before string-interpolating it into a
     # systemd unit. Pre-fix:
     #   woys_bin = shutil.which("woys") or sys.argv[0]
@@ -723,7 +723,7 @@ Requires=pipewire-pulse.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart={woys_bin} chain setup
-# review F-08-06: assert the chain is actually healthy after setup.
+# assert the chain is actually healthy after setup.
 # A failed ExecStartPost makes the unit `failed` instead of a green
 # `active (exited)` that hides a broken chain (the v0.14.2 class). Note:
 # a failed check leaves the ExecStart modules loaded -- run

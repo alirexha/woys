@@ -52,8 +52,8 @@ user's hardware (NVIDIA discrete laptop GPU vs desktop vs AMD vs
 integrated) or their willingness to grant `nvidia-smi -lgc/-rgc`
 sudoers. It's the floor — engine works without prereqs, no power
 burn for users who don't need it. The keepalive-only half is not a
-listener-validated 36× win (the v0.11.0 cross-exam in
-`docs/24-review/phase4-verdicts.md` corrected an earlier misread
+listener-validated 36× win (the v0.11.0 review in
+internal notes corrected an earlier misread
 that was about to flip the default). Users who hit underruns and
 read `docs/22-gpu-clock-lock.md` opt into `"both"` once and keep it.
 

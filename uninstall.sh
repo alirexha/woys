@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-# review F-05-05 (commit-061): validate $HOME before
+# validate $HOME before
 # deriving the paths we rm-rf below. See install.sh for the
 # matching guard.
 if [ -z "${HOME:-}" ]; then
@@ -69,7 +69,7 @@ say() { printf '\n[uninstall] %s\n' "$*"; }
 # unit file, and unloads the loaded pactl modules. Skipping this leaves
 # an enabled woys-chain.service pointing at a missing binary (re-runs on
 # every login) and the chain modules persist until reboot.
-# F-merged-005 — review Phase 6.
+# F-merged-005 — Phase 6.
 if command -v pactl >/dev/null && pactl info 2>/dev/null | grep -q PipeWire; then
     if [ -x "$APP_HOME/venv/bin/woys" ]; then
         say "tearing down the RNNoise chain (if loaded)…"

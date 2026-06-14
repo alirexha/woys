@@ -125,7 +125,7 @@ def cli_profile_save(name: str) -> int:
 def cli_profile_use(name: str) -> int:
     """Apply the named saved profile.
 
-    review F-merged-020 part 2: wire to the orphaned `PROFILE`
+    part 2: wire to the orphaned `PROFILE`
     socket handler (`tui/app.py:342-357`). Pre-fix this function ONLY
     wrote `config.toml` and told the user to "restart the engine" --
     the PROFILE handler in the TUI was functional but unreachable from
@@ -211,7 +211,7 @@ def cli_profile_list() -> int:
 def cli_profile_delete(name: str, *, assume_yes: bool = False) -> int:
     """Delete a saved profile.
 
-    review F-23-09 (commit-075): irreversible destructive action
+    irreversible destructive action
     on user state with no confirmation pre-fix. A typo in the profile
     name ran straight through. The prompt is interactive `[y/N]` (with
     `N` as the default so a bare Enter is safe), bypassed by `--yes`

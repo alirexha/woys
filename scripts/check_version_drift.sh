@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# review F-merged-029: CI gate that catches version-drift between the
+# CI gate that catches version-drift between the
 # single source (src/woys/__init__.py::__version__) and the documentation
 # surfaces that historically drifted (README.md, pkg/PKGBUILD).
 #

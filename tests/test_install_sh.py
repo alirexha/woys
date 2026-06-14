@@ -17,7 +17,7 @@ INSTALL_SH = (REPO / "install.sh").read_text()
 
 
 def test_prereqs_and_venv_build_run_before_destructive_migration() -> None:
-    """review F-19-05: the destructive vcclient-cachy -> woys migration
+    """the destructive vcclient-cachy -> woys migration
     must run *after* the prereq checks and the venv + deps build.
 
     Pre-fix the migration ran first, so a `set -e` abort on a venv-build
@@ -36,7 +36,7 @@ def test_prereqs_and_venv_build_run_before_destructive_migration() -> None:
 
 
 def test_pinned_requirements_install_before_editable_no_deps_package() -> None:
-    """review F-19-03: install the pinned dependency closure
+    """install the pinned dependency closure
     (requirements.txt) first, then the woys package with `--no-deps`.
 
     Pre-fix it was `pip install -e .` then `pip install -r
@@ -63,7 +63,7 @@ def test_pinned_requirements_install_before_editable_no_deps_package() -> None:
 
 
 def test_install_sh_hard_fails_on_missing_nvidia_smi() -> None:
-    """review F-19-16 / F-15-06: a missing NVIDIA GPU must hard-fail
+    """a missing NVIDIA GPU must hard-fail
     unless --allow-cpu is explicitly passed -- not warn-and-continue,
     advertising an ONNX-Runtime CPU "fallback" that does not exist."""
     # The pre-fix warn-and-continue line must be gone.
@@ -79,7 +79,7 @@ def test_install_sh_hard_fails_on_missing_nvidia_smi() -> None:
 
 
 def test_install_sh_verifies_all_three_foundation_weights() -> None:
-    """review F-19-16: the install must verify ALL three foundation
+    """the install must verify ALL three foundation
     weights, not just amitaro_v2_16k.onnx."""
     for weight in ("rmvpe_wrapped.onnx", "contentvec-f.onnx", "amitaro_v2_16k.onnx"):
         assert weight in INSTALL_SH, f"install.sh must verify the {weight} foundation weight"

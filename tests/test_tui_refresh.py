@@ -1,4 +1,4 @@
-"""review F-08-09 / F-23-03 (P1): the TUI's `_refresh_stats` must not
+"""the TUI's `_refresh_stats` must not
 swallow engine errors.
 
 Pre-fix `_refresh_stats` wrapped its *entire* body -- including the

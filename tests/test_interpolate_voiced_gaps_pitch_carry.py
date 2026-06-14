@@ -1,4 +1,4 @@
-"""review F-31-12 (commit-079): cross-chunk pitch carry for
+"""cross-chunk pitch carry for
 `interpolate_voiced_gaps_np`.
 
 Pre-fix the bridge required a voiced anchor on BOTH sides of an
@@ -49,7 +49,7 @@ def test_leading_unvoiced_bridged_with_prior_anchor() -> None:
     """A pitchf starting with a short unvoiced run AND a voiced frame
     in range gets the leading run bridged using the prior anchor.
 
-    F-31-03 (commit-080): bridge is log-linear; expected values reflect
+    F-31-03: bridge is log-linear; expected values reflect
     that domain change.
     """
     from audio.engine import interpolate_voiced_gaps_np

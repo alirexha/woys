@@ -12,7 +12,7 @@ Hugging Face download
 API to fetch all `.onnx` files from a repo into the cache. Re-runs
 are free thanks to HF's content-addressable cache.
 
-review F-31-01 + F-CX6-03 (commit-051): woys is INDEX-FREE.
+woys is INDEX-FREE.
 RVC's optional faiss `.index` file (speaker-similarity blending
 during conversion) was downloaded by pre-fix `download_repo` but
 NEVER actually consumed by the engine -- `index_rate` had no
@@ -136,7 +136,7 @@ def find_by_name(name: str, models_dir: Path = MODELS_DIR) -> Path | None:
 def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
     """Snapshot-download all `.onnx` files from a HF repo.
 
-    review F-31-01 + F-CX6-03 (commit-051): woys is INDEX-FREE.
+    woys is INDEX-FREE.
     Pre-fix this function also downloaded any `.index` files (RVC's
     faiss speaker-similarity index), but the engine never consumed
     them -- `index_rate` had no implementation. The product
@@ -153,7 +153,7 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
     api = HfApi()
     info = api.repo_info(repo)
     siblings = getattr(info, "siblings", None) or []
-    # v0.14.0 (Lens 6 / C125): pin the download to the commit SHA we
+    # v0.14.0 (area 6 / C125): pin the download to the commit SHA we
     # observed at repo_info time. Pre-v0.14.0 hf_hub_download() ran
     # without `revision=`, so it could resolve to whatever the HF
     # service called "latest" at the moment of each per-file call --
@@ -179,7 +179,7 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
             sha = getattr(lfs_obj, "sha256", None)
             if isinstance(sha, str) and len(sha) == 64:
                 lfs_sha_by_name[s.rfilename] = sha
-    # review F-31-01 + F-CX6-03: index-free. `.index` files
+    # index-free. `.index` files
     # (RVC's faiss speaker-similarity index) are NOT downloaded.
     entries = [s.rfilename for s in siblings if s.rfilename.endswith(".onnx")]
     if not entries:
@@ -274,7 +274,7 @@ def cli_models_download(
 ) -> int:
     """Snapshot-download all .onnx models from a HF repo into `models_dir`.
 
-    review F-23-09 (commit-075): pre-fix the command immediately
+    pre-fix the command immediately
     began a multi-hundred-MiB transfer with no warning -- a user on a
     metered connection or limited disk saw the size only after bytes
     had already shipped. The size-summary preview queries HfApi once,
@@ -367,7 +367,7 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
     Default overall timeout 30 s (covers cold-cache cudnn-tune of any
     voice; cached swaps complete in < 200 ms).
 
-    review F-16-07 / F-23-05: persistence to `config.toml` is the
+    persistence to `config.toml` is the
     contract; the running-engine live-apply is best-effort on top. Pre-
     fix the persistence branch only matched `"ERR control socket not
     found"`, so the two other ERR-strings `send_command` can emit
@@ -436,7 +436,7 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
         return 0
     if reply.startswith("OK") and "state=error" in reply:
         # The engine rejected the swap (e.g., onnx load failed). Persist
-        # the user's intent anyway -- the verdict's prescription is
+        # the user's intent anyway -- the review's prescription is
         # "every non-state=done branch persists". On the next `woys run`
         # the user will see the same engine-side error, but at least it
         # will be reproducible and the config reflects what was asked.

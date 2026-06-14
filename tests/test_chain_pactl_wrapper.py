@@ -1,4 +1,4 @@
-"""review F-merged-009 (commit-070) bug-class test.
+"""bug-class test.
 
 Pre-fix `chain._pactl` was a thin `subprocess.run(["pactl", ...])`
 with NO `shutil.which` existence check, while its twin

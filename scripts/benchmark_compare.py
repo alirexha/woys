@@ -19,7 +19,7 @@ Outputs:
   --out-html: rendered HTML report with matplotlib charts (PNG, base64
               inline so the report is a single self-contained file).
 
-Hard Rule 9: every number in the output JSON comes from a measured
+Measurement policy: every number in the output JSON comes from a measured
 run. Versions that fail at import / build / cold-start have
 `status="..._failed"` in their per-rep entry and a JSON `null` for
 every measured field. The HTML report renders these as "N/A — <reason>"
@@ -723,7 +723,7 @@ code {background: #f0f0f0; padding: 1px 4px; border-radius: 3px;}
         f"in <code>{bench.get('json_path', '?')}</code> alongside this HTML.</li>\n"
     )
     html_chunks.append(
-        "<li><b>Honest-measurement policy (Hard Rule 9):</b> every number in "
+        "<li><b>Honest-measurement policy:</b> every number in "
         "this report comes from a measured run. Versions that failed at import "
         "/ build appear in the failure table below with the specific error "
         "and are excluded from the charts (rendered as N/A).</li>\n"
@@ -787,8 +787,8 @@ code {background: #f0f0f0; padding: 1px 4px; border-radius: 3px;}
         "    --tags v0.8.0 v0.14.3 HEAD \\\n"
         "    --reps 3 --warmup 8 --measure 40 \\\n"
         f"    --wav {bench.get('wav_path', 'tests/fixtures/auto_sweep_input.wav')} \\\n"
-        "    --out-json docs/26-review/benchmark-v0.x-to-v0.15.json \\\n"
-        "    --out-html docs/26-review/benchmark-v0.x-to-v0.15.html\n"
+        "    --out-json docs/benchmark-v0.x-to-v0.15.json \\\n"
+        "    --out-html docs/benchmark-v0.x-to-v0.15.html\n"
         "</pre>\n"
     )
     html_chunks.append("</body></html>\n")
@@ -813,12 +813,12 @@ def main() -> int:
     ap.add_argument(
         "--out-json",
         type=Path,
-        default=REPO_ROOT / "docs" / "26-review" / "benchmark-v0.x-to-v0.15.json",
+        default=REPO_ROOT / "docs" / "benchmark-v0.x-to-v0.15.json",
     )
     ap.add_argument(
         "--out-html",
         type=Path,
-        default=REPO_ROOT / "docs" / "26-review" / "benchmark-v0.x-to-v0.15.html",
+        default=REPO_ROOT / "docs" / "benchmark-v0.x-to-v0.15.html",
     )
     ap.add_argument(
         "--realtime-soak-tag",
@@ -942,7 +942,7 @@ def main() -> int:
     except Exception:
         pass
     # HEAD note.
-    notes.setdefault("HEAD", "review-phase6 branch tip (post-080 audit-driven hardening)")
+    notes.setdefault("HEAD", "hardening branch tip (post-080 hardening)")
     bench["per_version_notes"] = notes
 
     # Version-selection rationale (default text for the 3-anchor sweep).
@@ -958,15 +958,15 @@ def main() -> int:
         "current Python 3.11 + ORT venv.</li>\n"
         "<li><b>v0.14.3</b> — pre-audit 'good but rough' baseline. The last "
         "release before the current review cycle started. v0.14.0 was "
-        "the previous review-driven release (20 lenses); v0.14.1-3 were "
+        "the previous review-driven release; v0.14.1-3 were "
         "the RNNoise-chain stabilisation iterations (LESSONS §44-46). "
         "v0.14.3 is the rollback-stable post-RNNoise tip.</li>\n"
-        "<li><b>HEAD</b> — current branch (<code>review-phase6</code>, "
-        "post-commit-080). The audit-driven release-candidate state.</li>\n"
+        "<li><b>HEAD</b> — current branch (<code>hardening</code>, "
+        "post-commit-080). The release-candidate state.</li>\n"
         "</ul>\n"
         "<p>Versions <i>not</i> selected and why: v0.8.0 / v0.10.0 / "
         "v0.11.0 / v0.13.x are perf-and-stability milestones (clock-lock, "
-        "RNNoise, synthetic harness) but adding them turns 'compare audit "
+        "RNNoise, synthetic harness) but adding them turns 'compare review "
         "cycles' into a feature-history trace. v0.12.4 is the chunk_seconds "
         "default-flip release whose perf trade-off is documented in the project notes / "
         "LESSONS §42, but its delta vs v0.14.3 is captured in those docs "
@@ -1033,7 +1033,7 @@ def main() -> int:
             "the v0.14.2 incident where a PipeWire conf change passed all CI "
             "and broke YouTube + speakers in production, requiring a reboot to "
             "recover).</p>"
-            "<p>Hard Rule 9 ('measure or omit') applies: rather than fabricate "
+            "<p>The measure-or-omit policy applies: rather than fabricate "
             "soak numbers from a silence-only run, this report omits them and "
             "names the missing measurement explicitly. The harness's "
             "<code>--realtime-soak-tag</code> entry point is wired and ready; "

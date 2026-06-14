@@ -98,7 +98,7 @@ def test_print_hashes_does_not_crash_on_missing_cache(
     assert rc == 0
 
 
-# ---- review F-merged-003: integrity gate must be real + fail-closed ----
+# ---- integrity gate must be real + fail-closed ----
 
 
 class _FakeResponse:

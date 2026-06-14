@@ -6,10 +6,9 @@ should work on any modern Linux with PipeWire + an NVIDIA GPU.
 
 > **Honest disclaimer.** This is a personal project. I built it for my
 > own daily use; you're welcome to try it, but response time on issues
-> is best-effort. The codebase has been through two adversarial-audit
-> cycles (the most recent being v0.15.0, 213 findings, 80 fix commits);
-> the full audit workspace is preserved at `docs/26-review/` if
-> you want to know exactly what's been tested and what hasn't.
+> is best-effort. The codebase has been through two thorough review
+> passes (the most recent being v0.15.0, 213 findings, 80 fix commits);
+> see `CHANGELOG.md` for exactly what's been tested and what hasn't.
 > Original work is **All Rights Reserved** (see `LICENSE`); the
 > `src/server/` subtree carries MIT (see `src/server/LICENSE` and
 > `NOTICE`).
@@ -17,7 +16,7 @@ should work on any modern Linux with PipeWire + an NVIDIA GPU.
 ## Hardware requirements
 
 - **GPU:** NVIDIA RTX 2070 or better. The engine has been measured
-  on an RTX 2070 Mobile + i7-10750H (`docs/26-review/benchmark-v0.7-to-v0.15.html`).
+  on an RTX 2070 Mobile + i7-10750H.
   CUDA support is **required** — there's no CPU fallback (an honest
   hard-fail since v0.15.0; pre-v0.15.0 falling back to CPU silently
   was a P0 audit finding).
@@ -113,13 +112,13 @@ convert` exports it to `.onnx` for use with this engine. See
 
 ## Status (v0.15.0)
 
-v0.15.0 is the post-review hardening release: 36-lens
-adversarial audit, 213 unique findings, 80 fix commits over the
-v0.14.3 → v0.15.0 span. The cycle focused on **correctness,
-observability, UX, security, and legal hygiene**, not perf — so
-the latency / VRAM / cuts-per-minute numbers below carry forward
-unchanged from v0.12.4 / v0.14.x. See `CHANGELOG.md` § [0.15.0]
-for the full set of fixes, deferred items, and audit transparency.
+v0.15.0 is a hardening release: a multi-area code review across
+**correctness, observability, UX, security, and legal hygiene**,
+with 213 findings and 80 fix commits over the v0.14.3 → v0.15.0
+span. It focused on robustness, not perf — so the latency / VRAM /
+cuts-per-minute numbers below carry forward unchanged from
+v0.12.4 / v0.14.x. See `CHANGELOG.md` § [0.15.0] for the full set
+of fixes and deferred items.
 
 Daily-use ready on RTX 2070 Mobile. The user's perceptual A/B
 test (Desktop WAV listening) ratified the v0.12.3 sweep top-1
@@ -182,9 +181,7 @@ A fork-and-trim of [w-okada/voice-changer](https://github.com/w-okada/voice-chan
   weights + sample voice are ~760 MB total).
 
 See `docs/05-perf.md` for the actual measured numbers (some targets are
-currently missed; the path to closing the gap is documented). See
-`docs/26-review/benchmark-v0.7-to-v0.15.html` for the v0.15.0
-cross-version benchmark on RTX 2070 + i7-10750H.
+currently missed; the path to closing the gap is documented).
 
 ## Hooking up apps
 

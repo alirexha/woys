@@ -38,7 +38,7 @@ detection floor.
   §23 warned against ("any X% perf-win claim on a benchmarked-once
   result deserves a 200-pass second confirmation").
 - **Re-evaluate now** — would resolve `provisional` to `accepted`
-  in either direction. Estimated 6 h per `phase4-verdicts.md` C288
+  in either direction. Estimated 6 h per the review notes
   (per-voice spectral-QA across the foundation voice set).
 - **Drop fp16 ContentVec code path entirely** — reduces surface area.
   But preserves an option for a future evaluation where the saving

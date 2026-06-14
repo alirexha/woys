@@ -15,7 +15,7 @@ PipeWire stream's RT process callback via memcpy from a ring buffer.
 
 `docs/19-pw-investigation.md` is the chronological record of how we
 got here; `LESSONS.md` §24 summarises the engineering decision.
-Lens 08 of the v0.7.x audit (`docs/16-audit/synthesis.md`) found
+area 08 of the v0.7.x review found
 voice-correlated, sample-exact zero gaps quantised to ~21.33 / 42.67
 ms in the cut signature on Telegram VOIP — exactly one PipeWire
 quantum at 1024/48000. `pw-cat` reads stdin synchronously inside its

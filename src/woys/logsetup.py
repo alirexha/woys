@@ -1,4 +1,4 @@
-"""review F-merged-014 (P1): the single place woys configures logging.
+"""the single place woys configures logging.
 
 Pre-fix `logging.getLogger("woys.*")` was called in `tui/hotkey.py` and
 `tui/control.py`, but no handler / `basicConfig` was ever configured

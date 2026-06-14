@@ -1,4 +1,4 @@
-"""review F-05-01: SO_PEERCRED UID check on the control socket.
+"""SO_PEERCRED UID check on the control socket.
 
 Pre-fix `ControlServer._loop` did `accept()` and dispatched the
 command without checking the peer's credentials. The 0600 socket-

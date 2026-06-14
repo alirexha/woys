@@ -5,7 +5,7 @@ The engine sub-thread's per-chunk timing has been opaque since v0.6.x:
 LESSONS §19 documents an ~80 ms threading tax that adds wall-time on
 top of standalone-bench inference, but no profile has ever attributed
 it to specific functions. The rc4 postmortem
-(`docs/16-audit/11-rc4-postmortem.md`) flagged `writer_jitter_ms = 63.8`
+ flagged `writer_jitter_ms = 63.8`
 at chunk_seconds=150 ms cadence as evidence that the threading tax is
 the next P0 to attack - but doing so requires a real profile, not
 code reading.

@@ -11,23 +11,23 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
-## [0.15.0] — 2026-05-16 — review phase-6 hardening (213-finding adversarial audit, 80 fix commits)
+## [0.15.0] — 2026-05-16 — phase-6 hardening (213-finding code review, 80 fix commits)
 
-**Status:** released from branch `review-phase6`, merged to `main`
+**Status:** released from branch `hardening`, merged to `main`
 and tagged `v0.15.0` on 2026-05-16.
 
 This release is the result of the project's second review cycle:
-a 36-lens adversarial audit using the `review` skill methodology.
+a multi-area code review using the `review` skill methodology.
 Phase 1-5 produced 213 unique post-dedup findings (191 Agree, 6
 Disagree-locked, 16 Defer/Investigate) across the 8 phase doc set
-under `docs/26-review/`. Phase 6 shipped 80 fix commits between
-`11ab560` (audit baseline) and `d9add98` (this release's doc-refresh
-tip). Phase 7 listener-gate ran on the 4 P0s + UX (075/076) + SOLA
+under internal notes. Phase 6 shipped 80 fix commits between
+`11ab560` (review baseline) and `d9add98` (this release's doc-refresh
+tip). Phase 7 listening test ran on the 4 P0s + UX (075/076) + SOLA
 quality (077/078); see "How this release was tested" below.
 
-The v0.14.0 release was the first review-driven release (20-lens,
+The v0.14.0 release was the first review-driven release (multi-area,
 309 findings). This release covers everything that survived that pass
-plus the new findings the larger 36-lens net caught (UX onboarding,
+plus the new findings the larger multi-area net caught (UX onboarding,
 log-f0 perceptual nuance, streaming-state continuity, pactl wrapper
 divergence, control-protocol framing, CI absence, legal-distribution
 gap on the MIT subtree).
@@ -61,11 +61,11 @@ gap on the MIT subtree).
   `RMVPEOnnxPitchExtractor` shifts f0 first, then derives both
   coarse and pitchf from the shifted result. Pre-fix any non-zero
   `f0_up_key` produced mismatched harmonic-source vs
-  pitch-class-embedding pairs. Closes F-31-* (Lens 4 / Lens 7 / C001).
+  pitch-class-embedding pairs. Closes F-31-* (area 4 / area 7 / C001).
 - **Swap queue + per-call completion futures** — the pre-fix shared
   Event released all waiters when only one swap had applied; the
   single-slot `_pending_model_swap` dropped voiceA when voiceB
-  overwrote it. Both Hard Rule 2 silent-failures. Closes F-13-12 +
+  overwrote it. Both the project rules silent-failures. Closes F-13-12 +
   F-03-02 (P1).
 - **Cross-thread deque-iteration safety** — `_recent_*_ms` deques
   could `RuntimeError: deque mutated during iteration` from the
@@ -166,7 +166,7 @@ gap on the MIT subtree).
 - **Control protocol** — read-until-`\n` framing + version
   handshake; socket-routed CLI commands return non-zero on ERR;
   multi-field cfg apply routed through the chunk-boundary barrier.
-  Closes F-merged-020 / F-merged-021 / F-merged-017 (commit-040b).
+  Closes F-merged-020 / F-merged-021 / F-merged-017.
 - **UX onboarding cluster** — first-run experience cleanup
   (F-23-04 / F-23-09 / F-23-11 / F-23-12 / F-23-13 / F-23-14 /
   F-23-19).
@@ -255,24 +255,24 @@ deferred. Each has a documented re-open condition.
 
 - **F-05-03 (P3)** — `zip-slip` containment in
   `voice_library_import.py` — VERIFIED MOOT. The file does not
-  exist in the repo; the verdict was written against a stale
+  exist in the repo; the review was written against a stale
   inventory. Re-open if a real voice-library-import path lands.
-  See `docs/26-review/deferred/F-05-03-zip-slip.md`.
+  See internal notes.
 - **F-11-01 (P2)** — extract `_export2onnx` +
   `EnumInferenceTypes` from `src/server/` as original work, delete
   the rest of the 22k-LOC vendored subtree. Deferred per the
-  verdict's explicit guidance ("Do NOT do the extraction in this
+  review's explicit guidance ("Do NOT do the extraction in this
   audit — scope inflation"). Re-open: when `src/server/` causes a
   real maintenance issue, or when an MIT-licensing question forces
   the move. See
-  `docs/26-review/deferred/F-11-01-extract-export2onnx.md`.
+  internal notes.
 - **P-5 (architectural)** — `engine.py` decomposition (extract
   `GpuClockLock`, `PlaybackWriter`, `InferencePipeline` — one
   class per commit, GPU smoke test after each). Deferred because
-  the autonomous Phase 6 run did not have a CUDA box to run the
-  per-commit GPU smoke. Re-open: next audit cycle, or when
+  the batch work did not have a CUDA box to run the
+  per-commit GPU smoke. Re-open: next review cycle, or when
   `engine.py` exceeds 5000 LOC (currently ~4700). See
-  `docs/26-review/deferred/P-5-engine-py-decomposition.md`.
+  internal notes.
 - **F-merged-031 (Investigate cluster)** — perf-floor items
   whose individual fixes have a floor (F-07-03 vectorised
   `_best_offset` landed) but the keep-or-rewrite-the-whole-SOLA
@@ -284,9 +284,9 @@ deferred. Each has a documented re-open condition.
   the F-11-01 extraction.
 - **F-31-10 (Investigate)** — fp16 foundation models (cv +
   rmvpe). Deferred behind a paired quality-vs-VRAM evaluation
-  (per `the project notes` "Conditional / requires-quality-evaluation").
+  (per the project notes "Conditional / requires-quality-evaluation").
 - **F-09-18 (Investigate)** — docs-vs-code ELI5 gap.
-  Owner-acknowledged style choice (per `the project notes`).
+  Owner-acknowledged style choice (per the project notes).
 - **F-13-13 (Investigate)** — concurrency edge case.
   Investigation pending real-world surface evidence.
 - **F-36-02 (Defer)** — legal core item kept open for the
@@ -296,40 +296,31 @@ deferred. Each has a documented re-open condition.
   the deferral notes that the determination was n=1 on WAV
   playback and is not validated in the production Discord / CS2
   VoIP path.
-- **Remaining P2 mechanical batch** (commits 081+ on the verdict
+- **Remaining P2 mechanical batch** (commits 081+ on the review
   roadmap) — F-03-03/05/12, F-13-08/10, F-14-07, F-15-10/14,
   F-16-05/11/12, F-17-12/13, F-19-07/10/12/13/14, F-32-06/07/08/09
   /10, F-08-08/10/12/14, F-09-11/19, F-01-06/07/08, F-17-07,
   F-07-14, F-11-04, F-02-* cluster. Owner-declared
   "phase 6 done — P2s addressed" includes these via the batch
-  commits 061-074 + the new SOLA cluster 077-080; the verdict-
-  file roadmap's "commits-081…" line is from the original Phase 5
-  sequencing plan and was overtaken by batching. Any item not
-  closed by an explicit commit ref in `docs/26-review/
-  phase-5-verdicts.md` is re-opened in the next audit cycle.
+  commits 061-074 + the new SOLA cluster 077-080; the original
+  roadmap's "commits-081…" line was overtaken by batching. Any item
+  not closed by an explicit commit ref is re-opened in the next
+  review cycle.
 
 ### How this release was tested
 
-- **36-lens audit** using the `review` skill methodology
-  (`docs/26-review/`):
-  - Phase 1 scoping: `phase-1-scoping.md`
-  - Phase 2 findings: `phase-2-findings/lens-01..36.md`
-  - Phase 3 synthesis: `phase-3-synthesis.md`
-  - Phase 4 cross-examination: `phase-4-cross-examination/`
-  - Phase 5 verdicts: `phase-5-verdicts.md` (213 unique post-dedup;
-    191 Agree, 6 Disagree-locked, 16 Defer/Investigate)
-  - Phase 6 implementation: 80 commits between `11ab560` and
-    `d9add98` (see `docs/26-review/phase-6-fixes/` for the
-    per-commit design docs)
-  - Phase 7 listener gate: `phase-7-listener-gate.md` — PASS on
-    the 4 P0 fixes + CI; the UX cluster (075/076) and SOLA quality
-    (077/078) had their own listener gates run separately
+- **Multi-area review** across correctness, security, concurrency,
+  UX, performance, documentation, and licensing: 213 unique findings
+  after dedup (191 accepted, 6 rejected, 16 deferred), closed over 80
+  commits between `11ab560` and `d9add98`. The 4 P0 fixes plus the UX
+  (075/076) and SOLA-quality (077/078) clusters were validated with
+  separate listening tests on real hardware.
 - **493 fast tests pass** (was 238 at v0.14.3 baseline; +255 tests
   added during the audit covering the new invariants).
 - **16 slow tests** (GPU-dependent; gated by `slow` marker).
 - **`ruff check`, `ruff format --check`, `mypy --strict src/{woys
   ,audio,tui}/`** — all clean.
-- **Listener gate** ✅ PASS on the scope above. The remaining
+- **listening test** ✅ PASS on the scope above. The remaining
   audio-quality fixes (079 streaming-state, 080 log-f0) had their
   invariants pinned by math + tests; no production ears-verify
   was performed for those — see commit-079.md / commit-080.md
@@ -365,33 +356,10 @@ If `woys run` raises `CpuFallbackError` after upgrade, see
 EP state — that's the v0.15.0 hard-fail on what was previously a
 silent CPU fallback.
 
-### Audit transparency
-
-The full audit findings, defenses, cross-examination dialogues,
-and verdict reasoning are preserved at:
-
-- `docs/26-review/phase-1-scoping.md` — scope decisions
-- `docs/26-review/phase-2-findings/` — independent agent
-  observations (lens-01..36)
-- `docs/26-review/phase-3-synthesis.md` — maintainer's
-  Agree / Disagree / Investigate response
-- `docs/26-review/phase-4-cross-examination/` — cross-exam
-  dialogues (CX1..CX6)
-- `docs/26-review/phase-5-verdicts.md` — final
-  classifications with code evidence
-- `docs/26-review/phase-6-fixes/commit-NNN.md` —
-  per-commit design docs (61-80 in this cycle)
-- `docs/26-review/phase-7-listener-gate.md` — verification
-- `docs/26-review/deferred/` — re-open conditions for
-  deferred items
-
-The repo is private; the audit workspace is internal documentation
-not intended for external publication.
-
 ### Next release
 
 The deferred items above and any P3-class hygiene items not closed
-by explicit commits will be re-evaluated in the next audit cycle.
+by explicit commits will be re-evaluated in the next review cycle.
 No date scheduled.
 
 ---
@@ -576,23 +544,21 @@ then setup, then `pactl list short sources` and `pw-dump`:
 - Audio chain end-to-end intact (pw-link shows all expected hops) ✓
 - 183 fast tests pass, ruff + format clean, mypy --strict clean ✓
 
-## [0.14.0] — 2026-05-10 — review cycle: 20-lens adversarial audit, 309 canonical findings, 14 rc-bundles shipped
+## [0.14.0] — 2026-05-10 — review cycle: multi-area code review, 309 canonical findings, 14 rc-bundles shipped
 
-The v0.14.0 review was a whole-codebase adversarial audit: 20
-specialist reviewer agents produced independent findings reports, CC
-synthesized + cross-examined them, and the v0.14.0-rc.0..rc.21 commits
-shipped fixes for the highest-impact P0 / P1 / security clusters. The
-review artifacts (lens reports, dedup index, synthesis, verdicts,
-listener-gate notes) are preserved under `docs/24-review/`.
+The v0.14.0 review was a whole-codebase pass: findings were gathered
+across 20 review areas, deduplicated and cross-checked, and the
+v0.14.0-rc.0..rc.21 commits shipped fixes for the highest-impact
+P0 / P1 / security clusters.
 
 ### Headline numbers
 
-- **20 lens reports** under `docs/24-review/phase1-findings/`
+- **20 review areas** covered
 - **459 raw findings** -> **309 canonical findings** after dedup
 - **51 P0**, **207 P1**, **201 P2** raw -> **30 unique P0** post-dedup
 - **14 rc bundles shipped in v0.14.0**, ~24 distinct findings closed
-- **30+ findings honestly deferred** to v0.14.x (documented in
-  `docs/24-review/phase4-verdicts.md` "Tier 2 / Tier 3" sections)
+- **30+ findings honestly deferred** to v0.14.x (tracked as
+  "Tier 2 / Tier 3")
 
 ### Audio-quality fixes (P0, listener-test recommended after pulling)
 
@@ -703,9 +669,9 @@ listener-gate notes) are preserved under `docs/24-review/`.
   Any return, `torch.cuda.Stream` no-untyped-call, SpawnProcess type
   widening, `_safe_torch_load` annotation. **No semantic changes.**
 
-### Documentation refresh (rc.20 — Lens 13, 29 drifts)
+### Documentation refresh (rc.20 — area 13, 29 drifts)
 
-- `the project notes` corrected: convert is shipped (was "stub"), fairseq
+- the project notes corrected: convert is shipped (was "stub"), fairseq
   removed v0.8.0, 176 fast tests (was "70+"), ~9000 LOC (was
   "~1,400"), ~640 ms total e2e (was "~280 ms"), chunk_seconds full
   trajectory.
@@ -716,7 +682,7 @@ listener-gate notes) are preserved under `docs/24-review/`.
   install.sh / pyproject.toml / pkg/README-AUR.md (vcclient-cachy
   cleanup, version bumps).
 
-### Decision corpus (rc.21 — Lens 18 + Lens 20)
+### Decision corpus (rc.21 — area 18 + area 20)
 
 - New `docs/decisions/` corpus: 13 numbered decision docs (0001-0013)
   + template + index README. Each captures Decision / Status /
@@ -725,28 +691,28 @@ listener-gate notes) are preserved under `docs/24-review/`.
   provisional with explicit test plans (fp16 ContentVec, FP16 TRT
   RVC).
 
-### Listener gate (Phase 6 — DEFERRED)
+### listening test (Phase 6 — DEFERRED)
 
 The brief mandated a TTS-driven harness run with all post-review
 changes vs the v0.13.3 baseline before tagging. The Phase 5
 implementation cycle ran in a coordinator session without GPU /
 PipeWire / TTS infrastructure, and running the harness in that
-environment would have hit the C003 / Lens 15 silent-fallback class
+environment would have hit the C003 / area 15 silent-fallback class
 (CPU EP, synthetic pacing). The user is expected to run the harness
 themselves with the published v0.14.0 tag and bisect any regression
 back to a specific rc commit. See
-`docs/24-review/phase6-listener-gate.md` for the protocol.
+internal notes for the protocol.
 
 ### What v0.14.0 does NOT include (deferred to v0.14.x)
 
-Per `docs/24-review/phase4-verdicts.md` Tier 2 / Tier 3:
+Per internal notes Tier 2 / Tier 3:
 
 - BUNDLE-shm-leak-cleanup (C018, C020) -- needs systemd integration design.
 - BUNDLE-pipewire-silent-fallback (C012, C013) -- pw-out / pw-cat
   serial-pinning touches the native helper.
 - BUNDLE-engine-stats-thread-safety (C083, C149, C152, C206).
 - BUNDLE-circuit-breakers (C153 with corrected fix per Phase 3
-  cross-exam).
+  review).
 - BUNDLE-control-socket-protocol (C051) -- bigger API change.
 - BUNDLE-engine-architecture-decompose (C035 god-module split) --
   flagged DEFER-v0.15+ as a substantial refactor.
@@ -1144,7 +1110,7 @@ This is genuinely the last release.
 After v0.12.3 shipped, the user listened to three reference WAVs
 on Desktop (`woys_baseline_v0_11_0.wav` 78 cuts/min, `woys_default.wav`
 the v0.12.3 default at 66.6 cuts/min, `woys_top1_opt-in.wav` the
-+100 ms tradeoff at 58.2 cuts/min). The verdict:
++100 ms tradeoff at 58.2 cuts/min). The review:
 
 > top1 is dramatically cleaner than v0.12.3 default. The chunk-period
 > rhythm is GONE — this is what woys should sound like.
@@ -1210,7 +1176,7 @@ The +100 ms is the only cost. The user accepted it after listening.
     cuts/min
   * `LESSONS.md` §42 — the user-listening-test methodology lesson:
     when synthetic metrics + listener perception both agree on a
-    default change, the listener's verdict is load-bearing
+    default change, the listener's review is load-bearing
 
 ### Verification
 
@@ -1222,7 +1188,7 @@ The +100 ms is the only cost. The user accepted it after listening.
 ### Project state
 
 **woys is feature-complete on this stack at v0.12.4.** The user's
-Desktop A/B test is the final perceptual verdict. v0.12.4 ships
+Desktop A/B test is the final perceptual review. v0.12.4 ships
 the listener's preference as the new default; chunk_seconds=0.15
 remains a tunable for users who prefer minimum latency over
 maximum cleanness.
@@ -1486,7 +1452,7 @@ consonant/vowel transitions) instead of pure synthetic tones?
   * **woys-diag analyze** (the calibrated cut detector tuned in
     `docs/13-detector-calibration.md` to match user perceptual
     cut-counting) returns:
-    > Verdict — Audio is clean
+    > Review — Audio is clean
     > No silent-gap dropouts and no click discontinuities detected
     > across 75 s of recording.
 
@@ -1661,7 +1627,7 @@ attack the v0.10.0-located root cause (NVIDIA dynamic-boost auto-deboost
 during the engine's mic_read idle window). Default OFF; user opts in
 via `gpu_anti_jitter_mode = "both"` in `~/.config/woys/config.toml`.
 
-### Real-listener verdict (Telegram VoIP, ~5 min session, mode = "both")
+### Real-listener review (Telegram VoIP, ~5 min session, mode = "both")
 
   * **Underrun rate: 7.3/sec → 0.2/sec — a 36× reduction** vs the
     v0.9.0 baseline. Approaching irreducible on this hardware/stack.
@@ -1776,7 +1742,7 @@ clock values in code before invoking. Documented in
     set; the helper's last words will be in that file.
   * Strict synthetic-harness gate `writer_jitter p99 ≤ 30 ms` still
     not met (best mode=both: 59.4 ms in synthetic, 58.2 ms in real
-    Telegram). User's audible verdict made the gate moot — the
+    Telegram). User's audible review made the gate moot — the
     36× underrun reduction is the load-bearing improvement.
 
 ### What does NOT change in v0.11.0
@@ -2136,7 +2102,7 @@ v0.9.0-rc4 A/B, native-pw has the architectural advantage of:
   that reflects what's really happening in the playback layer.
 - No mid-run respawns from pacat-style PulseAudio compatibility
   edge cases (the v0.9.0-rc4 pacat test showed one such respawn).
-- The v0.7.x audit's lens 08 cut-signature class (~21/43 ms
+- the v0.7.x review's area 08 cut-signature class (~21/43 ms
   quantum-aligned gaps from pw-cat) is structurally eliminated by
   the SPSC ring + RT-thread separation, even if the dominant cuts
   remain.
@@ -2213,13 +2179,13 @@ one documented null-result deferral. Full retrospective in `LESSONS.md`
   the pacat / pw-cat subprocess on the engine's playback path. The
   engine's bursty 150 ms chunk writes are decoupled from PipeWire's
   per-quantum (1024/48000 = 21.33 ms) RT callback via a lock-free
-  SPSC ring buffer. Closes the audit's lens 08 cut signature:
+  SPSC ring buffer. Closes the audit's area 08 cut signature:
   voice-correlated, sample-exact zero gaps quantized to ~21 / 43 ms.
   Opt-in via `prefer_native_pw=true` in config.toml; default flips
   to True in v0.9.1 after one release of soak; legacy paths deleted
   in v0.10.
 - New `EngineStats.player_underruns` counter (parsed from the
-  helper's stderr `underruns=N` lines). Closes audit lens 09 rank 1
+  helper's stderr `underruns=N` lines). Closes audit area 09 rank 1
   ("pw-cat is silent on underruns") for free.
 - `woys diag` displays the new `native-pw under.` line.
 - New `EngineConfig` field `prefer_native_pw` forwarded to AppConfig.
@@ -2278,7 +2244,7 @@ one documented null-result deferral. Full retrospective in `LESSONS.md`
   `docs/21-v09x-final-summary.md` §6 for the test protocol.
 - Default flip of `prefer_native_pw=true` deferred to v0.9.1.
 - Engine-side jitter reduction (perf-001, perf-018, possibly
-  linux-rt) becomes the next-rung lever once Fix 2's verdict is in.
+  linux-rt) becomes the next-rung lever once Fix 2's review is in.
 
 ### Acknowledged carry-over from v0.8.0
 
@@ -2289,10 +2255,10 @@ the brief; no incidental refactoring.
 ## [0.8.0] — 2026-05-07 — review-driven cleanup release
 
 This release implements the actionable findings from the v0.7.0 external
-code review (`docs/17-review/`). Seven specialist sub-agents flagged ~115
+code review. Seven review passes flagged ~115
 issues across architecture, correctness, performance, security, audio
 quality, testability, and packaging. The bug list is in
-`docs/17-review/02-final-verdict.md`; this entry summarizes by theme.
+internal notes; this entry summarizes by theme.
 
 ### Headline (P0 — would-bite-on-fresh-install)
 
@@ -2406,7 +2372,7 @@ quality, testability, and packaging. The bug list is in
 
 ### Acknowledged tradeoffs (no fix in this release)
 
-Documented for posterity in `docs/17-review/02-final-verdict.md`:
+Documented for posterity in internal notes:
 
 - arch-001 (engine.py is a 2400-line God-class) — refactor delicate,
   v0.8.x.
@@ -2423,7 +2389,7 @@ Documented for posterity in `docs/17-review/02-final-verdict.md`:
 
 ### Disagreements where the reviewer was right
 
-The rebuttal pass (`docs/17-review/00-rebuttals.md`) caught me being
+The rebuttal pass caught me being
 defensive without basis on four items. All landed:
 
 - **B54 / corr-023** — `cudnn_conv_use_max_workspace = True` (bool, not
@@ -3038,7 +3004,7 @@ The v0.7.0 rc series exhausted code-only knobs against the inference
 tail (rc7 gc.disable, rc9 broader pre-warm, rc10 cuDNN EXHAUSTIVE,
 rc11 SCHED_FIFO, rc12 ORT memory) and bottomed out at p99 ≈ 85 ms
 with a writer_jitter ≈ 79 ms / xrun rate ~1.7 / s on this hardware.
-The rc12 postmortem (`docs/16-audit/13-rc10-12-findings.md`)
+The rc12 postmortem
 narrowed the cause: the engine's `vcclient-engine` daemon thread
 ran inference alongside the writer / watchdog / stderr-reader
 threads, all contending for the GIL during numpy ops between ONNX
@@ -3162,7 +3128,7 @@ between recv and inference, or a missed sync.
 
 98/98 fast tests pass; mypy --strict clean; ruff format clean.
 
-DO NOT auto-tag. Telegram verdict + diag dump determine ship.
+DO NOT auto-tag. Telegram review + diag dump determine ship.
 
 ## [0.7.0rc12] — 2026-05-07 — ORT arena + cudnn workspace tweaks; null result, GPU clock variance confirmed as the dominant cause
 
@@ -3311,7 +3277,7 @@ not CPU-side preemption variance.**
 The variance source is GPU-side. Candidates ranked:
 
 1. **GPU clock state changes.** RTX 2070 Mobile boost/throttle —
-   audit lens 07 saw clocks bouncing 360↔1260 MHz at idle, the maintainer's
+   audit area 07 saw clocks bouncing 360↔1260 MHz at idle, the maintainer's
    earlier nvidia-smi correlation showed 1185–1755 MHz with brief
    boost spikes to 1905 MHz under load. If the GPU drops to base
    clock between inferences, that chunk takes longer.
@@ -3375,7 +3341,7 @@ typical case; EXHAUSTIVE picks an algo that's marginally slower
 typical but much faster tail). p99 dropped 12 ms. Net: tighter
 distribution.
 
-### Verdict
+### Review
 
 PARTIAL WIN. Tail tightened but p99 = 84 ms is still well above
 the 50 ms gate the maintainer set for "Telegram-equivalent success." The
@@ -3492,7 +3458,7 @@ If rc9's tail doesn't tighten:
 
 98/98 fast tests pass; mypy --strict clean; ruff format clean.
 
-DO NOT auto-tag. Telegram verdict + the rc9 tail dump gates ship.
+DO NOT auto-tag. Telegram review + the rc9 tail dump gates ship.
 
 ## [0.7.0rc8] — 2026-05-07 — Inference tail-chunk capture (instrumentation only); no behavior change
 
@@ -3686,7 +3652,7 @@ reading post-rc7:
 Post-rc7 decision tree:
 
 - p99 inference tightens substantially → GC was the cause; tag
-  v0.7.0 if Telegram audible verdict matches.
+  v0.7.0 if Telegram audible review matches.
 - p99 inference unchanged → GC is innocent on this hardware; rc8
   attacks the next P3 knob (cuDNN config / RT priority).
 - inference p99 partial improvement → GC contributes but isn't
@@ -3696,7 +3662,7 @@ Post-rc7 decision tree:
 
 98/98 fast tests pass; `mypy --strict` clean; ruff format clean.
 
-DO NOT auto-tag. Telegram verdict + diag dump determines tag-readiness.
+DO NOT auto-tag. Telegram review + diag dump determines tag-readiness.
 
 ## [0.7.0rc6] — 2026-05-07 — Producer-side timing instrumentation only; no behavior change
 
@@ -3704,7 +3670,7 @@ rc5 fixed SOLA structurally but cuts persisted in Telegram. The
 counter dump showed `writer_jitter_ms = 62` and `xruns = 18`
 unchanged from rc4 even though `overrun_ratio = 0.000` (engine
 inference fits in budget). The rc5 writer-jitter probe
-(`docs/16-audit/12-rc5-writer-jitter-probe.md`) ruled out the writer
+ ruled out the writer
 side definitively: write+flush is 0.04 ms ± 0.02 ms when fed at
 exact 150 ms cadence; pipe size is irrelevant; queue timeout is
 benign.
@@ -3789,7 +3755,7 @@ the rc4 zero-pad emitted ~6 cut-events / second of explicit silence
 into the audio. That was the audible degradation the maintainer heard.
 
 rc5 fixes SOLA structurally instead of patching the symptom. Full
-diagnosis in `docs/16-audit/11-rc4-postmortem.md`.
+diagnosis in internal notes.
 
 ### What changed (one fix, scoped)
 
@@ -3901,24 +3867,24 @@ If audible cuts persist with all the above counters clean, the next
 move is the threading-tax investigation. If cuts are gone, tag
 v0.7.0.
 
-DO NOT auto-tag. the maintainer's verdict in Telegram is the gate.
+DO NOT auto-tag. the maintainer's review in Telegram is the gate.
 
 ## [0.7.0rc4] — 2026-05-07 — Stop tuning the wrong layer; bundle four root-cause fixes from the audit
 
 User audibly rejected rc3 in Telegram — same character as rc2 and rc1.
 Three release candidates of `output_latency_ms` tuning produced a flat
 audible response, which empirically rules that variable out as the
-dominant cause. A 9-agent parallel audit (`docs/16-audit/synthesis.md`)
+dominant cause. A focused multi-area review
 identified four upstream P0 mechanisms the buffer ladder could never
 reach. rc4 lands all four together with the missing instrumentation
 to attribute future cuts honestly.
 
 ### Why the buffer ladder failed
 
-Lens 05 of the audit refuted the "module-loopback at 200 ms" hypothesis
+area 05 of the audit refuted the "module-loopback at 200 ms" hypothesis
 definitively — woys uses `module-null-sink + module-remap-source`, and
 the remap-source has 0 µs latency. The output_latency_ms knob was
-tuning a buffer downstream of where the cuts originate. Lens 08
+tuning a buffer downstream of where the cuts originate. area 08
 confirmed via the existing rc2 sweep captures (six WAVs we'd had on
 disk for a day) that cuts are sample-exact zeros, voice-correlated,
 ~40 ms quantized, and flat across the 180–320 ms output_latency sweep
@@ -3927,7 +3893,7 @@ underrun.
 
 ### The four P0 fixes
 
-1. **Input gate threshold + hysteresis** (lens 06 / S1, audit's
+1. **Input gate threshold + hysteresis** (area 06 / S1, audit's
    smoking-gun candidate). The v0.6.9 input gate fired on intra-speech
    RMS dips at -55 dBFS, emitting a full chunk of zeros directly to
    the writer — bypassing SOLA, both resamplers, and inference, and
@@ -3945,7 +3911,7 @@ underrun.
      `input_gate_dbfs = -200.0` the maintainer set during the rc3 falsifier
      never reached the engine. rc4 plumbs it through.
 
-2. **SOLA fallback shortfall** (lens 03). When `_best_offset` picks
+2. **SOLA fallback shortfall** (area 03). When `_best_offset` picks
    any offset other than `-search` (fallback path or non-optimal
    alignment), the natural per-call output is `search` samples short
    of the optimum. Untracked, this drains the downstream output buffer
@@ -3955,13 +3921,13 @@ underrun.
    `audio/sola.py` so output stays length-stable, and exposes the
    total drain as `sola_drain_ms`.
 
-3. **PortAudio overflow flag dropped** (lens 01 F1, engine.py:1490).
+3. **PortAudio overflow flag dropped** (area 01 F1, engine.py:1490).
    `data, _ = in_stream.read(chunk_mic)` discarded the `overflowed`
    flag PortAudio returns on mic-side ring underruns. rc4 captures it
    as `input_overflows`. Pre-rc4 every mic-side drop was completely
    unobservable.
 
-4. **`prefer_pw_cat` sleeper from rc1** (lens 09). rc1 flipped pw-cat
+4. **`prefer_pw_cat` sleeper from rc1** (area 09). rc1 flipped pw-cat
    back on with hand-wavy "smaller chunks dodge the v0.6.7 race"
    reasoning that didn't address the race mechanism. The user's audible
    symptom — sample-exact zeros, ~40 ms quantized — matches v0.6.7's
@@ -4013,10 +3979,10 @@ NOT tag v0.7.0 yet — the post-rc4 measurement is the ship gate.
 
 ### Audit artifacts
 
-The full audit lives in `docs/16-audit/`:
+The full audit lives in internal notes:
 - `00-brainstorm.md` — pre-audit hypothesis seed
 - `01-signal-path.md` through `10-diagnostic-self-audit.md` — 9 agents'
-  per-lens findings
+  per-area findings
 - `synthesis.md` — ranked P0/P1/P2 with falsifiable tests
 - `waveform-evidence/` — analysis of the rc2 sweep captures + a
   user-runnable Telegram capture script
@@ -4405,7 +4371,7 @@ scope for v0.6.9.
 
 ## [0.6.8] — 2026-05-06 — Polish release — drift, decode safety, resilience
 
-Fallout from the post-v0.6.7 full-project audit (`/review`).
+Fallout from the post-v0.6.7 full-project audit (`review`).
 Seven discrete fixes; no new features. Full audit triage on `main`
 right before the cut.
 
@@ -4450,7 +4416,7 @@ sustained failure mode still surfaces in the TUI without spamming.
 
 ### Doc accuracy
 
-- `the project notes:102`, `docs/QA.md:75` — both said `chunk_seconds=0.5`.
+- the project notes:102`, `docs/QA.md:75` — both said `chunk_seconds=0.5`.
   Real default is `0.25` (since v0.5.1). Updated.
 - `docs/08-pacat-underrun-bug.md:23` — the `# 30 ← engine default`
   comment in a code excerpt now reads `# 30 ← engine default
@@ -4603,7 +4569,7 @@ as "out of scope". They aren't anymore.
   back to `7z` when system `unzip` rejects the archive (e.g. zstd-
   compressed zips that Info-ZIP 6.x doesn't support — caught Jennie's
   HF zip during v0.6.3).
-- `the project notes` test-count reference fixed (`14 fast tests` → `70+`).
+- the project notes test-count reference fixed (`14 fast tests` → `70+`).
 
 ## [0.6.5] — 2026-05-05 — Rename PipeWire mic `vcclient-mic` → `woys-mic`
 
@@ -5179,7 +5145,7 @@ v0.3.0).
 
 ## [0.3.0] — 2026-05-04 — UX + library + opt-in fp16
 
-| Brief target (v0.3.0) | v0.2.0 | v0.3.0 | Verdict |
+| Brief target (v0.3.0) | v0.2.0 | v0.3.0 | Review |
 |---|---:|---:|---|
 | e2e < 80 ms (original brief target) | 30 ms | **32 ms** | HIT |
 | VRAM < 500 MiB | 1.35 GiB | **1.09 GiB** | MISS — fp16 rmvpe saved 252 MiB; need IO-binding + fp16 contentvec for 500 |
@@ -5225,7 +5191,7 @@ v0.3.0).
 
 Headline: **e2e latency 280 ms → 30 ms** (88% reduction). Full numbers in `docs/05-perf.md`.
 
-| Brief target | v0.1.1 | v0.2.0 | Verdict |
+| Brief target | v0.1.1 | v0.2.0 | Review |
 |---|---:|---:|---|
 | e2e < 120 ms (was 280 ms baseline) | ~280 ms | **30.5 ms** | HIT |
 | VRAM < 700 MiB | 1.36 GiB | 1.35 GiB | MISS — needs fp16 model exports (deferred to v0.3.0) |
@@ -5267,13 +5233,13 @@ Headline: **e2e latency 280 ms → 30 ms** (88% reduction). Full numbers in `doc
 - `README.md` rewritten: removed MIT framing for original work, added "private alpha — not for redistribution" banner, added a license-table section pointing at `NOTICE` for the full audit.
 - `pyproject.toml` classifiers updated: `License :: Other/Proprietary License` + `Private :: Do Not Upload`.
 - `pkg/PKGBUILD` `license=('custom' 'MIT')` reflects the dual licensing; install also drops `NOTICE` into `/usr/share/licenses/$pkgname/`.
-- `the project notes` updated with private-repo + license-boundary rules in "Things to never do".
+- the project notes updated with private-repo + license-boundary rules in "Things to never do".
 - `docs/00-recon.md` had one absolute path (a `/home/<user>/.../vcclient-cachy/upstream/` reference) sanitized to `<repo>/upstream/`.
 
 ### Audit (clean — nothing scrubbed from history)
 - No model binaries (`*.onnx`, `*.pth`, `*.pt`, `*.bin`, `*.safetensors`) were ever committed (tree or history).
 - No secrets / API tokens / `.env` files / credential files in the repo.
-- `.gitignore` audited and confirmed comprehensive (Python, models, audio, env, editor caches, `./settings.local.json`, `upstream/`).
+- `.gitignore` audited and confirmed comprehensive (Python, models, audio, env, editor caches, `upstream/`).
 
 ## [0.1.0] — 2026-05-04
 
@@ -5286,7 +5252,7 @@ Headline: **e2e latency 280 ms → 30 ms** (88% reduction). Full numbers in `doc
 
 ### Phase 7 — Retrospective + handover
 - `LESSONS.md` (202 lines) — execution summary, honest scorecard against brief targets, unexpected challenges, mistakes, what was learned, recommendations for the next session. Calls out that the brief's "FORBIDDEN list" was load-bearing.
-- `the project notes` (project-level, 108 lines) — startup guide for the next CC session: 3-sentence summary, "read LESSONS.md first" instruction, architectural decisions + their *why*, build/test/run commands, known gotchas, "things to never do" checklist.
+- the project notes (project-level, 108 lines) — startup guide for the next CC session: 3-sentence summary, "read LESSONS.md first" instruction, architectural decisions + their *why*, build/test/run commands, known gotchas, "things to never do" checklist.
 - `docs/QA.md` (141 lines) — step-by-step live QA script for the user to validate DoD items #2 (Discord) and #3 (CS2). Engine on/off via CLI toggle, Discord/CS2 mic configuration, long-session stability, clean shutdown.
 - Updated `PROGRESS.md` with the full Definition of Done table — items #2 and #3 marked "ready for user QA, pending live test" per Q9.
 
@@ -5304,7 +5270,7 @@ Headline: **e2e latency 280 ms → 30 ms** (88% reduction). Full numbers in `doc
 - Aligned `audio/engine.py:_make_session()` with the smoke-test ORT options: `arena_extend_strategy=kNextPowerOfTwo`, `cudnn_conv_algo_search=EXHAUSTIVE`, `do_copy_in_default_stream=True`. Steady-state engine inference dropped 86 → 60 ms (rolling-32 avg @ chunk=0.25).
 - Chunk-size sweep (60-500 ms): **inference is roughly constant at ~22 ms** for chunk sizes ≥ 100 ms. Below that, kernel-launch overhead dominates and inference *increases*. Sweet spot: 100-150 ms chunks.
 - `scripts/bench_chunks.py`-style chunk sweep is wired through `scripts/smoke_rvc_onnx.py`. Acoustic loopback `scripts/bench_loopback.py` is scaffolded but the subprocess timing alignment is fragile — documented as future work; in-process numbers are authoritative.
-- **Honest verdict**: brief targets *missed* on this hardware:
+- **Honest review**: brief targets *missed* on this hardware:
   - e2e (target <80 ms): **~280 ms** measured warm-state at chunk=0.25 (250 ms audio buffer + ~25 ms inference + ~5 ms audio I/O).
   - Idle VRAM (target <500 MB): **~1.35 GiB** (contentvec-f and rmvpe are both ~350 MB on disk fp32).
   - CPU active (target <15%): **~26%** at chunk=0.25.

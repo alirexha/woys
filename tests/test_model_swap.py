@@ -80,7 +80,7 @@ def test_engine_falls_back_to_default_when_cfg_path_invalid(tmp_path: Path) -> N
 
 @pytest.mark.gpu
 def test_resamplers_initialized_in_constructor() -> None:
-    """review F-merged-011: `_resampler_in` / `_resampler_out` must be
+    """`_resampler_in` / `_resampler_out` must be
     initialized in `__init__`.
 
     They used to sit as dead code after a `return` inside the
@@ -99,7 +99,7 @@ def test_resamplers_initialized_in_constructor() -> None:
 def test_ensure_sessions_raises_clean_filenotfound_for_missing_model(
     tmp_path: Path,
 ) -> None:
-    """review F-CX2-04: a missing model file must raise a typed
+    """a missing model file must raise a typed
     `FileNotFoundError` naming the path.
 
     Pre-fix `_ensure_sessions` handed the path straight to ONNX Runtime,
@@ -120,7 +120,7 @@ def test_ensure_sessions_raises_clean_filenotfound_for_missing_model(
     with pytest.raises(FileNotFoundError) as exc:
         eng._ensure_sessions()
     assert str(missing) in str(exc.value), "the error must name the missing path"
-    # review F-17-15 (commit-052): the error must ALSO name the
+    # the error must ALSO name the
     # remediation command so the user can act on it without grepping the
     # repo. F-CX2-04 added the typed-exception path; F-17-15 adds the
     # actionable-guidance part. The RVC-model branch fires first here
@@ -165,7 +165,7 @@ def test_request_model_swap_replaces_rvc_session() -> None:
 
 
 def test_request_model_swap_queues_each_request_per_call_event() -> None:
-    """review F-03-02 (commit-042-043): pre-fix two requests
+    """pre-fix two requests
     collapsed into a single `_pending_model_swap` slot -- voiceA was
     silently dropped and a broadcast `_swap_done.set()` falsely
     released voiceA's waiter as "done". Post-fix each request lands
@@ -177,7 +177,7 @@ def test_request_model_swap_queues_each_request_per_call_event() -> None:
     eng = RealtimeEngine(EngineConfig(chunk_seconds=0.1))
     r1 = eng.request_model_swap(Path("/tmp/first.onnx"))
     r2 = eng.request_model_swap(Path("/tmp/second.onnx"))
-    # F-23-17 (commit-076): request_model_swap now returns the
+    # F-23-17: request_model_swap now returns the
     # _SwapRequest itself, not the bare Event, so callers can read
     # `.error` after `.completion.wait()`. Two distinct requests,
     # neither completion set yet (engine never drained the queue).
@@ -269,7 +269,7 @@ def test_cli_models_use_falls_back_to_config_when_no_socket(
     assert cfg2.rvc_model == str(target.resolve())
 
 
-# --- review F-16-07 / F-23-05 ----------------------------------------
+# --- ----------------------------------------
 # Pre-fix `cli_models_use` only matched `startswith("ERR control socket
 # not found")` -- so when the TUI was kill -9'd (stale socket) or
 # starting up (connect refused), the user's `woys models use X` was

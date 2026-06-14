@@ -1,4 +1,4 @@
-"""review F-merged-030 (commit-048): cold-start moved to the
+"""cold-start moved to the
 worker thread + `warmup_stage` progress field.
 
 Pre-fix `start()` ran `_ensure_sessions` (heavy: ORT/cuDNN), then
@@ -67,7 +67,7 @@ def test_warmup_stage_field_exists() -> None:
 def test_start_returns_promptly_even_when_preamble_is_slow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bug-class test for the verdict's primary claim. With a 500 ms
+    """Bug-class test for the review's primary claim. With a 500 ms
     preamble, `start()` itself must return in well under 100 ms.
     Pre-fix start() blocked for the full preamble before spawning
     the worker."""

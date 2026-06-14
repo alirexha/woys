@@ -6,8 +6,8 @@
  * write pattern from PipeWire's per-quantum RT callback via a
  * lock-free SPSC ring buffer.
  *
- * Why this exists: lens 08 of the v0.7.x audit
- * (`docs/16-audit/synthesis.md`) found voice-correlated, sample-exact
+ * Why this exists: area 08 of the v0.7.x review
+ * found voice-correlated, sample-exact
  * zero gaps quantized to ~21.33 / 42.67 ms in the cut signature on
  * Telegram VOIP — exactly one PipeWire quantum at 1024/48000. pw-cat
  * reads stdin synchronously inside its RT process callback chain
@@ -336,7 +336,7 @@ static int stdin_reader_loop(struct app_state *s) {
  * Stderr telemetry tick (dedicated timer thread)
  *
  * Reports `underruns=N` periodically so woys's stderr reader can
- * surface a real xrun count — closing audit lens 09 rank 1
+ * surface a real xrun count — closing audit area 09 rank 1
  * ("pw-cat is silent on underruns").
  *
  * v0.9.0-rc3: was SIGALRM-driven and didn't work. SIGALRM gets

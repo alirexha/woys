@@ -1,4 +1,4 @@
-"""review F-merged-005: structural guard rails for uninstall.sh.
+"""structural guard rails for uninstall.sh.
 
 uninstall.sh can't be exercised in CI (it removes systemd units, touches
 $HOME), but its *ordering* and *content* are load-bearing and easy to

@@ -1,4 +1,4 @@
-"""review F-CX6-01 (commit-062): broad except around the
+"""broad except around the
 control handler so an unexpected exception class doesn't silently
 kill the listener thread.
 

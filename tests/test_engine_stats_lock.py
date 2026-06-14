@@ -1,4 +1,4 @@
-"""review F-merged-017 commit-040a: `_stats_lock` for the
+"""commit-040a: `_stats_lock` for the
 lost-update and TOCTOU bug-classes on `EngineStats`.
 
 Pre-fix `EngineStats` was mutated lock-free across 5-6 threads. CX3
@@ -12,7 +12,7 @@ fails for every one:
   same list, same pattern*) violates the `len <= 10` invariant under
   interleaved scheduling.
 - The module docstring at engine.py:33-37 claimed "no shared mutable
-  state beyond a few atomic-ish primitives" -- false (Hard Rule 1).
+  state beyond a few atomic-ish primitives" -- false.
 
 Post-fix `self._stats_lock` (a `threading.RLock`) serializes every
 `+=` and every `append+len-check+pop` block. Held for microseconds

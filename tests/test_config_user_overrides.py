@@ -1,4 +1,4 @@
-"""review F-16-01: config-schema migration honors `_user_overrides`.
+"""config-schema migration honors `_user_overrides`.
 
 Pre-fix all migration legs unconditionally rewrote `field == old_default`
 to the new default -- so a user who deliberately pinned
@@ -93,7 +93,7 @@ output_latency_ms = 300
 def test_override_marker_pins_sola_search_ms(tmp_path: Path) -> None:
     """Coverage for a second field (sola_search_ms 4.0 -> 16.0). Without
     the marker the field bumps to the current EngineConfig default; with
-    the marker it survives. The verdict's test names output_latency_ms,
+    the marker it survives. The review's test names output_latency_ms,
     but the bug class covers every migrated default, so we test at
     least two field paths to make sure the gating is not output-latency-
     specific. (Chunk_seconds happens to round-trip 0.25 -> 0.25 today

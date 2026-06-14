@@ -1,4 +1,4 @@
-"""review F-23-10 + F-23-17 (commit-076): quit overlay + swap-error
+"""quit overlay + swap-error
 surfacing.
 
 F-23-10: a `q`/`Ctrl-C` quit blocks 2-10 s on the event loop while

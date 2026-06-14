@@ -250,8 +250,8 @@ def _capture_levels(wav_path: Path) -> tuple[float, float]:
 
 
 def _parse_diag(stdout: str, report_path: Path | None = None) -> tuple[float, int, int]:
-    """Parse the cuts-per-min number from either the stdout verdict line
-    or the markdown report file. The verdict line takes the form
+    """Parse the cuts-per-min number from either the stdout review line
+    or the markdown report file. The review line takes the form
 
         N events across Ds (X.Y/min). Disruptive…
 

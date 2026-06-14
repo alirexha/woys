@@ -52,7 +52,7 @@ def test_interpolate_all_voiced_unchanged() -> None:
 
 
 def test_interpolate_short_gap_bridges_log_linearly() -> None:
-    """review F-31-03 (commit-080): the gap-bridge is log-linear
+    """the gap-bridge is log-linear
     in f0, not linear-in-Hz. Pre-fix this test asserted the Hz-linear
     contour; post-fix the values are the geometric interpolant. Pin
     log-linear by checking each interior frame equals
@@ -83,7 +83,7 @@ def test_interpolate_short_gap_bridges_log_linearly() -> None:
 
 
 def test_interpolate_log_geometric_midpoint() -> None:
-    """review F-31-03 (commit-080) verdict-required test: bridge
+    """review-required test: bridge
     100 Hz -> 400 Hz across a 5-frame gap. Midpoint must be ~200 Hz
     (geometric mean, log-linear) and decidedly NOT 250 Hz (arithmetic
     mean, Hz-linear). The 25% delta at the midpoint is the size of
@@ -128,7 +128,7 @@ def test_interpolate_handles_nan() -> None:
     out = interpolate_voiced_gaps_np(pitchf)
     assert not np.isnan(out).any()
     # Bridge between idx 0 (100) and idx 3 (200): alphas at 1/3 and 2/3.
-    # F-31-03 (commit-080): log-linear interpolation.
+    # F-31-03: log-linear interpolation.
     log_lo = np.log(100.0)
     log_hi = np.log(200.0)
     np.testing.assert_allclose(out[1], np.exp(log_lo * (2 / 3) + log_hi * (1 / 3)), rtol=1e-5)
@@ -173,7 +173,7 @@ def test_pitch_coarse_short_input_right_aligned() -> None:
 
 
 def test_pitch_coarse_overlength_keeps_trailing_frames() -> None:
-    """review F-31-02: an over-length pitchf must keep its *last*
+    """an over-length pitchf must keep its *last*
     target_len frames, matching upstream `Pipeline.py:288`
     (`pitch[:, -feats_len:]`). Pre-fix it kept the *first* target_len
     frames (`pitchf[:n]`), temporally scrambling the F0 contour against
@@ -198,7 +198,7 @@ def test_pitch_coarse_returns_correct_shapes(voiced_count: int) -> None:
 
 
 def test_pitch_coarse_negative_input_clamped_not_int64_min() -> None:
-    """v0.14.0 (Lens 7 / C093): negative pitchf must NOT propagate
+    """v0.14.0 (area 7 / C093): negative pitchf must NOT propagate
     NaN through log -> mask -> clip -> int64 to produce INT64_MIN.
     RMVPE in practice emits non-negative Hz, but transient / NaN-replaced
     regions can leak negatives. Clamping at function entry preserves
@@ -216,7 +216,7 @@ def test_pitch_coarse_negative_input_clamped_not_int64_min() -> None:
 
 
 def test_pitch_coarse_all_negative_returns_zeros() -> None:
-    """v0.14.0 (Lens 7 / C093): all-negative pitchf clamps to all-zero
+    """v0.14.0 (area 7 / C093): all-negative pitchf clamps to all-zero
     and short-circuits (same path as the all-zero input case).
     """
     pitchf = np.array([-100.0, -200.0, -700.0, -2000.0], dtype=np.float32)
@@ -226,7 +226,7 @@ def test_pitch_coarse_all_negative_returns_zeros() -> None:
 
 
 def test_pitch_shift_modifies_pitchf_and_pitch_coarse_consistently() -> None:
-    """v0.14.0 (Lens 4 / Lens 7 / C001): pitch shift in semitones must be
+    """v0.14.0 (area 4 / area 7 / C001): pitch shift in semitones must be
     applied to the f0 vector BEFORE deriving pitch_coarse. Otherwise
     pitch_coarse points at the unshifted f0 bin while pitchf is the
     shifted Hz vector -> RVC sees mismatched harmonic-source vs pitch-

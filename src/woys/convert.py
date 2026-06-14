@@ -41,7 +41,7 @@ def _user_trusts_pickle(flag: bool) -> bool:
     """Has the user explicitly opted into unsafe pickle loading FOR
     THIS CALL?
 
-    review F-05-04: pre-fix this also honored
+    pre-fix this also honored
     `WOYS_YES_I_TRUST_THE_PICKLE=1` from the environment. The env-var
     path collapsed per-invocation consent to per-environment-lifetime
     consent: set once in a shell rc, it auto-trusted EVERY
@@ -60,7 +60,7 @@ def _user_trusts_pickle(flag: bool) -> bool:
     return bool(flag)
 
 
-# review F-05-04: keep the constant name for back-compat error
+# keep the constant name for back-compat error
 # messages but the env var itself is NOT consulted. If a user has
 # `WOYS_YES_I_TRUST_THE_PICKLE=1` in their shell rc, woys convert
 # now ignores it and falls into the consent-required error path.
@@ -90,11 +90,11 @@ def _safe_torch_load(pth_path: Path, *, trust_pickle: bool) -> Any:
                 f"\n"
                 f"  To proceed, re-run with --yes-i-trust-the-pickle. The env var\n"
                 f"  {_TRUST_PICKLE_ENV_NAME_REMOVED} is no longer honored\n"
-                f"  (review F-05-04: it collapsed per-invocation consent to\n"
+                f"  (it collapsed per-invocation consent to\n"
                 f"  per-environment-lifetime consent for an arbitrary-code-\n"
                 f"  execution operation; the flag forces per-file consent).\n"
             ) from safe_err
-        # review F-05-04: log every unsafe load loudly so a future
+        # log every unsafe load loudly so a future
         # audit can grep for it. The consent has already been granted
         # (via the CLI flag); the log line is forensic.
         print(
@@ -195,7 +195,7 @@ def _probe_pth_metadata(pth_path: Path, *, trust_pickle: bool = False) -> _RVCMe
     )
 
 
-# review F-31-09: post-export fp16 numerical quality gate.
+# post-export fp16 numerical quality gate.
 # Pre-fix the only validation on `--fp16` exports was `_validate_onnx_loads`
 # (load + I/O names). The docstring on `convert_pth_to_onnx` admitted that
 # v1 models "often degrade", but nothing in the export pipeline measured
@@ -358,7 +358,7 @@ def convert_pth_to_onnx(
     output_path = Path(output_path).resolve()
 
     meta = _probe_pth_metadata(pth_path, trust_pickle=trust_pickle)
-    # v0.14.0 (Lens 6 / C015): consent state captured here, used by
+    # v0.14.0 (area 6 / C015): consent state captured here, used by
     # `_gated_torch_load` (defined below) to gate the unsafe load that
     # _export2onnx performs internally.
     pth_already_consented = _user_trusts_pickle(trust_pickle)
@@ -373,7 +373,7 @@ def convert_pth_to_onnx(
     # Late-import upstream's _export2onnx. The opset arg isn't in upstream's
     # signature; we pass it through via monkey-patching torch.onnx.export.
     #
-    # review F-19-11 (commit-069): the upstream subtree imports
+    # the upstream subtree imports
     # fastapi / uvicorn / python-socketio / python-multipart /
     # websockets / pyOpenSSL transitively. Pre-fix these were
     # mandatory runtime deps; now they live in the `[convert]`
@@ -418,7 +418,7 @@ def convert_pth_to_onnx(
         kwargs.setdefault("opset_version", opset)
         return original_export(*args, **kwargs)
 
-    # v0.14.0 (Lens 6 / C015): the pickle gate in _safe_torch_load gates
+    # v0.14.0 (area 6 / C015): the pickle gate in _safe_torch_load gates
     # _probe_pth_metadata, but upstream's _export2onnx (line 61 in
     # src/server/voice_changer/RVC/onnxExporter/export2onnx.py) calls
     # torch.load(input_model, map_location="cpu") with NO weights_only
@@ -449,7 +449,7 @@ def convert_pth_to_onnx(
                         f"on {args[0] if args else '<?>'} but no consent was "
                         f"granted. Re-run with --yes-i-trust-the-pickle "
                         f"(the {_TRUST_PICKLE_ENV_NAME_REMOVED} env var "
-                        f"is no longer honored -- review F-05-04)."
+                        f"is no longer honored -- )."
                     ) from safe_err
                 return original_torch_load(*args, weights_only=False, **kwargs)
         return original_torch_load(*args, **kwargs)
@@ -482,7 +482,7 @@ def convert_pth_to_onnx(
     _validate_onnx_loads(output_path)
     print("[convert] ONNX validation OK - ready for the engine.")
 
-    # review F-31-09: post-export fp16 numerical quality gate.
+    # post-export fp16 numerical quality gate.
     # The docstring on this function says "v1 models often degrade" --
     # measure that, don't just warn in docs. We do a second fp32 export
     # to a tmp path, run both through ORT on a seeded reference input,
