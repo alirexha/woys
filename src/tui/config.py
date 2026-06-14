@@ -373,6 +373,19 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
             fields_in[name] = new_value
             migrated = True
 
+    def _maybe_bump_profile(
+        pdata: dict[str, Any], name: str, old_default: Any, new_value: Any
+    ) -> None:
+        # Profile sub-tables honor `_user_overrides` exactly like the
+        # top-level fields above -- a value the user pinned must survive a
+        # schema bump whether it lives at top level or inside a profile.
+        nonlocal migrated
+        if name in user_overrides:
+            return
+        if pdata.get(name) == old_default:
+            pdata[name] = new_value
+            migrated = True
+
     # ---- schema 0 → 7 - the original v0.7.0-rc1 latency-defaults bump.
     if schema < 7:
         # chunk_seconds 0.25 → engine default (mic-input wait, biggest lever).
@@ -391,15 +404,9 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
             for pdata in profiles.values():
                 if not isinstance(pdata, dict):
                     continue
-                if pdata.get("chunk_seconds") == 0.25:
-                    pdata["chunk_seconds"] = _E.chunk_seconds
-                    migrated = True
-                if pdata.get("output_latency_ms") == 300:
-                    pdata["output_latency_ms"] = _E.output_latency_ms
-                    migrated = True
-                if pdata.get("sola_search_ms") == 4.0:
-                    pdata["sola_search_ms"] = _E.sola_search_ms
-                    migrated = True
+                _maybe_bump_profile(pdata, "chunk_seconds", 0.25, _E.chunk_seconds)
+                _maybe_bump_profile(pdata, "output_latency_ms", 300, _E.output_latency_ms)
+                _maybe_bump_profile(pdata, "sola_search_ms", 4.0, _E.sola_search_ms)
     # ---- schema 7 → 8 - v0.7.0-rc1's 80 ms output_latency was empirically
     # too aggressive (user reported audible cut increase). rc2 bumped the
     # default to 220 ms; users who landed on 80 via the rc1 migration
@@ -411,9 +418,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
             for pdata in profiles.values():
                 if not isinstance(pdata, dict):
                     continue
-                if pdata.get("output_latency_ms") == 80:
-                    pdata["output_latency_ms"] = _E.output_latency_ms
-                    migrated = True
+                _maybe_bump_profile(pdata, "output_latency_ms", 80, _E.output_latency_ms)
     # ---- schema 8 → 9 - v0.7.0-rc2's 220 ms was still audibly cutting in
     # real-world Telegram VoIP testing. rc3 bumps to 280 ms (the last rung -
     # 20 ms under the known-clean v0.6.x 300 ms default). Users who landed
@@ -426,9 +431,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
             for pdata in profiles.values():
                 if not isinstance(pdata, dict):
                     continue
-                if pdata.get("output_latency_ms") == 220:
-                    pdata["output_latency_ms"] = _E.output_latency_ms
-                    migrated = True
+                _maybe_bump_profile(pdata, "output_latency_ms", 220, _E.output_latency_ms)
     # ---- schema 9 → 10 - v0.7.0-rc4 audit
     # found rc3's persistent cuts came from sources other than
     # `output_latency_ms`. Two defaults bump and two new fields land.
@@ -467,10 +470,14 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
             for pdata in profiles.values():
                 if not isinstance(pdata, dict):
                     continue
-                if pdata.get("input_gate_dbfs") == -55.0:
-                    pdata["input_gate_dbfs"] = _E.input_gate_dbfs
-                    migrated = True
-                if pdata.get("prefer_pw_cat") is True:
+                _maybe_bump_profile(pdata, "input_gate_dbfs", -55.0, _E.input_gate_dbfs)
+                # Strict is-True (mirror the top-level check) so a hand-edited
+                # `prefer_pw_cat = 1` is not coerced; gated on `_user_overrides`.
+                if (
+                    "prefer_pw_cat" not in user_overrides
+                    and isinstance(pdata.get("prefer_pw_cat"), bool)
+                    and pdata.get("prefer_pw_cat") is True
+                ):
                     pdata["prefer_pw_cat"] = _E.prefer_pw_cat
                     migrated = True
     cfg = AppConfig(**fields_in, _extras=extras)
