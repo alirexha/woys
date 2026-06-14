@@ -33,7 +33,7 @@ import tomli_w
 VCPROFILE_VERSION = 1
 DEFAULT_EXTENSION = ".vcprofile"
 
-# review F-16-08: per-version migration ladder for `.vcprofile`
+# per-version migration ladder for `.vcprofile`
 # import. Each entry migrates a `raw` TOML dict from key K to K+1.
 # Pre-fix `import_profile` raised on any version mismatch -- a share/
 # interop format breaking hard on its first revision. The reader now
@@ -73,7 +73,7 @@ def _migrate_vcprofile_raw(
 ) -> dict[str, Any]:
     """Walk the `.vcprofile` format-version migration ladder.
 
-    review F-16-08: pre-fix `import_profile` did exact-equality
+    pre-fix `import_profile` did exact-equality
     on `meta.format_version` and raised on any mismatch. A share/
     interop format whose whole purpose is cross-user/cross-version
     distribution cannot fail-hard on its first revision. The new
@@ -277,7 +277,7 @@ def import_profile(
     from tui.config import AppConfig, validate_field
 
     tmp_cfg = AppConfig()
-    # review F-merged-012: validate every value before it lands on
+    # validate every value before it lands on
     # tmp_cfg. `.vcprofile` is an untrusted import (cross-user share /
     # downloaded artifact); a malicious or malformed one with
     # `chunk_seconds = -1` is a DoS class. The user-owned `load_config`

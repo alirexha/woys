@@ -1,4 +1,4 @@
-"""review F-13-03 + F-CX3-02: offload the blocking teardown trio
+"""offload the blocking teardown trio
 off Textual's event-loop thread.
 
 Pre-fix:

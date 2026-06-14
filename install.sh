@@ -30,7 +30,7 @@
 
 set -euo pipefail
 
-# review F-05-05 (commit-061): validate $HOME before deriving
+# validate $HOME before deriving
 # paths from it. The install script writes systemd unit files and
 # rmrf's directories under $HOME -- if $HOME is unset, relative, or
 # owned by a different UID, those operations land in the wrong
@@ -91,7 +91,7 @@ fail() { printf '\n[install] error: %s\n' "$*" >&2; exit 1; }
 
 # ---- pre-reqs -----------------------------------------------------------------
 #
-# review F-19-05: the destructive vcclient-cachy→woys migration used
+# the destructive vcclient-cachy→woys migration used
 # to run HERE, before the prereq checks and venv build. With `set -e`, a
 # venv-build failure aborted the script with the old install already
 # dismantled and the new one unbuilt — no rollback. The migration block
@@ -100,7 +100,7 @@ fail() { printf '\n[install] error: %s\n' "$*" >&2; exit 1; }
 say "checking host…"
 command -v pactl >/dev/null   || fail "pactl missing — install pipewire-pulse"
 pactl info | grep -q PipeWire || fail "PipeWire not running (pactl info reports something else)"
-# review F-19-16 / F-15-06: hard-fail on a missing NVIDIA GPU. The
+# hard-fail on a missing NVIDIA GPU. The
 # pre-fix `say "warn: ... fall back to CPU"` advertised a CPU fallback
 # that does not exist — ONNX Runtime CUDA-EP sessions do not silently
 # become CPU sessions, and realtime RVC on CPU is not viable. --allow-cpu
@@ -116,7 +116,7 @@ fi
 
 # Install uv if absent.
 #
-# review F-05-09 (commit-061): pre-fix this was a bare
+# pre-fix this was a bare
 # `curl | sh` pipeline -- inconsistent with the project's own SHA-
 # rigor for model downloads. Hard-fail with a clear message if uv
 # isn't already installed; let the user choose the install method
@@ -150,7 +150,7 @@ else
 fi
 
 say "installing woys + runtime deps (long step on fresh installs — torch + ORT-GPU)…"
-# review F-19-03: install the pinned dependency closure
+# install the pinned dependency closure
 # (requirements.txt) FIRST, then the woys package itself with --no-deps.
 # Pre-fix this was `pip install -e .` then `pip install -r
 # requirements.txt` -- an order-dependent double-install where the second
@@ -162,7 +162,7 @@ say "installing woys + runtime deps (long step on fresh installs — torch + ORT
 
 # ---- v0.6.0 migration: vcclient-cachy → woys ---------------------------------
 #
-# review F-19-05: runs only AFTER the prereq checks and the venv +
+# runs only AFTER the prereq checks and the venv +
 # deps build above have all succeeded — so a failed install can never
 # dismantle a working vcclient-cachy setup. The venv python is guaranteed
 # to exist at this point.
@@ -287,7 +287,7 @@ if ! "$LINK" --version >/dev/null 2>&1; then
 fi
 INSTALLED_VERSION="$("$LINK" --version 2>/dev/null | head -1)"
 
-# review F-19-16: verify ALL THREE foundation weights, not just
+# verify ALL THREE foundation weights, not just
 # amitaro. A non-`--skip-models` install that is missing any of them is
 # broken — fail rather than print a reassuring summary.
 MODELS_DIR="$APP_HOME/models"

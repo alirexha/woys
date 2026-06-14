@@ -112,7 +112,7 @@ def test_pipewire_error_on_missing_pactl(monkeypatch: pytest.MonkeyPatch) -> Non
         ensure_pipewire()
 
 
-# ---- review F-merged-006: relabel_source must be atomic --------------
+# ---- relabel_source must be atomic --------------
 # These are pure unit tests (mocked `_run_pactl` / `_list_modules`); no
 # pipewire daemon is touched, so they are NOT marked `pipewire`.
 
@@ -176,7 +176,7 @@ def test_relabel_source_succeeds_when_reload_ok(monkeypatch: pytest.MonkeyPatch)
     assert len(load_calls) == 1, "happy path must not issue a rollback load-module"
 
 
-# ---- review F-08-06 (2nd half): default-sink hijack probe ------------
+# ---- default-sink hijack probe ------------
 
 
 def test_engine_warns_when_default_sink_is_woys_sink(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -212,7 +212,7 @@ def test_engine_no_warning_when_default_sink_is_a_real_device(
 
 
 def test_run_pactl_forces_c_locale(monkeypatch: pytest.MonkeyPatch) -> None:
-    """review F-15-05: `_run_pactl` must run pactl under `LC_ALL=C`.
+    """`_run_pactl` must run pactl under `LC_ALL=C`.
 
     pactl output is localised; the parsers key off English tokens
     (`Description: `, ...), so on a non-English `$LANG` every parse

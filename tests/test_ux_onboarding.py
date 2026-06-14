@@ -1,5 +1,5 @@
-"""review F-23-04 / F-23-09 / F-23-11 / F-23-12 / F-23-13 / F-23-14 /
-F-23-15 / F-23-16 / F-23-19 (commit-075): the UX onboarding batch.
+"""/
+F-23-15 / F-23-16 / F-23-19: the UX onboarding batch.
 
 Each behaviour the batch is supposed to deliver gets a focused test here.
 The TUI itself is exercised against `WoysApp` instances constructed with

@@ -1,7 +1,7 @@
-"""review F-merged-018: serialize `start()` and `stop()` under a
+"""serialize `start()` and `stop()` under a
 `_lifecycle_lock`, with an idempotence guard inside `stop()`.
 
-CX3 corrected the verdict's reachability narrative: the "two concurrent
+CX3 corrected the review's reachability narrative: the "two concurrent
 start() from TUI autostart + socket command" race is NOT reachable
 (autostart and action_toggle_engine run on the single event-loop
 thread; no control command calls start()). The reachable hazards are:

@@ -2,7 +2,7 @@
 """Propagate the version in src/woys/__init__.py to every surface that
 carries it.
 
-review F-merged-029: pre-commit-027 the version lived as a literal
+pre-commit-027 the version lived as a literal
 in pyproject.toml, src/woys/__init__.py, README.md, PROGRESS.md and
 pkg/PKGBUILD, and the four drifted from each other. Hatchling now reads
 __version__ out of src/woys/__init__.py at build time (see

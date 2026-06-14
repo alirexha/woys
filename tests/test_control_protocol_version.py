@@ -1,4 +1,4 @@
-"""review F-merged-020 (commit-037b): protocol_version constant
+"""protocol_version constant
 on the wire + cli_profile_use wired to the orphaned PROFILE socket
 handler.
 

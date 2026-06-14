@@ -55,39 +55,14 @@ upstream/
 # uv lock cache
 .uv-cache/
 
-# the tooling per-machine permission overrides (do NOT track)
-./settings.local.json
-# Entire ./ directory should never be tracked — it carries
-# per-user AI tooling state, project-instructions with personal info,
-# and runtime caches. The owner's personal the project notes (parent-directory
-# or repo-root) lives in this category.
-./
-the project notes
-
-# Personal dev briefs / planning docs / autonomous-loop journals.
-# These are working artifacts, not user-facing documentation.
-# Pre-public cleanup pass 1 deleted the historical batch; this gate
-# prevents accidentally re-tracking new ones.
+# Local scratch, planning notes, and investigation drafts (never tracked)
+*_BRIEF.md
 BLOCKERS.md
 PROGRESS.md
-PROJECT_BRIEF.md
 SESSION_SUMMARY.md
-RENAME_TO_WOYS_BRIEF.md
-V0_*_BRIEF.md
-V0_*_AUTONOMOUS*.md
-V0_*_GPU_JITTER.md
-V0_*_review.md
-VOICE_LIBRARY_BRIEF.md
-*_BRIEF.md
+docs/*-investigation.md
 
-# In-flight investigation / review notes — kept local until a
-# documented external-review process publishes them deliberately.
-docs/17-review/
-docs/25-faiss-*-investigation.md
-docs/26-review/phase-6-fixes/commit-079.md.draft
-
-# Deleted voice-library workflow (celebrity / IP voice clone
-# orchestration) — prevent re-introduction.
+# Deleted voice-library workflow — prevent re-introduction.
 voice-library/
 
 # v0.9.0 — compiled native helper, built by bin/Makefile

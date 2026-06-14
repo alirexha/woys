@@ -1,4 +1,4 @@
-"""review F-07-09 (commit-050): pre-load swap models on a
+"""pre-load swap models on a
 background thread so the engine worker's chunk-boundary swap hits
 a warm `_rvc_pool` cache.
 

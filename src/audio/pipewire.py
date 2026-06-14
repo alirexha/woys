@@ -93,7 +93,7 @@ class VirtualMicState:
 
 
 def _c_locale_env() -> dict[str, str]:
-    """review F-15-05: env for parsing subprocesses. pactl / pw-cli /
+    """env for parsing subprocesses. pactl / pw-cli /
     pw-link output is localised; our parsers key off literal English
     tokens (`Description: `, `Source #`, ...), so on a non-English
     `$LANG` every parse silently misses and the device list comes back
@@ -117,7 +117,7 @@ def _run_pactl(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 def get_default_sink() -> str:
     """The system default sink's name (`pactl get-default-sink`), or '' on
-    error. review F-08-06: used to detect the v0.14.2 hijack where the
+    error. used to detect the v0.14.2 hijack where the
     default sink was left pointed at a woys null-sink."""
     try:
         out = _run_pactl(["get-default-sink"])
@@ -177,7 +177,7 @@ def _destroy_orphan_nodes() -> None:
             text=True,
             timeout=PACTL_TIMEOUT_S,
             check=False,
-            env=_c_locale_env(),  # review F-15-05: English-token parsing
+            env=_c_locale_env(),  # English-token parsing
         )
     except subprocess.TimeoutExpired:
         return
@@ -364,7 +364,7 @@ def relabel_source(description: str, *, passive: bool) -> None:
             "it; use hyphens instead"
         )
 
-    # review F-merged-006: capture the OLD module's full load args
+    # capture the OLD module's full load args
     # *before* unloading -- that arg string is the rollback recipe. The
     # pre-fix version unloaded then reloaded with no rollback, so a reload
     # failure left woys-mic destroyed while chain.setup() still returned 0

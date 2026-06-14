@@ -22,7 +22,7 @@ fallback bug; §39 / §40 document the v0.12.2 methodology correction.
 The corrected v0.12.x sweep (§41-§42) showed chunk_seconds and
 sola_context_ms together drive the chunk-period spectral
 autocorrelation peak to 0.000 — perceptually clean per the user's
-listening verdict (§42). The mechanism's *audible attribution* to
+listening review (§42). The mechanism's *audible attribution* to
 NSF reset specifically was never confirmed; what we know is that
 masking it at the audio layer works.
 
@@ -36,7 +36,7 @@ to surgically fix in the model.
 - **Custom NSF state-export ONNX** — re-export RVC with the NSF
   oscillator's hidden state as an additional ONNX input/output, then
   feed the previous chunk's terminal state as the next chunk's
-  initial state. Estimated 12-24 h (per `phase4-verdicts.md` C291),
+  initial state. Estimated 12-24 h (per the review notes),
   requires per-voice re-export so every community-trained voice in
   the user's library would need re-running through the export
   pipeline.
@@ -58,7 +58,7 @@ doesn't. Second, ecosystem fragmentation: re-exporting only our
 foundation voices (decision 0012) leaves user-imported community
 voices on the unfixed code path. Third, the alternative was tested
 and the audio-layer masking gets us to autocorrelation 0.000, which
-the user's v0.12.4 listening verdict accepted as "the rhythm is
+the user's v0.12.4 listening review accepted as "the rhythm is
 GONE." Spending 12-24 h on model surgery to chase residuals below
 the user's detection threshold has a poor cost/benefit ratio versus
 shipping anti-jitter (decision 0007) and the RNNoise chain

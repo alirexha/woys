@@ -110,7 +110,7 @@ def test_zero_size_chunk_is_safe() -> None:
 
 
 def test_process_after_flush_raises_proves_rebuild_required() -> None:
-    """v0.14.0 (Lens 4 / C002): after `flush()` finalizes the soxr stream
+    """v0.14.0 (area 4 / C002): after `flush()` finalizes the soxr stream
     with `last=True`, subsequent `process()` calls raise. The engine's
     model-swap path used to rely on `if new_sr != old_sr` to rebuild the
     output resampler; same-rate swaps left a finalized stream in place
@@ -128,7 +128,7 @@ def test_process_after_flush_raises_proves_rebuild_required() -> None:
 
 
 def test_rebuild_after_flush_resumes_processing() -> None:
-    """v0.14.0 (Lens 4 / C002): the documented recovery path after
+    """v0.14.0 (area 4 / C002): the documented recovery path after
     finalizing a stream is to construct a fresh `_StreamResampler`. This
     test confirms it works without state leak from the previous instance.
     """

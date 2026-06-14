@@ -1,4 +1,4 @@
-"""review F-merged-020 (commit-037a): newline-terminated framing on
+"""newline-terminated framing on
 both sides of the control socket.
 
 Pre-fix:
@@ -6,7 +6,7 @@ Pre-fix:
   recv. Any command longer than 256 B was silently truncated.
 - Client (`tui/control.py:278`): `s.recv(512)` — same problem, on the
   reply side. The STATUS reply was already ~250 B and growing; the
-  verdict noted truncation was a *when*, not *if*.
+  review noted truncation was a *when*, not *if*.
 
 The docstring at the top of `control.py` promised
 "one newline-terminated command per connection" / "single short reply

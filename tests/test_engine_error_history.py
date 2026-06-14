@@ -1,4 +1,4 @@
-"""review F-merged-015: bounded timestamped thread-safe error
+"""bounded timestamped thread-safe error
 ring on `EngineStats`.
 
 Pre-fix `last_error: str | None` was a single clobberable string with
@@ -14,7 +14,7 @@ ungeneralized.
 
 Post-fix: a `deque(maxlen=20)` of `(monotonic_ts, thread_name, msg)`
 on `EngineStats.error_history`, written by `RealtimeEngine.record_
-error()` under `_stats_lock` (commit-040a). `last_error` stays as a
+error()` under `_stats_lock`. `last_error` stays as a
 back-compat mirror of the newest entry. `recent_errors(n)` returns
 the latest N entries for `woys diag` / TUI consumption.
 
@@ -94,7 +94,7 @@ def test_recent_errors_returns_latest_n_entries() -> None:
 
 
 def test_record_error_from_two_threads_within_1ms_retains_both() -> None:
-    """Bug-class test (the verdict's stated test). Two threads push
+    """Bug-class test (the review's stated test). Two threads push
     errors from each other within a millisecond. Pre-fix `last_error`
     is a single string -- thread B's write OVERWRITES thread A's, so
     the user diagnosing a cascade sees only one symptom. Post-fix the

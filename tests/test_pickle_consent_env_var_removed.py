@@ -1,4 +1,4 @@
-"""review F-05-04: remove process-wide env-var pickle consent.
+"""remove process-wide env-var pickle consent.
 
 Pre-fix `_user_trusts_pickle` honored `WOYS_YES_I_TRUST_THE_PICKLE`
 from the environment. Set once in a shell rc, it auto-trusted

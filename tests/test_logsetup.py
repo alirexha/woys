@@ -1,4 +1,4 @@
-"""review F-merged-014 (P1): woys must configure a persistent log
+"""woys must configure a persistent log
 file.
 
 Pre-fix `logging.getLogger("woys.*")` calls in `tui/hotkey.py` /

@@ -1,4 +1,4 @@
-"""review F-merged-016 (P1): `_probe_rvc_output_sr` must not silently
+"""`_probe_rvc_output_sr` must not silently
 guess the RVC model's output sample rate.
 
 Pre-fix it returned 16 kHz on `except Exception` ("possibly chipmunk", the

@@ -11,7 +11,7 @@ description = "Linux-native real-time voice changer. RVC-only on ONNX Runtime CU
 authors = [{ name = "Alireza Hamayeli", email = "alireza@hamayeli.com" }]
 license = { file = "LICENSE" }
 readme = "README.md"
-# v0.14.0 (Lens 14 / C230): bumped <3.12 -> <3.13. fairseq was the
+# v0.14.0 (area 14 / C230): bumped <3.12 -> <3.13. fairseq was the
 # constraint that pinned to 3.11; it was removed in v0.8.0. ONNX
 # Runtime 1.22 ships cp311/cp312/cp313 wheels, so 3.12 is supported.
 # Held below 3.13 because torch 2.5.x doesn't ship 3.13 wheels yet.
@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
     "Private :: Do Not Upload",
 ]
-# v0.14.0 (Lens 14 / C229): runtime deps audited. Many web-server-only
+# v0.14.0 (area 14 / C229): runtime deps audited. Many web-server-only
 # deps (fastapi/uvicorn/python-socketio/python-multipart/websockets/
 # pyOpenSSL) are imported by `src/server/` (vendored upstream) and
 # kept because the wheel ships that subtree for the convert path.
@@ -49,7 +49,7 @@ dependencies = [
     "resampy>=0.4.3",
     "torchcrepe>=0.0.22",
     "torchfcpe>=0.0.4",
-    # review F-31-01 + F-CX6-03 (commit-051): woys is INDEX-FREE.
+    # woys is INDEX-FREE.
     # `faiss-cpu` was a runtime dep for RVC's optional speaker-
     # similarity index file, but woys never implemented `index_rate`
     # consumption -- the dep was paid every install for a feature
@@ -57,7 +57,7 @@ dependencies = [
     # files; the engine path has no faiss imports.
     "einops>=0.8",
     "soundfile>=0.12",
-    # review F-19-11 (commit-069): the web stack (fastapi /
+    # the web stack (fastapi /
     # uvicorn / python-socketio / python-multipart / websockets /
     # pyOpenSSL) is imported only by `src/server/` (vendored
     # upstream) which is only consumed by `woys convert` (.pth ->
@@ -98,7 +98,7 @@ evdev = ["evdev>=1.7"]
 # Optional system-tray icon (KDE Plasma 6 / GNOME via libappindicator).
 # pystray pulls in Pillow + xlib/dbus runtime libs.
 tray = ["pystray>=0.19", "pillow>=10"]
-# review F-19-11 (commit-069): convert-only web stack. Used by
+# convert-only web stack. Used by
 # the `src/server/` vendored upstream which `woys convert` consumes.
 # Not needed for inference, daily use, or any non-convert path.
 convert = [

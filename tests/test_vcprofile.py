@@ -185,7 +185,7 @@ def test_import_rejects_unsupported_format_version(tmp_path: Path) -> None:
         import_profile(bad, "x")
 
 
-# --- review F-16-08: .vcprofile forward-compat reader ----------------
+# --- .vcprofile forward-compat reader ----------------
 # Pre-fix `import_profile` raised on any `format_version` mismatch -- a
 # share format whose whole purpose is cross-user / cross-version
 # distribution cannot fail-hard on its first revision. The fix adds a
@@ -259,7 +259,7 @@ def test_import_older_than_current_with_registered_migration_migrates_and_warns(
     from woys.vcprofile import VCPROFILE_VERSION, _migrate_vcprofile_raw
 
     # VCPROFILE_VERSION must currently equal 1 for the v0 -> v1 test
-    # leg to map onto the verdict's "current-1" scenario. If the format
+    # leg to map onto the review's "current-1" scenario. If the format
     # version is bumped in a future commit, this test needs to track.
     assert VCPROFILE_VERSION == 1, (
         "this test exercises v0 -> v1 migration; bump the source/target "

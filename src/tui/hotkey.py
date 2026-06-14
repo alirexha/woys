@@ -24,7 +24,7 @@ logger = logging.getLogger("woys.hotkey")
 
 DEFAULT_COMBO = ("KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_V")
 
-# review F-merged-027: poll interval for the select() wake-up loop.
+# poll interval for the select() wake-up loop.
 # `kbd.read_loop()` is a blocking generator that only yields on key events;
 # pre-fix `stop()` then `.join(timeout=1.5)` always timed out and leaked
 # the thread (no key event ever arrived during teardown). Polling with a
@@ -39,7 +39,7 @@ class EvdevHotkey:
 
     Imports `evdev` lazily so the rest of the app remains usable without it.
 
-    review F-merged-027: pre-fix bugs:
+    pre-fix bugs:
     - `_loop` opened an `InputDevice` for EVERY entry in `evdev.list_devices()`
       and kept only the one that exposed `EV_KEY` -- the rest were left
       open (file descriptor leak; F-14-04's P1 class).

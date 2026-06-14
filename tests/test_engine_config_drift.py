@@ -104,7 +104,7 @@ def test_rc4_drift_regression(name: str) -> None:
     assert name in {f.name for f in fields(AppConfig)}
 
 
-# ---- review F-merged-008 / F-01-04: single forwarding path -------------
+# ---- single forwarding path -------------
 # B9 + B50 caught AppConfig/EngineConfig *default* drift. The v0.9.0 add-on
 # AST-walked cli.py / app.py for hand-written `EngineConfig(...)` blocks and
 # checked each forwarded every field -- but its `_NOT_FORWARDED_AT_CONSTRUCTION`

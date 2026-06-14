@@ -1,4 +1,4 @@
-"""review F-merged-017 commit-040c: cross-thread deque iteration
+"""commit-040c: cross-thread deque iteration
 safety.
 
 Pre-fix the ~11 `_recent_X` rolling-window deques and
@@ -13,7 +13,7 @@ if the underlying deque gains/loses items mid-iter. The reader
 thread silently dies on that exception; in the writer-jitter probe
 at `engine.py:3125` (pre-fix), the dying thread was the WRITER
 itself -- which means audio stops silently. The most serious of the
-three F-merged-017 sub-bugs (the verdict ranks it ahead of the lost-
+three F-merged-017 sub-bugs (the review ranks it ahead of the lost-
 update class because the user only learns "audio stopped" via their
 ears).
 

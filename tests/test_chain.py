@@ -358,7 +358,7 @@ def test_setup_relabels_woys_mic_to_internal_raw_bypass() -> None:
 
 
 def test_setup_fails_loudly_when_relabel_fails() -> None:
-    """review F-merged-006: a relabel failure is a daemon-path step
+    """a relabel failure is a daemon-path step
     that did not complete -- `chain.setup()` must report it via exit 2,
     not swallow it and `return 0`.
 
@@ -492,7 +492,7 @@ def test_is_user_facing_description() -> None:
     assert chain._is_user_facing_description("Monitor of _internal-clean-sink") is False
 
 
-# ---- review F-08-06: `woys chain status --check` health gate ----------
+# ---- `woys chain status --check` health gate ----------
 # These pin _health_check's logic by monkeypatching the three probes it
 # runs. The check is wired as ExecStartPost into both systemd units so a
 # broken-audio chain shows `failed`, not a green `active (exited)`.
@@ -546,7 +546,7 @@ def test_chain_unit_template_has_execstartpost_check() -> None:
 
 
 def test_pactl_wrapper_forces_c_locale(monkeypatch: pytest.MonkeyPatch) -> None:
-    """review F-15-05: chain._pactl must run pactl under LC_ALL=C so
+    """chain._pactl must run pactl under LC_ALL=C so
     `woys chain status`'s English-token parsers work on any locale."""
     captured: dict[str, object] = {}
 

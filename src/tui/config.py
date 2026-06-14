@@ -56,7 +56,7 @@ class AppConfig:
     input_gain_db: float = _E.input_gain_db
     # v0.7.0-rc4 - added to AppConfig's forwarded set. Pre-rc4 these
     # lived only on EngineConfig, so user overrides in `config.toml`
-    # were silently ignored (the audit `docs/16-audit/synthesis.md`
+    # were silently ignored (the audit internal notes
     # confirmed the maintainer's `input_gate_dbfs = -200.0` never made it
     # to the engine - every prior rc ran the dataclass default).
     # `prefer_pw_cat` had the same drift since rc1.
@@ -79,7 +79,7 @@ class AppConfig:
     gpu_keepalive_torch_interval_ms: int = _E.gpu_keepalive_torch_interval_ms
     # TUI / app-only settings (not in EngineConfig).
     autostart_engine: bool = False
-    # review F-merged-019 (commit-066): the `enable_dbus` field
+    # the `enable_dbus` field
     # is dropped. It was reserved for a D-Bus control path that was
     # rejected in favor of the Unix-domain control socket (see
     # the project notes "D-Bus is replaced by Unix-domain sockets"). A
@@ -95,7 +95,7 @@ class AppConfig:
         # Stamp the schema version on every fresh AppConfig so round-trips
         # match. The migration in load_config() bumps it on legacy files.
         self._extras.setdefault("config_schema_version", 10)
-        # review F-16-01: names of fields the user has explicitly
+        # names of fields the user has explicitly
         # touched (TUI pitch keys, `woys pitch +2`, monitor toggle, ...).
         # Migration legs that match `value == old_default` skip fields
         # listed here -- so a user who deliberately set
@@ -104,7 +104,7 @@ class AppConfig:
         self._extras.setdefault("_user_overrides", [])
 
 
-# --- review F-merged-012 ----------------------------------------------
+# --- ----------------------------------------------
 # Per-field sane-range / type validator table. Pre-fix `AppConfig(**fields_
 # in)` and `.vcprofile`'s `setattr` loop accepted any TOML value: a
 # `chunk_seconds = "fast"` crashed deep in `_run_loop`; a shared
@@ -255,7 +255,7 @@ def _validate_appconfig(cfg: AppConfig, *, source: str = "config") -> None:
 def mark_override(cfg: AppConfig, *keys: str) -> None:
     """Record that the user has explicitly touched these AppConfig fields.
 
-    review F-16-01: fields listed here are pinned across schema
+    fields listed here are pinned across schema
     migrations -- the migration logic in `load_config()` will not bump
     them even if their current value matches an old default. Call this
     from every user-input mutation site (TUI keypress, CLI command,
@@ -278,7 +278,7 @@ def mark_override(cfg: AppConfig, *keys: str) -> None:
 def app_config_to_engine_config(cfg: AppConfig, *, rvc_model: Path | None = None) -> _EngineConfig:
     """The single AppConfig -> EngineConfig forwarding path.
 
-    review F-merged-008 / F-01-04: this replaces three hand-written,
+    this replaces three hand-written,
     byte-drifting `EngineConfig(...)` blocks (`woys run`, `woys diag`,
     `woys engine`). It iterates `USER_VISIBLE_ENGINE_FIELDS`, so a new
     user-tunable field reaches every entry point by being added to that
@@ -314,7 +314,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     if not path.exists():
         cfg = AppConfig()
         # Read-only home / unwritable XDG dir → fall back to in-memory defaults.
-        # review F-16-01: surface the failure to stderr instead of
+        # surface the failure to stderr instead of
         # silently suppressing it. The user still gets a working in-memory
         # config; they just also get told why settings won't persist.
         try:
@@ -352,7 +352,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     # was last written by v0.6.x or earlier. Each leg matches `value ==
     # old_default` and overwrites with the new default.
     #
-    # review F-16-01 (v0.14.x): the pre-fix legs unconditionally
+    # the pre-fix legs unconditionally
     # clobbered every field whose value matched the old default -- so a
     # user who *deliberately* pinned `output_latency_ms = 300` lost that
     # value on upgrade. Each leg now consults `_user_overrides` (an
@@ -429,7 +429,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
                 if pdata.get("output_latency_ms") == 220:
                     pdata["output_latency_ms"] = _E.output_latency_ms
                     migrated = True
-    # ---- schema 9 → 10 - v0.7.0-rc4 audit (`docs/16-audit/synthesis.md`)
+    # ---- schema 9 → 10 - v0.7.0-rc4 audit
     # found rc3's persistent cuts came from sources other than
     # `output_latency_ms`. Two defaults bump and two new fields land.
     #
@@ -439,7 +439,7 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     # below typical room ambient.
     #
     # `prefer_pw_cat` True → False: v0.6.7's documented per-quantum
-    # zero-gap pattern matches lens 08's waveform evidence (sample-
+    # zero-gap pattern matches area 08's waveform evidence (sample-
     # exact zeros, ~40 ms quantized) better than pacat's underrun
     # pattern. rc1's "smaller chunks dodge the race" reasoning was
     # not empirically backed.
@@ -475,19 +475,19 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
                     migrated = True
     cfg = AppConfig(**fields_in, _extras=extras)
     cfg._extras["config_schema_version"] = 10
-    # review F-16-01: re-stamp the override list so a round-trip
+    # re-stamp the override list so a round-trip
     # (load → save → load) preserves it. The `extras.pop` above removed
     # it from `extras` to keep migration logic clear; putting it back
     # here is the canonical write surface.
     cfg._extras["_user_overrides"] = sorted(user_overrides)
-    # review F-merged-012: validate every gated field. Dataclasses
+    # validate every gated field. Dataclasses
     # don't enforce annotations at runtime, so a hand-edited
     # `chunk_seconds = "fast"` lands here as `cfg.chunk_seconds = "fast"`
     # and would later crash deep in `_run_loop`. The validator names
     # the field, warns to stderr, and resets to the AppConfig default.
     _validate_appconfig(cfg, source=str(path))
     if migrated:
-        # review F-16-01: announce the migration so a user who set
+        # announce the migration so a user who set
         # a value and then sees it change has a paper trail. The notice
         # also explains how to opt out of future bumps for a given key.
         print(
@@ -511,13 +511,13 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
 
 
 _CONFIG_HEADER = b"""# woys config.toml -- managed by `woys` (the engine, TUI, CLI). Edit
-# any knob below; the next launch picks it up. review F-16-06
-# (commit-068): pre-fix this file was written with zero comments,
+# any knob below; the next launch picks it up.
+# Earlier this file was written with zero comments,
 # so a user opening it for the first time had to grep the source
 # to figure out which fields existed and what they did.
 #
 # MANAGED keys -- do NOT hand-edit:
-#   config_schema_version    F-16-01 migration anchor (commit-032).
+#   config_schema_version    F-16-01 migration anchor.
 #                            The schema-migration code in load_config
 #                            relies on this value to decide whether
 #                            to bump stale defaults. If you change
@@ -556,7 +556,7 @@ def save_config(cfg: AppConfig, path: Path = CONFIG_FILE) -> None:
     # config. v0.6.8 - chmod 0600 (was inheriting umask 0644). Config can
     # contain user paths and tuning that other local users have no business
     # reading.
-    # v0.14.0 (Lens 6 / Lens 17 / C123 + C268): create file with mode 0600
+    # v0.14.0 (area 6 / area 17 / C123 + C268): create file with mode 0600
     # atomically via os.open(O_WRONLY|O_CREAT|O_EXCL, 0o600). Pre-v0.14.0
     # `open(tmp, "wb")` created the file with default umask (typically
     # 0644) and then `os.chmod(0o600)` ran AFTER -- a race window where
@@ -566,7 +566,7 @@ def save_config(cfg: AppConfig, path: Path = CONFIG_FILE) -> None:
     # symlink-replace; O_EXCL refuses to follow). Plus fsync before
     # replace per C268 so power-loss-during-write doesn't corrupt config.
     tmp = path.with_suffix(path.suffix + ".tmp")
-    # review F-03-13 / F-05-10 (commit-061): drop the
+    # drop the
     # `if tmp.exists(): tmp.unlink()` pre-step that pre-fix lived
     # here. That was a classic TOCTOU dance: an attacker (or a
     # crashed prior write that happened to be in flight) could
@@ -586,7 +586,7 @@ def save_config(cfg: AppConfig, path: Path = CONFIG_FILE) -> None:
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "wb") as f:
-            # review F-16-06 (commit-068): write a discoverability
+            # write a discoverability
             # header before the TOML body. tomli_w doesn't emit
             # comments natively; we prepend the comment block as raw
             # bytes and let tomli_w handle the data section.

@@ -1,4 +1,4 @@
-"""review F-31-09: post-export fp16 numerical quality gate.
+"""post-export fp16 numerical quality gate.
 
 Pre-fix `convert_pth_to_onnx` with `--fp16` ran only `_validate_onnx_
 loads` (load + I/O names) -- the docstring admitted "v1 models often

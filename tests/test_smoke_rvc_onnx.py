@@ -74,7 +74,7 @@ def test_rvc_onnx_end_to_end_under_80ms() -> None:
     rmvpe = _make_session(MODELS / "rmvpe_wrapped.onnx")
     rvc = _make_session(MODELS / "amitaro_v2_16k.onnx")
 
-    # review F-merged-001 (P0): this was a `pytest.skip`, which silently
+    # this was a `pytest.skip`, which silently
     # passed the run when CUDA EP failed to bind -- the exact silent-fallback
     # class the audit hard-fails. On a GPU box (this test is @pytest.mark.gpu)
     # a CPU-only binding is a real regression: assert, don't skip.

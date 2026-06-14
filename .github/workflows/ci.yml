@@ -1,7 +1,7 @@
-# Minimal CI — review F-19-04.
+# Minimal CI
 #
 # Before this workflow every gate in the project notes (ruff, format, mypy --strict,
-# pytest, shellcheck) was honor-system manual; the cross-examination found
+# pytest, shellcheck) was honor-system manual; the review found
 # that absence is *why* so many other findings accumulated unobserved.
 #
 # This pipeline enforces the exact commands the project notes documents. It does not
@@ -73,8 +73,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv python install 3.11
       # requirements.txt must be the exact `uv pip compile` output of
-      # pyproject.toml. F-merged-004 (commit-029) regenerated the file
-      # after F-merged-029 (commit-027) made hatch read the version
+      # pyproject.toml. F-merged-004 regenerated the file
+      # after F-merged-029 made hatch read the version
       # dynamically; this gate keeps it that way. `uv python install 3.11`
       # above pins the resolver to the project's floor Python so the
       # output is deterministic — without it, the runner's default Python

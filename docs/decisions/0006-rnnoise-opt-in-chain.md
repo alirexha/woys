@@ -43,7 +43,7 @@ Ship as an opt-in chain, sourcing from `woys-mic`, exposing
   near the conversational comfort threshold (decision 0013), and
   forces the system package as a hard dep.
 - **No RNNoise at all** — accept the v0.12.4 residual. The user's
-  v0.12.4 listening verdict was "the rhythm is GONE; this is what
+  v0.12.4 listening review was "the rhythm is GONE; this is what
   woys should sound like" — i.e., good enough already.
 - **NoiseTorch's built-in chain (`-i`)** — failed with "No such
   entity" on this stack; sink/master ordering incompatible with
@@ -54,7 +54,7 @@ Ship as an opt-in chain, sourcing from `woys-mic`, exposing
 Opt-in fits four facts. First, the cuts/min reduction is real but
 conditional: 27 % (post-§44 fix) is worth shipping but not so large
 that every user must pay the +40 ms cost. Second, the user's v0.12.4
-verdict already accepted the residual, so we are not denying anyone
+review already accepted the residual, so we are not denying anyone
 audible quality by gating. Third, the dep on
 `noise-suppression-for-voice` is non-woys system surface; making it
 hard would block users who haven't run `pacman -S` for it. Fourth,

@@ -108,7 +108,7 @@ def child_main(
     """
     # No reconstruction needed - Connection objects come through spawn intact.
 
-    # review F-merged-014 (P1): the inference child is a separate
+    # the inference child is a separate
     # `spawn`ed process -- wire it into the same rotating log file so a
     # child-side crash is on disk next to the parent's records.
     try:

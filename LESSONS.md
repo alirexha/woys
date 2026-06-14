@@ -1,6 +1,6 @@
 # Lessons — vcclient-cachy autonomous build retrospective
 
-> **Read this first** if you're a future the tooling session opening this repo.
+> **Read this first** if you're a future maintainer opening this repo.
 > The brief got executed, the targets got missed, and the misses tell you more
 > about the work than the wins do. The corrections are honest.
 
@@ -10,7 +10,7 @@
 > for the original work pending a commercial decision. The `upstream/`
 > subtree and `src/server/` (which derives from upstream) remain MIT;
 > `NOTICE` at the repo root is the file-by-file audit trail. Future
-> sessions must respect this boundary — see `the project notes` "Things to never
+> sessions must respect this boundary — see the project notes "Things to never
 > do" for the constraints.
 
 ## 1. Execution summary
@@ -41,7 +41,7 @@ What was built:
 
 ## 2. Quality assessment — honest scorecard against the brief's targets
 
-| Brief target            | Achieved                | Verdict |
+| Brief target            | Achieved                | Review |
 |-------------------------|-------------------------|---------|
 | e2e latency < 80 ms     | ~280 ms warm-state at chunk=0.25 (250 ms audio buffer + ~25 ms inference + ~5 ms I/O) | **MISS** |
 | Inference-only latency  | 30-40 ms cold→warm, 22-25 ms steady-state @ 250 ms chunks | strong |
@@ -49,7 +49,7 @@ What was built:
 | CPU < 15 % active       | ~26 % at chunk=0.25                                       | **MISS** |
 | `./install.sh` < 5 min  | ~3 min (mostly torch + ORT pip install)                   | ✓       |
 | All 5 docs              | yes                                                       | ✓       |
-| `LESSONS.md` + project `the project notes` | this file + `the project notes`                       | ✓       |
+| `LESSONS.md` + project the project notes | this file + the project notes                       | ✓       |
 | All verification gates  | pytest, ruff, ruff-format, mypy --strict — all clean      | ✓       |
 
 The three latency/resource misses are all traceable to **model architecture
@@ -533,7 +533,7 @@ ear-test material — the actual ground truth.
 - **The brief's HF-cosine quality metric was the wrong tool.** RVC
   intentionally remaps voice timbre, so the output won't match the
   model's training-data clip. I documented why I skipped it instead of
-  forcing a noisy metric to "pass." Real verdict comes from listening.
+  forcing a noisy metric to "pass." Real review comes from listening.
 
 ### v0.6.0 candidates
 
@@ -1067,7 +1067,7 @@ that changes a default value should run this gate.**
 
 ### Lesson — periodic codebase audits catch drift earlier than user reports
 
-The v0.6.8 polish release was driven by `/review` of the whole
+The v0.6.8 polish release was driven by `review` of the whole
 repo after v0.6.7 tagged. The audit found 5 P0s, 12 P1s, 8 P2s. Of
 those, the AppConfig/EngineConfig drift was the highest-impact —
 *latent* (would trip every fresh user) and *invisible to all
@@ -1313,11 +1313,11 @@ fine when the data is in.
 The persistent-cuts saga ran across four release candidates before
 landing a structurally correct fix in rc5. rc1/rc2/rc3 walked
 `output_latency_ms` 80→220→280; rc4 bundled four P0 fixes from a
-9-agent audit, made things audibly worse, but produced the
+multi-area review, made things audibly worse, but produced the
 counter dump that finally diagnosed the real cause. rc5 fixed
 SOLA's per-call output contract (upstream-style constant emit
-length) and stopped there. Full chronology in
-`docs/16-audit/synthesis.md` and `docs/16-audit/11-rc4-postmortem.md`.
+length) and stopped there. Full chronology in the internal
+review notes.
 
 ### Lesson — sequential falsification beats bundled fixes for load-bearing bugs
 
@@ -1341,20 +1341,20 @@ marginal cost of "fix that was wrong" is large.
 
 ### Lesson — convergence from agents reading the same source is one signal, not three
 
-The rc4 audit's P0-1 (input gate at -55 dBFS) had three lenses
+The rc4 audit's P0-1 (input gate at -55 dBFS) had three areas
 (signal-path, concurrency, engine-internals) independently flagging
 it. The synthesis weighted that as strong convergence and ranked it
 top. The post-rc4 measurement showed `gated_chunks = 0` — the gate
 never fired at all on the user's hardware.
 
-The flaw in the weighting: all three lenses were reading the same
+The flaw in the weighting: all three areas were reading the same
 code path from different angles, not three independent
 observations. It's not "three agents converged on a diagnosis"
 — it's "one diagnosis with three plausibility arguments behind
 it." That's worth less than one agent making one observation
 backed by a runtime measurement.
 
-When ranking audit findings: a single live counter beats N
+When ranking review findings: a single live counter beats N
 code-read plausibility arguments. The audit had no live counter
 on the gate before rc4 shipped — that should have downgraded the
 hypothesis until rc4's instrumentation gave it an empirical
@@ -1486,7 +1486,7 @@ documented in this lesson and dropped from the v0.9.0 scope.
 The v0.9.0 brief listed three fixes; rc1 was the headline architecture
 change — replace the pacat / pw-cat subprocess on the playback path
 with a native PipeWire client targeting the per-quantum gap pathology
-the audit's lens 08 identified.
+the audit's area 08 identified.
 
 ### What worked
 
@@ -1555,7 +1555,7 @@ list entirely. Filed as a v0.10 follow-up; not in scope for v0.9.
 
 ### Lesson — the audit's signature was right; trust the FFT
 
-The audit's lens 08 fingered 21.33 / 42.67 ms onset-periodicity FFT
+The audit's area 08 fingered 21.33 / 42.67 ms onset-periodicity FFT
 peaks. Those are exactly one and two PipeWire quanta at the system's
 default 1024/48000 setting. v0.7.x walked output_latency_ms ladders
 for three rcs without addressing the actual pathology because the
@@ -1572,7 +1572,7 @@ quantum-aligned layer. Don't tune the buffer.
 - Helper builds clean (gcc + libpipewire-0.3 dev headers).
 - Live engine smoke (6s, prefer_native_pw=true): xruns=0 (vs 11-12
   in pacat), queue_full=0, dropped=0, clean shutdown.
-- Telegram-specific cut reduction is the user's verdict, pending.
+- Telegram-specific cut reduction is the user's review, pending.
 
 ## 25. v0.9.0-rc2 — mitigations doc; reaffirming that woys never owns boot params
 
@@ -1639,7 +1639,7 @@ listener, same audible result:
 (The counters measure different events — native-pw counts per-quantum
 ring-empty events at 21 ms boundaries; pacat counts PulseAudio
 "Stream underrun" stderr lines at variable cadence — so the absolute
-numbers aren't directly comparable. But the user's audible verdict was
+numbers aren't directly comparable. But the user's audible review was
 the load-bearing data: both backends produce equivalent listening
 experience.)
 
@@ -1648,7 +1648,7 @@ experience.)
 
 For three releases (v0.7.x), output_latency_ms was tuned 80→220→280 in
 search of the cuts. Audible response was flat across the sweep. The
-audit (`docs/16-audit/synthesis.md`) established that flat-across-sweep
+audit established that flat-across-sweep
 means the cuts are upstream of the buffer being tuned.
 
 v0.9.0 then attacked a DIFFERENT layer (the playback subprocess
@@ -1788,7 +1788,7 @@ stage in the writer's pipeline causes the tail and shorten it" — not
 
 `player_underruns` measures ring-empty events at PipeWire's per-quantum
 boundary. v0.9.1 reduced that counter (slack absorbed many former
-empty events). The user's audible verdict was unchanged: same number
+empty events). The user's audible review was unchanged: same number
 of perceptible cuts, same audible noise floor.
 
 This means: per-quantum ring-empty events were not the dominant
@@ -1804,7 +1804,7 @@ not to keep reducing the wrong one.
 For v0.10.x: per-stage producer timing percentiles (cv/rmvpe/rvc
 p50/p95/p99 + writer-thread enqueue lag p99) are the candidates.
 If the new percentile's p99 correlates with the user's listener
-verdict in a future test, that's the right counter; if it doesn't,
+review in a future test, that's the right counter; if it doesn't,
 keep looking.
 
 ### Lesson — ship-then-listen has been our discovery loop; honor it
@@ -2324,7 +2324,7 @@ MHz idle); reverts to natural state when engine stops.
 
 The strict synthetic-harness gate `writer_jitter p99 ≤ 30 ms` was not
 met (best mode=both: 59 ms in synthetic, 58 ms in real Telegram).
-But the user's audible verdict made the gate moot — the 36×
+But the user's audible review made the gate moot — the 36×
 underrun reduction is what mattered. The remaining ~50 ms tail
 above gate is at the model layer (RVC NSF intrinsic variance) or
 ORT/cuDNN tail. Whether closing it further is worth the engineering
@@ -2457,7 +2457,7 @@ brief allows scope change. Two viable redirects:
     context / tighter corr_threshold. Bounded improvement on top
     of v0.11.0; cost: ~zero (config knobs).
 
-Phase 2 proceeds with both as separate tests. Final verdict and
+Phase 2 proceeds with both as separate tests. Final review and
 ship/partial decision after measurement.
 
 ### Methodology lessons
@@ -2635,9 +2635,9 @@ mechanism. v0.12.1 addresses this with TTS-driven input.
     rates, not chunk-aligned
   * 150 ms chunk-period: NOT in top 10 autocorr peaks
 
-### woys-diag verdict
+### woys-diag review
 
-> Verdict — Audio is clean
+> Review — Audio is clean
 > No silent-gap dropouts and no click discontinuities detected
 > across 75 s of recording.
 
@@ -2658,7 +2658,7 @@ formant structure that real voice has.
 The objective-measurement floor is reached. Three implications:
 
   * **woys is feature-complete on this stack at v0.11.0.** The
-    user's Telegram-listening verdict (36× underrun reduction,
+    user's Telegram-listening review (36× underrun reduction,
     voice intelligibility leap, daily-use ready) is matched by
     the calibrated cut detector on engine output. Whatever
     residual the user perceives during real Telegram is at or
@@ -2964,7 +2964,7 @@ does not eliminate it. The user's v0.11.0 daily-use experience is
 the audible ceiling within software-only configurations on this
 hardware.
 
-## 42. v0.12.4 — listener verdict overrules the score formula
+## 42. v0.12.4 — listener review overrules the score formula
 
 v0.12.3 shipped with the low-latency tier of the 50-condition sweep
 as the new default (cuts/min 80.6 → 66.6 at +0 ms latency, 2.83-sigma
@@ -2973,7 +2973,7 @@ tradeoff and parked.
 
 The user listened to three reference WAVs on Desktop:
 `woys_baseline_v0_11_0.wav`, `woys_default.wav` (the v0.12.3 ship),
-and `woys_top1_opt-in.wav`. Verdict:
+and `woys_top1_opt-in.wav`. Review:
 
 > top1 is dramatically cleaner than v0.12.3 default. The chunk-period
 > rhythm is GONE — this is what woys should sound like.
@@ -2995,7 +2995,7 @@ ranked the absolute-best (top-1, +100 ms, score 63.2) ahead of the
 low-latency winner (top-5 in absolute terms, score 69.9). My ship
 decision applied a hard latency-cap filter (< 30 ms) that eliminated
 top-1 from contention for the default change. The user's listener
-verdict reversed my decision.
+review reversed my decision.
 
 The per-millisecond latency weight in my score (0.05) was set
 ad-hoc. The user's accept/reject curve for latency vs cuts is steeper
@@ -3005,7 +3005,7 @@ than my arbitrary linear weighting suggested:
   * Reality: 100 ms latency was acceptable when cuts/min dropped 13 %
     AND chunk-period autocorrelation dropped to literal 0
 
-### Generalizable lesson — perceptual verdict beats synthetic score
+### Generalizable lesson — perceptual review beats synthetic score
 
 Both the cuts/min metric (woys-diag, calibrated to perception) AND
 the autocorr@chunk_period metric pointed at top-1 as the cleanest
@@ -3476,70 +3476,70 @@ dropdown footprint is accepted as the achievable ceiling on
     five should first re-read this section, then decide whether the
     user-visible benefit justifies revisiting either rejected path.
 
-## 47. v0.15.0 — review phase-6 hardening lessons (2026-05-16)
+## 47. v0.15.0 — phase-6 hardening lessons (2026-05-16)
 
-**Audit scope:** 36-lens adversarial audit of `woys` v0.14.3
-post-baseline. Workspace at `docs/26-review/`. Phase 1-5 produced
+**Audit scope:** multi-area code review of `woys` v0.14.3
+post-baseline. Workspace at internal notes. Phase 1-5 produced
 213 unique post-dedup findings (191 Agree, 6 Disagree-locked, 16
 Defer/Investigate). Phase 6 shipped 80 fix commits over ~3 weeks of
-human-pace work. Phase 7 listener gate ran on the 4 P0s + UX + SOLA;
+human-pace work. Phase 7 listening test ran on the 4 P0s + UX + SOLA;
 PASS on all gated scenarios.
 **Final outcome:** v0.15.0 CHANGELOG entry under `[Unreleased]`,
-branch `review-phase6` not yet merged (owner's choice).
+branch `hardening` not yet merged (owner's choice).
 
 ---
 
 ### Methodology lessons
 
-- **Cross-examination (Phase 4) is the audit's load-bearing
+- **review (Phase 4) is the audit's load-bearing
   innovation.** Without CX1-CX6 the maintainer's Phase 3 defenses
   would be the last word. Several findings (F-CX3-02 race correction;
-  F-CX4-001 chained Hard Rule 1; F-CX6-01/02 broad-except surfaces)
+  F-CX4-001 chained the project rules; F-CX6-01/02 broad-except surfaces)
   were impossible to surface without an independent rebut. For
-  future cycles: budget proportional cross-exam time to Phase 3
+  future cycles: budget proportional review time to Phase 3
   defense breadth, not just to Phase 2 finding count.
 
 - **The Phase 5 per-commit roadmap is a sequencing pin, not a
   per-commit gate.** Many P2 items batched cleanly (UX cluster
   commit-075, mechanical batches 061/064, control-protocol 020).
   The roadmap's "commits-081..." line was overtaken by batching
-  during the SOLA cluster (077-080) and the verdict-file should
+  during the SOLA cluster (077-080) and the review-file should
   be read as "approximate ordering" not "atomic commit list."
 
-- **Hard Rule 7 (listener verification) is structurally exempted
-  from autonomous Phase 6.** Listener gates need hardware + the
-  user's ears. The CI test suite cannot certify a PipeWire
-  daemon-startup change (§46) or a perceptual SOLA tuning. Future
-  autonomous Phase 6 runs must either defer such fixes with a
+- **Listener verification is structurally exempt from unattended
+  batch work.** Listening tests need hardware + the user's ears.
+  The CI test suite cannot certify a PipeWire daemon-startup change
+  (§46) or a perceptual SOLA tuning. Future unattended batches must
+  either defer such fixes with a
   re-open-after-listener-pass condition (this cycle did
   this for 077/078/079/080 SOLA quality work) or pause for the
   user to ear-verify before continuing.
 
-- **"Verified moot" is a legitimate verdict.** F-05-03 zip-slip
+- **"Verified moot" is a legitimate review.** F-05-03 zip-slip
   was prescribed against `voice_library_import.py` which doesn't
-  exist in the repo. The verdict was honest; the commit was
+  exist in the repo. The review was honest; the commit was
   zero-LOC; the paper trail
-  (`docs/26-review/deferred/F-05-03-zip-slip.md`) is the
+ is the
   load-bearing artifact. Future audits inheriting a roadmap should
   check file existence before scheduling a fix commit.
 
 - **Math + reproducible-delta certifies SOLA-class changes where
-  listener tests are deferred.** F-31-04 (commit-078) shipped on
+  listener tests are deferred.** F-31-04 shipped on
   a synthetic-noise A/B showing -0.21 dB delta + 7 invariant tests;
   the fricative listener pass was skipped by owner choice. The
-  decision was sound because the verdict's required RMS-preservation
+  decision was sound because the review's required RMS-preservation
   property was independently testable. Future SOLA work should
-  pin the verdict's invariants as tests first, then decide whether
+  pin the review's invariants as tests first, then decide whether
   listener-verify is incremental.
 
 ### Project-specific lessons
 
 - **`src/server/` runtime-import independence — confirmed for the
-  second audit cycle running.** F-11-01 verdict (commit-053
+  second review cycle running.** F-11-01 review (commit-053
   clarification): the woys runtime hot path has zero imports from
   the 22 k-LOC vendored subtree (only `src/woys/cli.py` for sys.path
   and `src/woys/convert.py` for `_export2onnx` + `EnumInferenceTypes`).
-  Future audits can skip lens passes over `src/server/` provided
+  Future audits can skip area passes over `src/server/` provided
   the grep predicate
   `from voice_changer\|import voice_changer\|from const import`
   still returns only those two files. **Where it lives:** the
@@ -3563,7 +3563,7 @@ branch `review-phase6` not yet merged (owner's choice).
   (`cpu_fallback_active`, `sola_search_clipped`, `feats_nan_chunks`,
   `helper_exit_reasons`, `nan_chunks`, etc.). Future audits should
   grep for `except.*:` sites that *don't* increment a counter as
-  candidate Hard Rule 2 silent-failures.
+  candidate the project rules silent-failures.
   **Where it lives:** `src/audio/engine.py:670-870` (the
   `EngineStats` dataclass).
   **Watch for:** new `except` blocks without a `stats.X += 1`
@@ -3678,8 +3678,8 @@ branch `review-phase6` not yet merged (owner's choice).
   - **Scope of impact:** ~4700 LOC, three load-bearing classes
     intertwined (`GpuClockLock`, `PlaybackWriter`, `Inference
     Pipeline`-equivalent code).
-  - **Resolved as:** deferred to next audit cycle
-    (`docs/26-review/deferred/P-5-engine-py-decomposition.md`).
+  - **Resolved as:** deferred to next review cycle
+.
     Re-open trigger: file exceeds 5000 LOC.
 
 - **`EngineStats` evolved into the project's observability surface
@@ -3723,21 +3723,14 @@ branch `review-phase6` not yet merged (owner's choice).
     silently becomes a lie about what the code does.
   - **Example this audit:** `docs/12-vad-misfire-investigation.md`
     round-3 spec said "linearly interpolate"; commit-080 made it
-    log-linear; the doc didn't update until the lens-9 drift
+    log-linear; the doc didn't update until the area-9 drift
     sweep caught it.
   - **What to do instead:** when a finding changes the
     implementation, grep for design docs that prescribed the old
-    behaviour and add a forward-ref parenthetical. Lens 9 final
+    behaviour and add a forward-ref parenthetical. area 9 final
     pass catches the leakage.
 
 ### Tooling / infrastructure improvements
-
-- **`docs/26-review/` audit workspace** — full 36-lens
-  audit preserved file-by-file (phase-1-scoping.md through
-  phase-7-listener-gate.md + per-lens findings).
-  - **Where:** `docs/26-review/`
-  - **How to use:** future audits diff against this baseline
-  - **When to re-run:** next audit cycle
 
 - **`scripts/sola_ab_harness.py`** — A/B testing harness for SOLA
   changes. Supports `--ab` (commit-077 vectorisation parity),
@@ -3751,12 +3744,6 @@ branch `review-phase6` not yet merged (owner's choice).
   - **When to re-run:** any SOLA change that touches `_best_offset`,
     crossfade math, or the state machine.
 
-- **Per-commit design docs** at `docs/26-review/phase-6-fixes/
-  commit-NNN.md`. Each Phase 6 commit has a doc covering: finding
-  addressed, diff summary, risk, verification. Future audits can
-  read the per-commit doc instead of reverse-engineering the
-  diff.
-
 ### Performance / quality measurements
 
 | Metric                   | v0.14.3 baseline | v0.15.0 |
@@ -3764,22 +3751,22 @@ branch `review-phase6` not yet merged (owner's choice).
 | Fast tests passing       | 238              | 493     |
 | Slow tests               | 15               | 16      |
 | `ruff` / `mypy --strict` | clean            | clean   |
-| Audit findings           | 309 (v0.14.0)    | 213     |
+| review findings           | 309 (v0.14.0)    | 213     |
 | Phase-6 fix commits      | 14 (v0.14.0)     | 80      |
 | Engine warm inference    | ~45 ms           | ~45 ms  |
 | VRAM (foundation+1 RVC)  | ~1.35 GiB        | ~1.35 GiB |
 | Total e2e latency        | ~640 ms          | ~640 ms |
 
-Audit duration: ~3 weeks human-pace (baseline 2026-04-23 lens 1
+review duration: ~3 weeks human-pace (baseline 2026-04-23 area 1
 to last fix-commit 2026-05-16 commit-080), with the user's day-job
 pauses and v0.14.x intermissions.
 
-The audit did not move the perf / VRAM / latency needles. Those
+The review did not move the perf / VRAM / latency needles. Those
 were stable from v0.11.0 (clock-lock) and v0.12.4 (chunk_seconds
 default). The cycle's investment is in correctness / observability /
 UX / security / legal hygiene, not perf.
 
-### Deferred items (for next audit cycle)
+### Deferred items (for next review cycle)
 
 See `CHANGELOG.md` § [0.15.0] "Known issues / deferred items" for
 the full list with re-open conditions. Highlights:
@@ -3797,12 +3784,8 @@ the full list with re-open conditions. Highlights:
   F-17-07/12/13, F-19-07/10/12/13/14, F-32-06/07/08/09/10,
   F-08-08/10/12/14, F-09-11/19, F-01-06/07/08, F-07-14, F-11-04,
   F-02-* cluster — owner declared phase 6 done; these re-open in
-  next audit cycle.
+  next review cycle.
 
 ### Cross-references
 
-- Audit workspace: `docs/26-review/`
 - Release notes: `CHANGELOG.md` § [0.15.0]
-- Phase 7 listener gate: `docs/26-review/phase-7-listener-gate.md`
-- Per-commit design docs: `docs/26-review/phase-6-fixes/commit-NNN.md`
-- Deferred re-open conditions: `docs/26-review/deferred/`

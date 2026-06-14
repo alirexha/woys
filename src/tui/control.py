@@ -55,8 +55,7 @@ def _runtime_dir() -> Path:
     """Resolve the user's runtime dir for woys ephemera (control socket,
     slow-chunk log, etc.).
 
-    review F-32-02 (commit-047, closes F-05-06, F-32-11,
-    F-cx4-002): delegates to `woys.xdg.safe_runtime_dir`, which does:
+    Delegates to `woys.xdg.safe_runtime_dir`, which does:
       * `mode=0700, exist_ok=True` on the XDG branch (mode-belt-and-
         braces; systemd-logind already sets `$XDG_RUNTIME_DIR` to
         0700 per spec);
@@ -83,14 +82,14 @@ def control_socket_path() -> Path:
 
 def runtime_path(name: str) -> Path:
     """Return `<runtime_dir>/<name>`. The directory is guaranteed
-    to exist + safe-mode by `safe_runtime_dir()` (commit-047)."""
+    to exist + safe-mode by `safe_runtime_dir()`."""
     return _runtime_dir() / name
 
 
 HandlerFn = Callable[[str], str]
 
 
-# review F-merged-020: framing limits. The docstring above promises
+# framing limits. The docstring above promises
 # "one newline-terminated command / single short reply", but the pre-fix
 # code did a single fixed-size `recv` (256 server / 512 client) and
 # silently truncated anything longer. The STATUS reply was already
@@ -101,15 +100,15 @@ HandlerFn = Callable[[str], str]
 MAX_COMMAND_BYTES = 64 * 1024
 MAX_REPLY_BYTES = 64 * 1024
 
-# review F-merged-020 part 2: protocol version. Bumps on
+# part 2: protocol version. Bumps on
 # incompatible wire changes (semantic shifts of OK / ERR / JOB, new
 # required fields, framing renegotiation). The STATUS reply stamps
 # `proto=<N>` so a client can read the server's version and degrade
 # gracefully. Pre-fix the docstring reasoned about "older clients" but
-# no version field existed (Hard Rule 1 violation).
+# no version field existed (contract violation).
 #
 # Wire history:
-#   v1 - 2026-05-15 - newline framing (commit-037a) + JOB protocol +
+#   v1 - 2026-05-15 - newline framing + JOB protocol +
 #                     ERR-on-failure invariant + STATUS stamps
 #                     `proto=1`. The first version with an explicit
 #                     wire-version contract.
@@ -259,7 +258,7 @@ class ControlServer:
     framing. Server quits when `stop()` is called.
     """
 
-    # review F-merged-025 (commit-072): the listener loop was
+    # the listener loop was
     # serial pre-fix -- every accept() was handled inline before the
     # next accept ran. A slow handler (heavy MODEL swap, blocked on a
     # contended engine lock, slow disk reload) stalled every
@@ -282,7 +281,7 @@ class ControlServer:
         with contextlib.suppress(OSError):
             self.path.unlink(missing_ok=True)
 
-        # v0.14.0 (Lens 6 / Lens 12 / C211): set restrictive umask
+        # v0.14.0 (area 6 / area 12 / C211): set restrictive umask
         # AROUND the bind so the socket file is created with mode 0600
         # atomically. Pre-v0.14.0 the bind created the file with the
         # process's default umask (typically 0644 or 0664), then
@@ -356,7 +355,7 @@ class ControlServer:
                 continue
             except OSError:
                 break
-            # review F-merged-025: hand each accepted connection
+            # hand each accepted connection
             # to a worker. Pre-fix the per-connection body ran inline
             # here; a slow handler stalled every other client at the
             # socket layer. The pool exists from start() through stop().
@@ -376,7 +375,7 @@ class ControlServer:
                 break
 
     def _serve_one(self, conn: socket.socket) -> None:
-        """Per-connection worker body. review F-merged-025 split
+        """Per-connection worker body. split
         this out of `_loop` so the accept loop can submit each conn
         to a small ThreadPoolExecutor. Must be exception-safe at the
         top level -- an uncaught raise here only kills the worker
@@ -384,7 +383,7 @@ class ControlServer:
         with conn:
             try:
                 conn.settimeout(0.5)
-                # review F-05-01: SO_PEERCRED UID check.
+                # SO_PEERCRED UID check.
                 # The socket file is mode 0600 + lives under
                 # XDG_RUNTIME_DIR (which is mode 0700 by the
                 # systemd-logind contract), so cross-UID connect
@@ -403,7 +402,7 @@ class ControlServer:
                 if not _check_peer_uid(conn):
                     conn.sendall(b"ERR unauthorized\n")
                     return
-                # review F-merged-020: read until newline (or the
+                # read until newline (or the
                 # MAX_COMMAND_BYTES cap), honoring the docstring's
                 # "newline-terminated" promise. Pre-fix this was a
                 # single recv(256) that silently truncated.
@@ -415,7 +414,7 @@ class ControlServer:
                     try:
                         reply = self.handler(data) if data else "ERR empty"
                     except Exception as handler_err:
-                        # review F-CX6-01 (commit-062): pre-fix
+                        # pre-fix
                         # the handler's exception propagated out of
                         # this with-conn block, was NOT caught by the
                         # outer except (TimeoutError, OSError), and
@@ -433,7 +432,7 @@ class ControlServer:
                 logger.warning("control conn error: %s", e)
 
 
-# review F-05-01: SO_PEERCRED UID check. Linux's `struct ucred`
+# SO_PEERCRED UID check. Linux's `struct ucred`
 # is 12 bytes (3 x int32: pid / uid / gid). `SO_PEERCRED` is the
 # kernel API. The check is the regression-guard for the 0600 + XDG_
 # RUNTIME_DIR layer; it does NOT replace those (filesystem perms still
@@ -508,7 +507,7 @@ def send_command(cmd: str, timeout: float = 30.0) -> str:
                 s.settimeout(timeout)
                 s.connect(str(path))
                 s.sendall((cmd + "\n").encode("utf-8"))
-                # review F-merged-020: read until newline (or
+                # read until newline (or
                 # MAX_REPLY_BYTES). Pre-fix this was recv(512) which
                 # silently truncated the STATUS reply (~250 B and
                 # growing) when it eventually crossed the cap.

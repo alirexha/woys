@@ -1,6 +1,6 @@
 """Shared XDG_RUNTIME_DIR + secure `/tmp` fallback helper.
 
-review F-32-02 (closes F-05-06, F-32-11, F-cx4-002): pre-fix
+pre-fix
 `tui/control.py:_runtime_dir` and `woys/instance_lock.py:_runtime_dir`
 both fell back to `/tmp/woys-{uid}` when `XDG_RUNTIME_DIR` was unset
 and called bare `mkdir(parents=True, exist_ok=True)` -- which inherits
@@ -12,7 +12,7 @@ channel and the instance lock.
 Two code comments asserted the "symlink TOCTOU surface closes" --
 true ONLY on the XDG branch, false on the `/tmp` fallback. The
 `instance_lock.py` comment was worse: it claimed `tui/control.py`
-"protected" the mode -- a Hard Rule 1 chain because `tui/control.py`
+"protected" the mode -- a contract chain because `tui/control.py`
 set no mode either.
 
 This module provides ONE `safe_runtime_dir()` used by both, with:

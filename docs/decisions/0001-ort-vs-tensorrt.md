@@ -34,7 +34,7 @@ tree, default-off, for future re-evaluation.
   warm steady state; unviable for real-time RVC.
 - **Replace ORT with a custom inference runtime (TVM, custom CUDA
   C++)** — explicitly forbidden by `PROJECT_BRIEF.md` §12 and by
-  `the project notes`'s "Things to never do" list.
+  the project notes's "Things to never do" list.
 
 ## Rationale
 

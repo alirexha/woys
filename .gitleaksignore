@@ -1,3 +1,2 @@
 # False positives: f0_up_key is a pitch-shift attribute, not an API key.
-8330f77cc8c24890724c3beb2e67a732c983ef83:docs/26-review/phase-6-fixes/commit-040b.md:generic-api-key:8
 54a9a9d2ec6d02f3fa6d359b15a40f9ee0dd7a81:src/tui/app.py:generic-api-key:259

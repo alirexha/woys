@@ -1,4 +1,4 @@
-"""v0.14.0 (Lens 17 / C009): single-instance flock tests."""
+"""v0.14.0 (area 17 / C009): single-instance flock tests."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def test_acquire_creates_lock_file_with_pid(fake_runtime_dir: Path) -> None:
     with acquire_instance_lock() as lock_path:
         assert lock_path == fake_runtime_dir / "instance.lock"
         assert lock_path.exists()
-        # File is mode 0600 (hygiene per Lens 6).
+        # File is mode 0600 (hygiene per area 6).
         assert lock_path.stat().st_mode & 0o777 == 0o600
         # PID written inside.
         with open(lock_path) as fh:
@@ -67,7 +67,7 @@ def test_concurrent_acquire_raises_busy(fake_runtime_dir: Path) -> None:
 def test_run_tui_acquires_instance_lock(
     fake_runtime_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """review F-merged-002 (P0): `woys run` -- the TUI entry point --
+    """`woys run` -- the TUI entry point --
     MUST acquire the single-instance lock.
 
     Pre-fix the lock was wired only into `woys engine` (cmd_engine);

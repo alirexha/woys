@@ -1,4 +1,4 @@
-"""review F-merged-025 (commit-072) bug-class test.
+"""bug-class test.
 
 Pre-fix `ControlServer._loop` handled each accepted connection
 inline -- a single slow handler call stalled every subsequent

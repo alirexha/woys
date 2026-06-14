@@ -1,4 +1,4 @@
-"""review F-32-02: shared safe runtime-dir helper with hardened
+"""shared safe runtime-dir helper with hardened
 `/tmp/woys-{uid}/` fallback.
 
 Pre-fix `_runtime_dir` in `tui/control.py` and `woys/instance_lock.py`

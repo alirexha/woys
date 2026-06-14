@@ -79,7 +79,7 @@ def _hann_fade(n: int) -> tuple[NDArrayF32, NDArrayF32]:
     crossfade). Used on the *aligned* SOLA branch where prev_tail
     and the new emit share phase: the two waveforms add coherently
     in amplitude, so an amplitude-summing crossfade preserves the
-    perceived loudness. Pre-F-31-04 (commit-078) this was the only
+    perceived loudness. Pre-F-31-04 this was the only
     fade pair; both aligned and fall_back paths used it.
     """
     if n <= 0:
@@ -121,7 +121,7 @@ def _equal_power_fade(n: int) -> tuple[NDArrayF32, NDArrayF32]:
     return fade_out, fade_in
 
 
-# review F-31-04 (commit-078): runtime A/B knob. The production
+# runtime A/B knob. The production
 # code always uses equal-power on `fell_back`; the SOLA A/B harness
 # monkey-patches this to `False` to reproduce the pre-fix behaviour
 # (equal-gain on both branches) so an `--legacy-fade` listener pass
@@ -158,13 +158,13 @@ def _best_offset(
     regardless of which offset wins. Bidirectional search would let
     us recover from "model emitted slightly early" cases too, but
     real RVC's bias is purely toward late emission, so one-sided is
-    sufficient and matches the reference implementation. Hard Rule 1
+    sufficient and matches the reference implementation. the project rules
     note: the "RVC bias is purely late" claim is an assumed property
     of the reference implementation, not an in-tree measurement; the
     one-sided contract follows upstream rather than independent
-    evidence. F-31-05 cluster (commit-079).
+    evidence. F-31-05 cluster.
 
-    review F-07-03 (commit-077): vectorised. Pre-fix this ran a
+    vectorised. Pre-fix this ran a
     Python loop over `range(search + 1)` (default 65 iterations
     per call), each computing `np.linalg.norm(slice_)` + `np.dot(tail,
     slice_)`. At `chunk_seconds=0.25` and a 100% voiced session the
@@ -221,7 +221,7 @@ def _best_offset(
     best_corr = float(corr[best_idx])
 
     if best_corr >= threshold:
-        # F-31-05 (commit-079): flag peak-at-far-edge as `clipped` so
+        # F-31-05: flag peak-at-far-edge as `clipped` so
         # SOLAStream can count "alignment may lie beyond the search
         # window" separately from fall_back. `best_idx` counts in
         # [0, search] so `best_idx == search` is the far edge.
@@ -303,12 +303,12 @@ class SOLAStream:
     offset` samples (variable length); the rc4 zero-pad covered the
     symptom by injecting silence and was audibly worse than letting
     the buffer drain. rc5 fixes the math instead of padding over it.
-    See `docs/16-audit/11-rc4-postmortem.md`.
+    See internal notes.
     """
 
     def __init__(self, cfg: SOLAConfig | None = None) -> None:
         self.cfg = cfg or SOLAConfig()
-        # review F-31-04 (commit-078): precompute BOTH fade pairs
+        # precompute BOTH fade pairs
         # so `process()` picks the right one per chunk with no
         # per-chunk allocation. Equal-gain (Hann²) goes on the aligned
         # branch -- prev_tail and the new emit share phase, amplitudes
@@ -332,7 +332,7 @@ class SOLAStream:
         # search_ms tuning is off; they no longer indicate output drain
         # (rc5 emits constant `chunk_n` samples per call regardless).
         self.fallback_count: int = 0
-        # review F-31-05 (commit-079): "alignment peak landed at
+        # "alignment peak landed at
         # the FAR edge of the [0, search] window" events. Distinct
         # from `fallback_count`: the corr cleared the threshold (so
         # we trusted the offset), but the peak hit `best_idx == search`
@@ -413,7 +413,7 @@ class SOLAStream:
         emit = new_audio[emit_start:emit_end].astype(np.float32, copy=True)
 
         # Crossfade the leading cf samples of emit with prev_tail.
-        # review F-31-04 (commit-078): branch on `fell_back`.
+        # branch on `fell_back`.
         # On the aligned path prev_tail and the new emit share phase,
         # so the equal-GAIN Hann pair (amplitudes sum to 1) preserves
         # amplitude as expected. On the fall_back path the two are

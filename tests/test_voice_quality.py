@@ -262,7 +262,7 @@ def test_voices_produce_distinguishable_outputs() -> None:
     similarities: list[str] = []
     # Threshold 0.999: "literally identical samples" guard. RVC remaps voice
     # timbre but the gross spectrum can stay similar across voices when fed
-    # the same synthetic input - that's expected, not a bug. Real verdict
+    # the same synthetic input - that's expected, not a bug. Real review
     # comes from the user listening to the saved WAVs.
     for a, b in pairs:
         cs = _cos_sim(sigs[a], sigs[b])

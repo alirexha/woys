@@ -1,4 +1,4 @@
-"""review F-merged-001 (P0): `_make_session` must hard-fail the silent
+"""`_make_session` must hard-fail the silent
 CUDA->CPU fallback.
 
 Pre-fix `_make_session` appended `CPUExecutionProvider` as an unconditional
@@ -6,7 +6,7 @@ landing pad and never checked `get_providers()`. A broken onnxruntime-gpu
 wheel / NVIDIA driver / missing `ort.preload_dlls()` therefore produced a
 working-looking but unusable engine -- realtime RVC on CPU runs ~10-50x over
 the chunk-period latency budget -- with no error surfaced anywhere. Five
-lenses converged on this independently; it is the strongest signal in the
+areas converged on this independently; it is the strongest signal in the
 audit.
 
 These tests stub `ort.InferenceSession` so they need no GPU and no model

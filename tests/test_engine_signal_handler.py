@@ -1,4 +1,4 @@
-"""review F-merged-010 (P0): the SIGTERM/SIGINT handler must be
+"""the SIGTERM/SIGINT handler must be
 async-signal-safe -- fast, fork-free, and re-entrant.
 
 Pre-fix `_signal_handler_revert_lock` called `_revert_gpu_clock_lock()`
@@ -74,7 +74,7 @@ def test_signal_handler_does_no_fork_or_subprocess_work(
 
 def test_signal_handler_reentrancy_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     """A repeated SIGTERM/SIGINT must not redo the handler's work -- the
-    second invocation only re-raises (the verdict's "repeated SIGTERM"
+    second invocation only re-raises (the review's "repeated SIGTERM"
     requirement). Pre-fix there is no guard, so the restore runs twice."""
     eng = _mk_engine()
 

@@ -25,7 +25,7 @@ All weights cache under:
 > contentvec; `hubert_base.pt` is no longer needed and is no longer
 > downloaded.
 
-**License callout (review F-cx1-new-D, commit-060):**
+**License callout (, commit-060):**
 - `contentvec-f.onnx` is distributed under **GPL-3.0** -- the upstream
   Hugging Face repo `wok000/weights_gpl` declares this in its name.
   woys NEVER redistributes the weight; `scripts/download_weights.py`
@@ -188,7 +188,7 @@ inputs.
   needs `+12` semitones; female-to-male `-12`. Start at 0 and tweak with `+`/`-`.
 - **woys is index-free.** RVC's optional faiss `.index` file
   (speaker-similarity blending during conversion) is NOT supported.
-  Per review F-31-01 + F-CX6-03 (commit-051): pre-fix
+  Per pre-fix
   `woys models download` fetched any `.index` file in the HF repo
   but the engine never consumed it (`index_rate` had no
   implementation). The product decision was to drop the unused

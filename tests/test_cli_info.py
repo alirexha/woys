@@ -1,4 +1,4 @@
-"""review F-merged-013 (P1): `woys info` must report the ONNX Runtime
+"""`woys info` must report the ONNX Runtime
 version and CUDA EP availability.
 
 Pre-fix `cmd_info` printed Python / PipeWire / GPU but never imported

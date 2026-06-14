@@ -1,10 +1,10 @@
-"""v0.14.0 (Lens 17 / C009): single-instance file lock.
+"""v0.14.0 (area 17 / C009): single-instance file lock.
 
 Pre-v0.14.0 there was no instance-level lock. Two concurrent `woys run`
 or `woys engine` invocations both unlinked each other's
 `$XDG_RUNTIME_DIR/woys/control.sock` and bound their own; both engines
 also wrote into WoysSink simultaneously, so listeners heard out-of-phase
-double-converted audio. Phase 1 lens-17 F17.7 reproduced the corruption.
+double-converted audio. Phase 1 area-17 F17.7 reproduced the corruption.
 
 This module provides a context manager that takes an exclusive flock on
 `$XDG_RUNTIME_DIR/woys/instance.lock` (or `/tmp/woys-{uid}/instance.lock`
@@ -45,12 +45,12 @@ def _runtime_dir() -> Path:
     """Pick the same dir that tui.control uses for the socket so the
     lock and the socket live next to each other.
 
-    review F-32-02 (commit-047, closes F-cx4-002): delegates to
+    delegates to
     `woys.xdg.safe_runtime_dir`, which enforces `mode=0700, exist_
     ok=False` on the `/tmp` fallback creation and lstat-refuses any
     pre-existing fallback that's not owned by us with strict mode.
     Pre-fix the comment falsely claimed the fallback's mode was
-    "protected by the caller in tui/control.py" -- a Hard Rule 1
+    "protected by the caller in tui/control.py" -- a contract
     chain because `tui/control.py` set no mode either.
     """
     from woys.xdg import safe_runtime_dir

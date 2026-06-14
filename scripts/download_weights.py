@@ -29,7 +29,7 @@ from pathlib import Path
 
 CACHE = Path.home() / ".local" / "share" / "woys" / "models"
 
-# review F-merged-003: these URLs use the moving ref `resolve/main`.
+# these URLs use the moving ref `resolve/main`.
 # The load-bearing integrity protection is now `WEIGHTS_SHA256` below, which
 # is populated and fail-closed -- if `main` ever serves bytes that differ
 # from the pinned hash (tampering, or a legitimate upstream re-publish),
@@ -37,7 +37,7 @@ CACHE = Path.home() / ".local" / "share" / "woys" / "models"
 # a silent integrity hole. Pinning each URL to a literal commit SHA as
 # defence-in-depth is a documented residual: it needs a known-good revision
 # string for the wok000/* repos that cannot be obtained offline without
-# fabricating it. See docs/26-review/phase-6-fixes/commit-010.md.
+# fabricating it.
 WEIGHTS: dict[str, str] = {
     "rmvpe_wrapped.onnx": (
         "https://huggingface.co/wok000/weights_gpl/resolve/main/rmvpe/rmvpe_20231006.onnx"
@@ -51,14 +51,14 @@ WEIGHTS: dict[str, str] = {
     ),
 }
 
-# SHA-256 integrity table. review F-merged-003 (P1): this used to ship
+# SHA-256 integrity table. this used to ship
 # empty, so `if expected` was always falsy and verification was dead code --
 # `install.sh` ran the unverified download on every fresh install. It is now
 # populated and the gate is **fail-closed**: a foundation weight with no
 # entry here is a hard error in `fetch()` (see below), not a silent pass.
 #
 # Hashes computed from the dev machine's known-good copies (the same files
-# that passed the review Phase 7 listener gate on real hardware). When
+# that passed the Phase 7 listening test on real hardware). When
 # upstream legitimately re-publishes a weight, a maintainer must re-run
 # `python scripts/download_weights.py --print-hashes` and bump the entry --
 # that is the correct trade for integrity.
@@ -92,7 +92,7 @@ def fetch(url: str, dest: Path, force: bool, *, skip_verify: bool = False) -> No
             if not data:
                 break
             f.write(data)
-    # review F-merged-003 (P1): fail-closed. A known foundation weight
+    # fail-closed. A known foundation weight
     # with no SHA256 entry is a hard error -- never a silent unverified pass
     # (the pre-fix `if expected and ...` skipped verification whenever the
     # table lacked an entry, which it always did).

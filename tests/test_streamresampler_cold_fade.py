@@ -1,4 +1,4 @@
-"""review F-31-11 (commit-079): `_StreamResampler.cold_fade_in_samples`.
+"""`_StreamResampler.cold_fade_in_samples`.
 
 A freshly-built `_StreamResampler` cold-starts its anti-aliasing filter
 delay line at zero, producing a sub-unity amplitude on the first

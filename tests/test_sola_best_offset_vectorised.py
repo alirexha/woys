@@ -1,4 +1,4 @@
-"""review F-07-03 (commit-077): the vectorised `_best_offset`
+"""the vectorised `_best_offset`
 must match the pre-fix loop reference exactly (or close enough that
 the only differences are fp-tie reshuffles, not real divergence) over
 a battery of structured and random inputs.
@@ -75,7 +75,7 @@ def test_exact_shift_recovers_same_offset(overlap: int, search: int, threshold: 
             f"shift={true_shift}: loop={off_loop} vec={off_vec}"
         )
         assert fb_loop == fb_vec
-        # F-31-05 (commit-079): both impls must agree on the clipped
+        # F-31-05: both impls must agree on the clipped
         # predicate too. When `true_shift == search` and the corr
         # cleared threshold, both should flag clipped=True.
         assert cl_loop == cl_vec
@@ -115,7 +115,7 @@ def test_uncorrelated_falls_back_under_threshold(
 
 @pytest.mark.parametrize(("overlap", "search", "threshold"), _params())
 def test_random_battery_parity(overlap: int, search: int, threshold: float) -> None:
-    """50 random adversarial inputs -- both impls must agree on offset
+    """50 random thorough inputs -- both impls must agree on offset
     AND fell_back. Drives both correlated and uncorrelated cases by
     seeding the head's relevant window with a noisy copy of tail."""
     from audio.sola import _best_offset, _best_offset_loop_reference

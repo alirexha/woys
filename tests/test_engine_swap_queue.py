@@ -1,4 +1,4 @@
-"""review F-03-02 + F-13-12 (commit-042-043): the model-swap
+"""the model-swap
 queue + per-call completion events.
 
 Pre-fix:
@@ -37,7 +37,7 @@ if str(REPO / "src" / "server") not in sys.path:
 
 
 def test_request_model_swap_returns_per_call_request() -> None:
-    """Pin the API contract: F-23-17 (commit-076) widened the return
+    """Pin the API contract: F-23-17 widened the return
     type from `threading.Event` to `_SwapRequest` so callers can
     read `.error` after `.completion.wait()`. Two requests carry
     DIFFERENT events (no shared broadcast); the original F-03-02
@@ -144,7 +144,7 @@ def test_stop_resolves_outstanding_swap_waiters_promptly() -> None:
         "F-13-12: stop() must resolve outstanding swap events so "
         "callers don't park for the full 10s JobRegistry timeout"
     )
-    # F-23-17 (commit-076): a swap resolved by `stop()` must carry an
+    # F-23-17: a swap resolved by `stop()` must carry an
     # error so callers know the swap was NOT applied.
     assert req.error is not None
     assert "stopped" in str(req.error).lower()
@@ -165,7 +165,7 @@ def test_request_model_swap_after_stop_resolves_immediately() -> None:
 
     req = eng.request_model_swap(Path("/tmp/late.onnx"))
     assert req.completion.is_set(), "swap submitted to a stopped engine must resolve immediately"
-    # F-23-17 (commit-076): the stopped-engine fast-fail must surface
+    # F-23-17: the stopped-engine fast-fail must surface
     # via `req.error` so the TUI can route to record_error.
     assert req.error is not None
     assert "stopped" in str(req.error).lower()

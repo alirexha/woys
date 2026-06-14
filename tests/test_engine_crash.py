@@ -1,4 +1,4 @@
-"""review F-17-06 (P1): the headless path must not be blind to a
+"""the headless path must not be blind to a
 worker-thread crash.
 
 If `_run_loop` exits via an unhandled exception, `EngineStats.crashed` must
@@ -87,7 +87,7 @@ def test_start_resets_crashed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert eng.stats.crashed is False, "start() must clear a stale crashed flag"
 
 
-# ---- review F-17-10: playback-helper liveness check + respawn cap -----
+# ---- playback-helper liveness check + respawn cap -----
 
 
 def test_spawn_checked_raises_when_helper_exits_immediately() -> None:
@@ -146,7 +146,7 @@ def test_watchdog_loop_caps_respawn_failures(monkeypatch: pytest.MonkeyPatch) ->
     assert eng.stats.last_error and "respawned" in eng.stats.last_error
 
 
-# ---- review F-14-02: parent-death signal on playback-helper spawns ----
+# ---- parent-death signal on playback-helper spawns ----
 
 
 def test_spawn_checked_arms_parent_death_signal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -218,7 +218,7 @@ def test_set_pdeathsig_kills_child_when_parent_dies() -> None:
         pytest.fail("grandchild survived parent death -- PR_SET_PDEATHSIG not armed")
 
 
-# ---- review F-14-05: stop() releases in-process ONNX sessions --------
+# ---- stop() releases in-process ONNX sessions --------
 
 
 def test_stop_releases_in_process_sessions(monkeypatch: pytest.MonkeyPatch) -> None:

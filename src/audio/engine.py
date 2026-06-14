@@ -44,7 +44,7 @@ The engine runs across 5-6 threads:
 - TUI thread: polls `EngineStats` for live UI.
 - Signal-handler thread: SIGTERM/SIGINT coordination.
 
-review F-merged-017 (commit-040a): `EngineStats` is shared mutable
+`EngineStats` is shared mutable
 state. `stats.<counter> += 1` is LOAD/BINARY_OP/STORE_ATTR (the GIL
 guarantees each bytecode, not the triple -- textbook lost-update);
 `helper_exit_reasons.append() + len(...) > 10: pop(0)` from two
@@ -224,7 +224,7 @@ class EngineConfig:
     # comfortably above this; the perceptual delta dwarfs the latency
     # penalty per the user's listening test.
     #
-    # review F-11-03a (commit-059) honesty caveat: that
+    # honesty caveat: that
     # "perceptual delta dwarfs the latency penalty" claim is from an
     # **n=1 author A/B on desktop WAV playback** during v0.12.4. It
     # has NOT been validated in the production Discord / CS2 VoIP
@@ -327,10 +327,10 @@ class EngineConfig:
     # on the reasoning that smaller chunks at chunk_seconds=0.15 would
     # eliminate the per-quantum stdin/PipeWire-callback race v0.6.7
     # documented (~43 ms zero-gaps on bursty writes). The
-    # `docs/16-audit/synthesis.md` retro disagreed: rc1's "this won't
+    # internal notes retro disagreed: rc1's "this won't
     # apply" is hand-wavy and doesn't address the race mechanism, and
     # the symptom we hear in Telegram (sample-exact zeros, voice-
-    # correlated, ~40 ms quantized - see lens 08) matches pw-cat's
+    # correlated, ~40 ms quantized - see area 08) matches pw-cat's
     # documented per-quantum-gap pattern more closely than pacat's
     # underrun pattern. Migration cascade in `tui/config.py` pulls
     # users on the rc1+ default sentinel `True` forward to `False`;
@@ -430,7 +430,7 @@ class EngineConfig:
     # See `docs/11-microcuts-bug.md` part 3.
     prime_silence_seconds: float = 0.0
     # v0.7.0-rc4 - gate threshold lowered -55 → -75. The audit
-    # (`docs/16-audit/synthesis.md`, lens 06 / S1) traced rc1/rc2/rc3
+    # traced rc1/rc2/rc3
     # cuts to this gate firing on intra-speech RMS dips: -55 dBFS is
     # only ~6 dB below typical room noise on a USB condenser mic, and brief
     # speech valleys (between syllables, on plosive onsets, during
@@ -569,7 +569,7 @@ class EngineConfig:
     # sessions take which path.
     use_tensorrt: bool = False
 
-    # review F-merged-001 (P0): when False (default), `_make_session`
+    # when False (default), `_make_session`
     # hard-fails (CpuFallbackError) if a CUDA EP is installed but ONNX
     # Runtime bound a model session CPU-only. Realtime RVC on CPU runs
     # ~10-50x over the chunk-period latency budget -- it is a non-functional
@@ -679,7 +679,7 @@ class EngineConfig:
 @dataclass
 class EngineStats:
     running: bool = False
-    # review F-17-06 (P1): set True iff `_run_loop` exited via an
+    # set True iff `_run_loop` exited via an
     # *unhandled exception* (not a clean `stop()`). `running` alone cannot
     # distinguish "the worker crashed" from "someone called stop()", and
     # exit-code correctness for the headless / WM-scripting path depends on
@@ -720,7 +720,7 @@ class EngineStats:
     # targets that mechanism. Capped at 50 entries.
     tail_chunk_log: list[dict[str, float]] = field(default_factory=list)
     last_error: str | None = None
-    # review F-23-14 (commit-075): timestamp of the most recent
+    # timestamp of the most recent
     # `last_error` write (monotonic seconds). The TUI uses this to
     # render an age ("error: ... (3 s ago)") instead of a sticky string
     # the reader cannot distinguish from a freshly minted failure --
@@ -732,7 +732,7 @@ class EngineStats:
     # the most recent failure (so a real cascade still surfaces, but a
     # one-off transient self-clears once the engine is healthy again).
     last_error_ts: float | None = None
-    # review F-merged-030 (commit-048): cold-start progress.
+    # cold-start progress.
     # Pre-fix start() ran _ensure_sessions + _warmup_realtime_pipeline
     # + (optional) eager_warmup + GPU clock-lock subprocess.run all on
     # the caller's thread before spawning the worker -- the TUI froze
@@ -746,7 +746,7 @@ class EngineStats:
     # this field via `_refresh_stats` so the user sees a live stage,
     # not a frozen UI.
     warmup_stage: str = ""
-    # review F-07-17 (commit-049): count chunks the engine had
+    # count chunks the engine had
     # to drop on its way to the monitor stream because the bounded
     # `_monitor_queue` was full. Each drop means the monitor sink
     # (host default audio device) was slower than the chunk cadence
@@ -754,7 +754,7 @@ class EngineStats:
     # main thread is NOT blocked. Pre-fix the engine wrote synchronously
     # to `monitor_stream.write()` and stalled on a slow sink.
     monitor_drops: int = 0
-    # review F-merged-015: bounded timestamped error history. Pre-
+    # bounded timestamped error history. Pre-
     # fix `last_error` was a single clobberable string with ~28 write
     # sites across 6 threads. A real failure cascade (`subprocess died
     # -> sessions reloading -> pacat respawn failed`) overwrote
@@ -792,7 +792,7 @@ class EngineStats:
     # v0.9.0 - when the native-pw helper is in use, the helper prints
     # "underruns=N\n" on stderr roughly once per second; the engine's
     # stderr-reader parses those lines into this counter. Closes audit
-    # lens 09 rank 1 ("pw-cat is silent on underruns; we swapped a
+    # area 09 rank 1 ("pw-cat is silent on underruns; we swapped a
     # metric we could see for one we can't"). Stays 0 in pw-cat /
     # pacat modes (those backends don't emit `underruns=` lines).
     player_underruns: int = 0
@@ -804,7 +804,7 @@ class EngineStats:
     # ones increment silently to avoid spamming the TUI.
     dropped_chunks: int = 0
     # v0.7.0-rc4 - instrumentation for the four silent-drop classes the
-    # `docs/16-audit/synthesis.md` audit identified as previously
+    # internal notes audit identified as previously
     # invisible to every existing counter. Each is incremented at
     # the exact site that emits zeros / loses samples; together with
     # `dropped_chunks` and `queue_full_events` they cover every
@@ -832,7 +832,7 @@ class EngineStats:
     #                        regardless of fallback - so this counter is
     #                        purely a "how often is the search giving up"
     #                        diagnostic, not a cuts driver.
-    #   sola_search_clipped - review F-31-05 (commit-079). Counts
+    #   sola_search_clipped -. Counts
     #                        chunks where the alignment search's peak
     #                        landed at the FAR edge of the [0, search]
     #                        window with corr above threshold. Distinct
@@ -847,7 +847,7 @@ class EngineStats:
     #
     # rc4's `sola_drain_ms` (cumulative ms of zero-padding) was removed
     # in rc5 because the pad path itself was removed. SOLA emits
-    # constant-size chunks now (`docs/16-audit/11-rc4-postmortem.md`
+    # constant-size chunks now (internal notes
     # §"Proposed rc5 scope"). Drain is structurally zero by construction.
     input_overflows: int = 0
     gated_chunks: int = 0
@@ -857,7 +857,7 @@ class EngineStats:
 
     # v0.7.0-rc6 - per-stage producer-side timing for the writer-jitter
     # investigation. The rc5 postmortem
-    # (`docs/16-audit/12-rc5-writer-jitter-probe.md`) attributed the
+    # attributed the
     # live `writer_jitter_ms = 62` to producer-side cadence variance,
     # not consumer-side. These two new stages plus the existing
     # inference timing sum to per-iteration wall time:
@@ -939,7 +939,7 @@ class EngineStats:
     trt_active_for: dict[str, bool] = field(default_factory=dict)
     trt_init_errors: dict[str, str] = field(default_factory=dict)
 
-    # review F-merged-001 (P0): True if any model session bound
+    # True if any model session bound
     # CPU-only. Only reachable when cfg.allow_cpu_fallback is set -- with
     # the default config `_make_session` raises CpuFallbackError instead.
     # Surfaced by `woys diag` so a deliberate CPU-only run is visible.
@@ -948,7 +948,7 @@ class EngineStats:
     # B28 / corr-009: thread priority + affinity warnings. Each entry
     # describes one failure (engine main, writer, child) so a user with
     # multiple priority issues can see all of them, not just the last.
-    # review F-merged-026 (commit-073): bounded deque. Pre-fix
+    # bounded deque. Pre-fix
     # `list` + bare `.append()` was unbounded -- a long-running
     # session that hit repeating keepalive / monitor / debug-log
     # failures would grow this list without limit, slowly eating
@@ -984,14 +984,14 @@ class EngineStats:
     # Latest nvidia-smi -lgc / -rgc result message; surfaced in
     # `woys diag` so apply / revert failures are visible.
     gpu_clock_lock_last_message: str = ""
-    # v0.14.0 (Lens 17 / Lens 19 / C019): True iff the most recent
+    # v0.14.0 (area 17 / area 19 / C019): True iff the most recent
     # `nvidia-smi -rgc` failed (sudo revoked, driver flicker). The next
     # engine.start() inspects this flag and attempts a fresh -rgc before
     # applying a new lock; otherwise the GPU stays locked across
     # sessions with only `last_error` (easily clobbered) as evidence.
     gpu_clock_lock_revert_failed: bool = False
 
-    # review F-merged-017 (commit-040c): the rolling-window deques
+    # the rolling-window deques
     # above (~11 of them) are appended from one thread (engine worker,
     # writer, GPU keepalive thread) and read from ANOTHER thread (TUI
     # poll / `woys diag`) via the `inference_samples()` /
@@ -1040,7 +1040,7 @@ class EngineStats:
     def inference_samples(self) -> list[float]:
         """Snapshot of the recent-inference rolling window in ms.
 
-        review F-merged-017 (commit-040c): copy under
+        copy under
         `_internal_lock` so a concurrent appender doesn't raise
         `RuntimeError: deque mutated during iteration`. Same for the
         ~11 sibling snapshot accessors below.
@@ -1179,14 +1179,14 @@ def _cuda_provider_entry() -> tuple[str, dict[str, object]]:
 _TRT_ACTIVE_PER_SESSION: dict[str, bool] = {}
 _TRT_INIT_ERRORS: dict[str, str] = {}
 
-# review F-17-10 (P1): cap on consecutive playback-helper respawns
+# cap on consecutive playback-helper respawns
 # that never stay alive. The watchdog used to retry forever (running=True,
 # zero audio). 8 consecutive deaths-without-recovery is unambiguously a
 # broken binary/config, not a transient PipeWire hiccup (a one-off death
 # respawns once and the counter resets on the next healthy tick).
 _PLAYER_RESPAWN_CAP = 8
 
-# review F-14-02 (P1): parent-death signal for playback-helper
+# parent-death signal for playback-helper
 # children. Loaded once at import; None off non-glibc-Linux (then the
 # preexec_fn below is a no-op).
 try:
@@ -1201,7 +1201,7 @@ def _set_pdeathsig() -> None:
     before exec, and asks the kernel to send SIGTERM to this process if
     its parent (the engine) dies.
 
-    review F-14-02: a `kill -9` of the engine used to orphan the
+    a `kill -9` of the engine used to orphan the
     playback subprocess, still holding its audio stream. The inference
     child already self-protects via a `getppid()` poll; the playback
     helpers did not. Must stay lock-free (one syscall, no imports, no
@@ -1221,7 +1221,7 @@ def _set_pdeathsig() -> None:
 
 @dataclass
 class _SwapRequest:
-    """review F-03-02 + F-13-12: a single queued model-swap with a
+    """a single queued model-swap with a
     per-call completion event. The TUI / socket caller holds the
     `completion` event after `request_model_swap()` returns and waits
     on IT specifically (not a shared broadcast Event) so two rapid
@@ -1239,7 +1239,7 @@ class _SwapRequest:
 
 
 class CpuFallbackError(RuntimeError):
-    """review F-merged-001 (P0): ONNX Runtime bound a session CPU-only
+    """ONNX Runtime bound a session CPU-only
     while a CUDA execution provider was available.
 
     Realtime RVC on CPU runs ~10-50x over the chunk-period latency budget,
@@ -1303,7 +1303,7 @@ def _make_session(
     The fallback is logged to `_TRT_INIT_ERRORS[path.name]` and
     can be surfaced via `EngineStats.trt_active_for` and woys diag.
 
-    review F-merged-001 (P0): the CUDA->CPU fallback is *not* silent.
+    the CUDA->CPU fallback is *not* silent.
     After the session is built, `_assert_session_gpu_bound` raises
     `CpuFallbackError` if a CUDA EP was available but ORT bound CPU-only,
     unless `allow_cpu_fallback` is set.
@@ -1403,7 +1403,7 @@ def interpolate_voiced_gaps_np(
     float64 for the linspace arithmetic, then back to float32) - minor
     alloc churn reduction for B16's perf-001 partial.
 
-    review F-31-12 (commit-079): optional ``prior_voiced_f0`` +
+    optional ``prior_voiced_f0`` +
     ``prior_voiced_age_frames`` carry the last-voiced anchor from the
     PREVIOUS chunk so a chunk-leading unvoiced run can still be bridged
     when its in-window `last_valid` is -1. The semantics match the
@@ -1418,7 +1418,7 @@ def interpolate_voiced_gaps_np(
     streaming path passes carry state from
     `EngineWorker._pitch_carry_*`.
 
-    review F-31-03 (commit-080): bridging interpolates in
+    bridging interpolates in
     **log-f0** (geometric mean), not in Hz. A glide that is
     perceptually linear (constant semitones / second) is linear in
     log-frequency, not in Hz; bridging 100 Hz → 400 Hz in Hz puts
@@ -1515,7 +1515,7 @@ def to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, ND
     and the resulting RMVPE output is all-zero. Skipping the four numpy
     passes (log, mask multiply, clip, rint) saves ~8 µs per such chunk.
 
-    v0.14.0 (Lens 7 / C093): clamp negative pitchf at entry. RMVPE in
+    v0.14.0 (area 7 / C093): clamp negative pitchf at entry. RMVPE in
     practice emits non-negative Hz, but transients / NaN-replaced regions
     can leak negatives. log(1 + pitch/700) at pitch < -700 produces NaN;
     NaN survives the `mask > 0` filter (NaN > 0 is False so the cell is
@@ -1541,7 +1541,7 @@ def to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, ND
     f0_mel_max = 1127.0 * np.log(1 + f0_max / 700.0)
     pitch = np.zeros(target_len, dtype=np.float32)
     n = min(len(pitchf), target_len)
-    # review F-31-02 (P1): when pitchf is over-length keep the *last*
+    # when pitchf is over-length keep the *last*
     # n frames, not the first. RMVPE and contentvec emit unequal frame
     # counts, so `pitchf[:n]` temporally scrambled the F0 contour against
     # the content features -- frame i of the harmonic source corresponded
@@ -1600,7 +1600,7 @@ class _StreamResampler:
     Identity case (`src_rate == dst_rate`) is a passthrough - no soxr
     object created.
 
-    review F-31-11 (commit-079) -- ``cold_fade_in_samples``. The
+    -- ``cold_fade_in_samples``. The
     *steady-state* per-chunk warmup is eliminated by carrying filter
     state, but a freshly-constructed `_StreamResampler` still cold-
     starts on its first emit: the soxr filter delay line begins zero-
@@ -1716,7 +1716,7 @@ class RvcSessionPool:
         # engine constructs the pool with `use_tensorrt=cfg.use_tensorrt`
         # so RVC voice loads share whatever EP path the engine wants.
         self._use_tensorrt = use_tensorrt
-        # review F-merged-001 (P0): RVC voice sessions go through the
+        # RVC voice sessions go through the
         # same CUDA->CPU silent-fallback hard-fail as cv/rmvpe.
         self._allow_cpu_fallback = allow_cpu_fallback
 
@@ -1811,7 +1811,7 @@ class RealtimeEngine:
         self.stats = EngineStats()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        # review F-merged-018: serialize the whole body of start()
+        # serialize the whole body of start()
         # and stop() so:
         # (a) two concurrent stop() calls (signal-handler path +
         #     action_quit + CLI teardown, see F-CX3-01) don't both
@@ -1830,15 +1830,15 @@ class RealtimeEngine:
         # (existing contract -- `test_stop_releases_in_process_sessions`
         # pre-dates this fix and relies on it).
         self._stopped: bool = False
-        # review F-merged-017: lock guarding both the counter
-        # `+=` / `helper_exit_reasons` TOCTOU sites (commit-040a) AND
-        # the rolling-window deque iteration sites (commit-040c).
+        # lock guarding both the counter
+        # `+=` / `helper_exit_reasons` TOCTOU sites AND
+        # the rolling-window deque iteration sites.
         # `EngineStats` owns the actual lock (`_internal_lock`); the
         # engine aliases it so existing 040a call-sites
         # (`with self._stats_lock:`) reach the same primitive. RLock
         # so future re-entrant call patterns don't deadlock.
         self._stats_lock = self.stats._internal_lock
-        # review F-merged-017 (commit-040b): multi-field profile
+        # multi-field profile
         # apply consistency. The engine reads cfg fields at scattered
         # points within a chunk (`cfg.monitor` line 3843 + 4021,
         # `cfg.input_gain_db` line 3908, `cfg.f0_up_key` / `cfg.sid`
@@ -1854,7 +1854,7 @@ class RealtimeEngine:
         # snapshot of all queued fields.
         self._cfg_lock = threading.Lock()
         self._pending_cfg_updates: dict[str, Any] = {}
-        # review F-07-17 (commit-049): bounded monitor-write queue
+        # bounded monitor-write queue
         # + dedicated writer thread. Pre-fix the engine called
         # `monitor_stream.write(out48)` on its main chunk-processing
         # thread; a slow host-default sink (e.g., a Bluetooth output
@@ -1867,7 +1867,7 @@ class RealtimeEngine:
         # monitor glitch is fine; an engine stall is not.
         self._monitor_queue: queue.Queue[NDArrayF32] = queue.Queue(maxsize=8)
         self._monitor_thread: threading.Thread | None = None
-        # review F-07-09 (commit-050): pre-load swap models on a
+        # pre-load swap models on a
         # dedicated background thread so the engine worker's
         # `_apply_one_swap` hits a warm `_rvc_pool` cache (~10 ms)
         # instead of paying a cache-cold `get_or_create` (~600 ms) on
@@ -1937,7 +1937,7 @@ class RealtimeEngine:
             self._sola_input_cfg.context_samples + self._sola_input_cfg.crossfade_samples,
             dtype=np.float32,
         )
-        # review F-31-12 (commit-079): cross-chunk pitch carry.
+        # cross-chunk pitch carry.
         # `_interpolate_voiced_gaps_np` bridges short unvoiced runs (≤8
         # frames ≈80 ms at RMVPE 100 fps) between two voiced anchors
         # within a single pitchf vector. A voiced-run that is followed
@@ -1958,8 +1958,7 @@ class RealtimeEngine:
         self._pitch_carry_f0: float = 0.0
         self._pitch_carry_age_frames: int = -1
 
-        # v0.4.1 hot-swap + review F-03-02 + F-13-12 (commit-042-
-        # 043): queued model-swap requests with PER-CALL completion
+        # v0.4.1 hot-swap: queued model-swap requests with PER-CALL completion
         # events. Pre-fix this was a single `_pending_model_swap: Path
         # | None` slot + a shared `_swap_done: threading.Event`. Two
         # rapid swap requests collapsed (the second overwrote the
@@ -1967,7 +1966,7 @@ class RealtimeEngine:
         # the broadcast `_swap_done.set()` released ALL waiters when
         # only ONE swap had actually applied -- so Job A reported
         # "done" even though voice-A never loaded. Defeated B5/
-        # corr-003. Hard Rule 2 silent-failure.
+        # corr-003. the project rules silent-failure.
         #
         # F-13-12: `_swap_done.set()` had three setter sites, all
         # inside `_maybe_swap_model` (engine-thread). `stop()` never
@@ -2023,7 +2022,7 @@ class RealtimeEngine:
         # on the user manually running `nvidia-smi -rgc`, documented in
         # docs/22-gpu-clock-lock.md.
         self._prior_signal_handlers: dict[int, Any] = {}
-        # review F-merged-010 (P0): which signal (if any) triggered
+        # which signal (if any) triggered
         # shutdown. Set by the async-signal-safe handler; also a re-entrancy
         # guard so a repeated SIGTERM/SIGINT doesn't redo the handler work.
         self._signal_received: int | None = None
@@ -2050,7 +2049,7 @@ class RealtimeEngine:
         # v0.6.7 - stateful per-(src,dst) resamplers. Created in `_run_loop`
         # before the first chunk, replaced when the model output rate
         # changes during hot-swap. See `docs/11-microcuts-bug.md`.
-        # review F-merged-011: this init used to sit as dead code after
+        # this init used to sit as dead code after
         # a `return` inside the `inference_subprocess_pid` property, so the
         # attributes did not exist until `_run_loop` ran -- any earlier
         # access (`_maybe_swap_model`, `reload_rvc`) raised AttributeError.
@@ -2090,7 +2089,7 @@ class RealtimeEngine:
         rmvpe_path = self._auto_pick_fp16(self.cfg.rmvpe_model, allow=True)
         rvc_path = Path(self.cfg.rvc_model)
 
-        # review F-CX2-04 + F-17-15 (commit-052): fail with a
+        # fail with a
         # clear, typed error naming the missing file AND a remediation
         # command, *before* handing the path to ONNX Runtime (which
         # otherwise raises an opaque ORT-internal exception far from
@@ -2154,7 +2153,7 @@ class RealtimeEngine:
         # actually got TRT EP and which fell back to CUDA.
         self.stats.trt_active_for = dict(_TRT_ACTIVE_PER_SESSION)
         self.stats.trt_init_errors = dict(_TRT_INIT_ERRORS)
-        # review F-merged-001 (P0): record whether any model session
+        # record whether any model session
         # bound CPU-only. Only reachable when cfg.allow_cpu_fallback is set --
         # otherwise `_make_session` raises CpuFallbackError above. Surfaced
         # by `woys diag` so a deliberate CPU-only run is visible.
@@ -2195,7 +2194,7 @@ class RealtimeEngine:
 
         Costs ~20 ms once at session load. Worth it.
 
-        review F-merged-016 (P1): raises `RuntimeError` if the probe
+        raises `RuntimeError` if the probe
         fails or yields an unrecognised rate -- it never silently guesses,
         because a wrong output rate pitch-shifts the entire session and
         poisons `_rvc_sr_cache`.
@@ -2224,7 +2223,7 @@ class RealtimeEngine:
         try:
             out = self._rvc.run(["audio"], feed)[0]
         except Exception as e:
-            # review F-merged-016 (P1): re-raise -- do NOT silently
+            # re-raise -- do NOT silently
             # return 16 kHz. CX2 corrected the original "nono variant"
             # framing: `_infer` builds an *identical* pitch-bearing feed
             # dict, so a genuinely pitchless model would crash there on
@@ -2246,7 +2245,7 @@ class RealtimeEngine:
         for sr in (16_000, 22_050, 24_000, 32_000, 40_000, 44_100, 48_000):
             if abs(n_out - sr) < sr * 0.05:
                 return sr
-        # review F-merged-016: an unrecognised rate is a second silent
+        # an unrecognised rate is a second silent
         # guess -- raise instead of treating the raw sample count as Hz.
         raise RuntimeError(
             f"RVC model probe produced {n_out} samples for a 1 s input, which "
@@ -2356,7 +2355,7 @@ class RealtimeEngine:
         `_SwapRequest`. The caller waits on `req.completion` and reads
         `req.error` to distinguish "done" from "failed".
 
-        review F-03-02 + F-13-12 (commit-042-043): pre-fix this
+        pre-fix this
         method overwrote a single `_pending_model_swap` slot and
         cleared a SHARED `_swap_done` Event -- two rapid swaps
         collapsed (the second overwrote the first; voice A was
@@ -2369,7 +2368,7 @@ class RealtimeEngine:
         stopping) when this is called, the event is resolved
         immediately so the caller never parks.
 
-        review F-23-17 (commit-076): the return type widened
+        the return type widened
         from `threading.Event` to `_SwapRequest` so swap *failures*
         also have a single read site. `_maybe_swap_model` sets
         `req.error` before resolving the event; callers (the TUI's
@@ -2398,7 +2397,7 @@ class RealtimeEngine:
                 return req
             self._swap_queue.put(req)
             self._outstanding_swaps.append(req)
-        # review F-07-09 (commit-050): also signal the preloader
+        # also signal the preloader
         # to prime the pool cache so the worker hits a cache-hit on
         # the chunk-boundary swap. Best-effort -- queue.put never
         # blocks because the queue is unbounded; if the preloader
@@ -2412,7 +2411,7 @@ class RealtimeEngine:
         """Thread-safe: queue a multi-field cfg update for the worker to
         apply at the next chunk boundary.
 
-        review F-merged-017 (commit-040b): pre-fix
+        pre-fix
         `_apply_profile_named` wrote `engine.cfg.f0_up_key`,
         `engine.cfg.sid`, `engine.cfg.monitor`, and `engine.cfg.input_
         gain_db` one at a time. The engine thread reads those same
@@ -2456,7 +2455,7 @@ class RealtimeEngine:
         each in order. Called from `_run_loop` at the top of each
         chunk.
 
-        review F-03-02: pre-fix the single-slot pattern collapsed
+        pre-fix the single-slot pattern collapsed
         rapid swaps. Post-fix every queued `_SwapRequest` is applied
         in order; each completion event fires when ITS swap finishes
         (not the broadcast Event of the pre-fix code)."""
@@ -2525,7 +2524,7 @@ class RealtimeEngine:
                 # if the SOLA flush above finalized the existing soxr stream.
                 # Same-rate swap with a non-identity stream pre-v0.14.0
                 # crashed the engine on the next chunk.
-                # review F-31-11 (commit-079): ~5 ms cold-fade-in
+                # ~5 ms cold-fade-in
                 # masks the soxr filter-warmup transient when the rebuild
                 # lands inside live audio (model swap). 5 ms at sink_rate
                 # = sink_rate // 200; below the ~10 ms perception window
@@ -2572,7 +2571,7 @@ class RealtimeEngine:
         # the existing soxr stream (`last=True`). Without this, a same-rate
         # swap left a finalized stream in place and the next chunk raised
         # `RuntimeError: Input after last input` from soxr, killing engine.
-        # review F-31-11 (commit-079): cold-fade-in (see subprocess
+        # cold-fade-in (see subprocess
         # branch above for rationale). 5 ms at sink_rate.
         if new_sr != self._rvc_output_sr or resampler_out_was_flushed:
             self._resampler_out = _StreamResampler(
@@ -2634,7 +2633,7 @@ class RealtimeEngine:
         it and bumps `dropped_chunks` like any other inference
         failure.
 
-        review F-31-12 (commit-079): when ``update_pitch_carry=True``
+        when ``update_pitch_carry=True``
         AND we're on the legacy in-process path, read
         `self._pitch_carry_*` to provide a leading-edge anchor to
         `_interpolate_voiced_gaps_np`, and update the carry from the
@@ -2680,7 +2679,7 @@ class RealtimeEngine:
             self.stats.last_rmvpe_ms = timings.rmvpe_ms
             self.stats.last_rvc_ms = timings.rvc_ms
             self.stats.last_ipc_roundtrip_ms = timings.roundtrip_ms
-            # review F-merged-017 (commit-040c): cluster the
+            # cluster the
             # rolling-window appends under `_stats_lock` so a TUI /
             # diag reader cannot raise on `deque mutated during
             # iteration`.
@@ -2697,7 +2696,7 @@ class RealtimeEngine:
         # Legacy in-process path.
         assert self._cv is not None and self._rmvpe is not None and self._rvc is not None
 
-        # review F-31-06 (commit-079) -- documented omission of upstream's
+        # -- documented omission of upstream's
         # `silence_front` lead-in trim. Upstream RVC's `Pipeline.py:254/272/306`
         # tracks `silence_front` (how many leading samples are known-silent)
         # and trims that region from the contentvec features + RMVPE pitchf
@@ -2715,7 +2714,7 @@ class RealtimeEngine:
         # window, contentvec + RMVPE still run on the silent prefix (small
         # latency tax, no quality impact). If F-31-01 ever lands, this comment
         # is the marker to revisit -- index search WILL be polluted by silent
-        # frames at that point. Hard Rule 1: this is a documented design
+        # frames at that point. this is a documented design
         # choice, not an unaudited omission.
         t_cv0 = time.perf_counter()
         feats = self._extract_feats(audio16k)
@@ -2736,7 +2735,7 @@ class RealtimeEngine:
         # v0.6.9: sanitize + interpolate short voiced→voiced gaps so a transient
         # RMVPE failure mid-utterance doesn't zero the NSF harmonic source.
         # Live diagnostic on e_girl voice traced 8 of 14 dropouts to this path.
-        # review F-31-12 (commit-079): pass cross-chunk pitch carry so a
+        # pass cross-chunk pitch carry so a
         # leading-edge unvoiced run can be bridged using the prior chunk's
         # trailing voiced anchor. Streaming wrapper sets `update_pitch_carry`.
         if update_pitch_carry:
@@ -2769,7 +2768,7 @@ class RealtimeEngine:
         # v0.10.0-rc2 - split RVC stage into pre / run / post so the
         # tail-attribution data tells us GPU work vs Python overhead.
         feats_2x = np.repeat(feats, 2, axis=1)
-        # v0.14.0 (Lens 4 / Lens 7 / C001): apply pitch shift in semitones
+        # v0.14.0 (area 4 / area 7 / C001): apply pitch shift in semitones
         # BEFORE deriving pitch_coarse. Upstream's RMVPEOnnxPitchExtractor
         # (src/server/voice_changer/RVC/embedder/RMVPEOnnxPitchExtractor.py)
         # shifts f0 first, then derives BOTH pitch_coarse (mel-bin index)
@@ -2810,7 +2809,7 @@ class RealtimeEngine:
             result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
             # v0.7.0-rc4 - count NaN-sanitize hits so we can attribute
             # voice-correlated cuts to the vocoder rather than the gate
-            # or SOLA. Pre-rc4 the path silently zeroed samples; lens 06
+            # or SOLA. Pre-rc4 the path silently zeroed samples; area 06
             # of the audit flagged this as one of three NaN-zero paths
             # that incremented no counter.
             with self._stats_lock:
@@ -2831,7 +2830,7 @@ class RealtimeEngine:
         # The pre-v0.10.0 path tracked only `_recent_inference` (sum); the
         # writer-jitter investigation needs to know which stage owns the
         # tail.
-        # review F-merged-017 (commit-040c): cluster lock.
+        # cluster lock.
         with self._stats_lock:
             self.stats._recent_cv_ms.append(cv_ms)
             self.stats._recent_rmvpe_ms.append(rmvpe_ms)
@@ -2908,7 +2907,7 @@ class RealtimeEngine:
         # the combined buffer (these will be the leading samples next time).
         self._input_history = model_input[-history_len:].copy()
 
-        # review F-31-12 (commit-079): the streaming path carries
+        # the streaming path carries
         # pitch state across `_infer` calls so a leading-edge unvoiced
         # run that straddles a chunk boundary can still be bridged.
         full_out = self._infer(model_input, update_pitch_carry=True)
@@ -2929,7 +2928,7 @@ class RealtimeEngine:
         # The pre-rc5 implementation always trimmed to chunk_n + cf even
         # with SOLA enabled; the search then ate samples from the input
         # to find alignment, shrinking the emit. See
-        # `docs/16-audit/11-rc4-postmortem.md` for why that was wrong.
+        # internal notes for why that was wrong.
         sola_search = self._sola_input_cfg.search_samples if self._sola is not None else 0
         ctx_drop_in = max(history_len - cf - sola_search, 0)
         ctx_drop_out = round(ctx_drop_in * ratio)
@@ -2949,7 +2948,7 @@ class RealtimeEngine:
         )
         if self._sola is not None:
             self._sola.reset()
-        # review F-31-12 (commit-079): the pitch carry must drop
+        # the pitch carry must drop
         # too -- the next session's first chunk is logically the start
         # of a new utterance, no prior voiced anchor is in scope.
         self._pitch_carry_f0 = 0.0
@@ -2958,7 +2957,7 @@ class RealtimeEngine:
     # ---- realtime loop ------------------------------------------------------
 
     def start(self) -> None:
-        """review F-merged-030 (commit-048): start() returns
+        """start() returns
         promptly after spawning the worker thread; the worker does
         the slow cold-start preamble (sessions, warmup, GPU clock
         lock, inference subprocess) and updates `stats.warmup_stage`
@@ -3081,7 +3080,7 @@ class RealtimeEngine:
             n = self.warmup_voice_library()
             print(f"[engine] eager-warmed {n} voice models (instant swaps now)")
 
-        # review F-07-17 (commit-049): spawn the dedicated
+        # spawn the dedicated
         # monitor-writer thread. Pre-fix the engine main thread did
         # `monitor_stream.write()` synchronously on the hot path;
         # any slow host-default sink blocked the engine.
@@ -3090,7 +3089,7 @@ class RealtimeEngine:
         )
         self._monitor_thread.start()
 
-        # review F-07-09 (commit-050): spawn the swap-preloader
+        # spawn the swap-preloader
         # thread so request_model_swap callers warm the _rvc_pool
         # cache off the hot path. The worker's chunk-boundary swap
         # then hits a cache-hit (~10ms) instead of paying the
@@ -3136,7 +3135,7 @@ class RealtimeEngine:
         alternates between two specific values (1957 / 2447 in a sample 48 kHz USB-condenser session, plus the typical 2400) - every chunk with
         a non-cached shape costs cuDNN a fallback slow path, ~80 ms
         inference vs ~40 ms cached. See
-        `docs/16-audit/12-rc5-writer-jitter-probe.md` and the rc8
+        internal notes and the rc8
         tail_chunk_log dump.
 
         rc9 fix: drive a probe `_StreamResampler` with synthetic 48k
@@ -3212,7 +3211,7 @@ class RealtimeEngine:
         """Record an error to the bounded timestamped ring + mirror to
         `stats.last_error` for back-compat reads.
 
-        review F-merged-015: pre-fix `self.stats.last_error = msg`
+        pre-fix `self.stats.last_error = msg`
         was the only sink. ~28 write sites across 6 threads clobbered
         the single string, so a cascading failure left only the LAST
         symptom visible in `woys diag`. The ring (`error_history`,
@@ -3229,7 +3228,7 @@ class RealtimeEngine:
         with self._stats_lock:
             self.stats.error_history.append(entry)
             self.stats.last_error = msg
-            # review F-23-14 (commit-075): stamp the write moment so
+            # stamp the write moment so
             # the TUI can render an age and the chunk-success path can
             # auto-clear once `chunk_seconds` has elapsed without a fresh
             # failure. The ring keeps the history; this field is the
@@ -3246,7 +3245,7 @@ class RealtimeEngine:
             return list(self.stats.error_history)[-n:]
 
     def stop(self, timeout: float = 2.0) -> None:
-        # review F-merged-018: lock + idempotence guard.
+        # lock + idempotence guard.
         # Pre-fix two concurrent stop() callers (signal-handler path +
         # action_quit + CLI teardown -- see F-CX3-01) both passed
         # `self._inf_client is not None` and double-tore-down the
@@ -3259,7 +3258,7 @@ class RealtimeEngine:
             if self._stopped:
                 return
             self._stop_event.set()
-            # review F-13-12: resolve every outstanding swap
+            # resolve every outstanding swap
             # waiter BEFORE we start the slow teardown. Pre-fix
             # `_swap_done` was never set in `stop()`, so a JobRegistry
             # daemon thread parked the full 10 s timeout on the
@@ -3283,20 +3282,20 @@ class RealtimeEngine:
             if self._thread:
                 self._thread.join(timeout=timeout)
             self.stats.running = False
-            # review F-07-17 (commit-049): join the monitor-
+            # join the monitor-
             # writer thread. The thread sees `_stop_event` via its
             # 50ms get-timeout polling loop and exits after closing
             # its sd.OutputStream.
             if self._monitor_thread is not None:
                 self._monitor_thread.join(timeout=1.0)
                 self._monitor_thread = None
-            # review F-07-09 (commit-050): join the swap-
+            # join the swap-
             # preloader thread. Same pattern -- it sees _stop_event
             # via its 100ms get-timeout polling loop.
             if self._swap_preload_thread is not None:
                 self._swap_preload_thread.join(timeout=1.0)
                 self._swap_preload_thread = None
-            # review F-merged-030: clear warmup_stage so the TUI
+            # clear warmup_stage so the TUI
             # doesn't show a stale "warming pipeline" indicator after
             # the engine fully stops.
             self.stats.warmup_stage = ""
@@ -3310,7 +3309,7 @@ class RealtimeEngine:
                 self._inf_client = None
                 self.stats.child_pid = None
 
-            # review F-14-05 (P1): release the in-process ONNX sessions
+            # release the in-process ONNX sessions
             # before the gc.collect() below. Pre-fix `stop()` tore down the
             # inference subprocess but never dropped `_cv`/`_rmvpe`/`_rvc` or
             # evicted the RVC pool (`evict_all()` had no caller), so in-process
@@ -3341,7 +3340,7 @@ class RealtimeEngine:
             self._stopped = True
 
     def _warn_if_default_sink_hijacked(self) -> None:
-        """review F-08-06 (2nd half): one-shot check at engine start.
+        """one-shot check at engine start.
 
         If the system default sink is the woys sink the engine writes into,
         all *desktop* audio is being routed into woys plumbing instead of
@@ -3376,7 +3375,7 @@ class RealtimeEngine:
         voice plays out of the speakers instead of the virtual mic.
         See docs/10-monitor-leak-diag.md for the full forensic trail.
 
-        v0.14.0 (Lens 9 / Lens 17 / Lens 19 / C014): pre-v0.14.0 the
+        v0.14.0 (area 9 / area 17 / area 19 / C014): pre-v0.14.0 the
         function silently skipped the check on three error paths
         (FileNotFoundError -> pactl missing; TimeoutExpired -> daemon
         slow; nonzero rc -> pactl itself errored). Skipping re-opens
@@ -3452,7 +3451,7 @@ class RealtimeEngine:
     def _spawn_checked(self, cmd: list[str]) -> subprocess.Popen[bytes]:
         """Spawn a playback helper and verify it did not die on startup.
 
-        review F-17-10 (P1): `_open_pacat` used to `return
+        `_open_pacat` used to `return
         subprocess.Popen(...)` with no liveness check. A helper that exits
         immediately (bad args, missing perms, a built-but-broken
         `woys-pw-out`) left the watchdog in an infinite 0.5 s-backoff
@@ -3462,7 +3461,7 @@ class RealtimeEngine:
         initial spawn fails the engine loudly and the watchdog's
         consecutive-failure cap can act.
 
-        review F-14-02 (P1): `preexec_fn=_set_pdeathsig` arms the
+        `preexec_fn=_set_pdeathsig` arms the
         kernel parent-death signal, so a `kill -9` of the engine SIGTERMs
         the playback helper instead of orphaning it with the audio stream
         still open. One change covers all three spawn paths (native-pw /
@@ -3506,7 +3505,7 @@ class RealtimeEngine:
         (see `bin/woys-pw-out.c`) over pw-cat / pacat. The native helper
         decouples the engine's bursty
         chunk writes from PipeWire's per-quantum RT callback via an
-        explicit SPSC ring buffer, closing the audit's lens-08 cut
+        explicit SPSC ring buffer, closing the audit's area-08 cut
         signature (sample-exact zeros at 21.33/42.67 ms quantum
         cadence). NEVER falls back silently - if `prefer_native_pw=True`
         and the helper is missing, we raise so the user sees an actionable
@@ -3632,7 +3631,7 @@ class RealtimeEngine:
                 self.stats.queue_full_events += 1
 
     def _swap_preloader_loop(self) -> None:
-        """review F-07-09 (commit-050): daemon thread that
+        """daemon thread that
         primes the `_rvc_pool` cache for every queued swap target.
 
         Pre-fix the engine worker called
@@ -3662,7 +3661,7 @@ class RealtimeEngine:
                 self._rvc_pool.get_or_create(target)
 
     def _monitor_writer_loop(self) -> None:
-        """review F-07-17 (commit-049): daemon thread that owns
+        """daemon thread that owns
         the self-monitor `sd.OutputStream` lifecycle and drains the
         bounded `_monitor_queue`. Pre-fix the engine main thread did
         both -- opening / closing the stream when `cfg.monitor`
@@ -3769,7 +3768,7 @@ class RealtimeEngine:
             now = time.perf_counter()
             if self._last_writer_ts is not None:
                 interval_ms = (now - self._last_writer_ts) * 1000.0
-                # review F-merged-017 (commit-040c): the append +
+                # the append +
                 # the np.array(deque) snapshot below both go through
                 # `_stats_lock`. Pre-fix the writer thread could die on
                 # `RuntimeError: deque mutated during iteration` if a
@@ -3813,7 +3812,7 @@ class RealtimeEngine:
         # var is unset. Useful for forensic post-mortems of "the helper
         # died at some point during a session" cases - we lose nothing
         # to the existing parse-and-overwrite pattern.
-        # v0.14.0 (Lens 6 / Lens 12 / C021): the env-driven path is
+        # v0.14.0 (area 6 / area 12 / C021): the env-driven path is
         # security-sensitive. Pre-v0.14.0 it called `open(path, "ab")`
         # with no symlink protection; an attacker who controls the path
         # value could swap a symlink to a victim file (e.g. ~/.bashrc)
@@ -3833,7 +3832,7 @@ class RealtimeEngine:
                     raise ValueError(
                         f"WOYS_HELPER_STDERR_LOG must be an absolute path, got {debug_log_path!r}"
                     )
-                # review F-05-11 (commit-061): refuse paths
+                # refuse paths
                 # outside `$XDG_RUNTIME_DIR/woys/` (or the secure
                 # `/tmp/woys-{uid}/` fallback). Pre-fix a user
                 # innocently setting this to `/tmp/woys-helper.log`
@@ -4048,7 +4047,7 @@ class RealtimeEngine:
         """v0.11.0 - apply nvidia-smi -lgc <floor>,<ceiling>. Hard-fails
         the engine start on any unexpected output / exit code.
 
-        v0.14.0 (Lens 17 / Lens 19 / C019): if the previous session's
+        v0.14.0 (area 17 / area 19 / C019): if the previous session's
         revert failed (`gpu_clock_lock_revert_failed=True`), attempt a
         fresh -rgc before applying the new lock. Without this, a stuck
         lock from a prior session compounds with the new -lgc and the
@@ -4080,7 +4079,7 @@ class RealtimeEngine:
         self.stats.gpu_clock_lock_ceiling_mhz = ceiling
 
     def _install_signal_handlers(self) -> None:
-        """v0.14.0 (Lens 17 / C010): always install SIGTERM/SIGINT handlers
+        """v0.14.0 (area 17 / C010): always install SIGTERM/SIGINT handlers
         at engine.start, regardless of clock-lock state. Pre-v0.14.0 the
         handler was installed only inside `_apply_gpu_clock_lock`; with
         the default `gpu_anti_jitter_mode="off"` config, signal-delivered
@@ -4107,7 +4106,7 @@ class RealtimeEngine:
         """Re-install the SIGTERM/SIGINT handlers that were active before
         the engine started (Textual's, the CLI's).
 
-        review F-merged-010 (P0): split out of `_revert_gpu_clock_lock`
+        split out of `_revert_gpu_clock_lock`
         so the signal handler can restore handlers without also triggering
         the `sudo nvidia-smi` fork. Fast and fork-free -- safe to call from
         the signal handler itself.
@@ -4122,7 +4121,7 @@ class RealtimeEngine:
         handlers. Idempotent (safe to call multiple times); a second call
         when the lock isn't active just no-ops.
 
-        v0.14.0 (Lens 17 / Lens 19 / C019): track revert success in a
+        v0.14.0 (area 17 / area 19 / C019): track revert success in a
         separate `gpu_clock_lock_revert_failed` flag. Pre-v0.14.0 the
         function set `gpu_clock_lock_active=False` whether or not -rgc
         succeeded, so a sudo-revoked failure left the GPU locked but the
@@ -4130,7 +4129,7 @@ class RealtimeEngine:
         applied a new lock on top of the stale one. The new flag lets
         `_apply_gpu_clock_lock` detect and recover.
 
-        review F-merged-010 / F-cx1-new-C: the `sudo nvidia-smi -rgc`
+        the `sudo nvidia-smi -rgc`
         call here forks a subprocess and can block up to its timeout. It is
         therefore called only on a normal stack -- from `stop()` -- never
         from the signal handler. The bound is `subprocess.run(timeout=...)`
@@ -4163,7 +4162,7 @@ class RealtimeEngine:
         """SIGTERM / SIGINT handler that coordinates clean shutdown.
         Best-effort: a SIGKILL bypasses this entirely.
 
-        review F-merged-010 (P0): the pre-fix handler called
+        the pre-fix handler called
         `_revert_gpu_clock_lock()` inline, which forks `sudo nvidia-smi`
         and can block the main thread up to 4 s -- async-signal-unsafe
         work run on every SIGTERM/SIGINT. A Ctrl-C could hang the process
@@ -4181,7 +4180,7 @@ class RealtimeEngine:
         idempotent, and `_apply_gpu_clock_lock` recovers a stale lock on
         the next start if a hard kill skips `stop()` entirely.
 
-        v0.14.0 (Lens 8 / Lens 17 / C005) note retained: restoring the
+        v0.14.0 (area 8 / area 17 / C005) note retained: restoring the
         prior handler *before* re-raising (rather than a `SIG_DFL` clobber)
         is what keeps Textual's / the CLI's clean-shutdown chain intact.
         """
@@ -4360,7 +4359,7 @@ class RealtimeEngine:
         spawns a fresh stderr reader for the new process, and increments
         `pacat_restarts`. Recovery target ≤ 100 ms.
 
-        review F-17-10 (P1): the respawn loop is capped. Pre-fix a
+        the respawn loop is capped. Pre-fix a
         helper that could never stay alive (raised every time, or spawned
         then died immediately) was retried forever with `running=True` and
         zero audio. `consecutive_respawns` counts deaths-without-recovery;
@@ -4440,7 +4439,7 @@ class RealtimeEngine:
             )
             # Spawn a fresh stderr reader bound to the new process.
             #
-            # review F-merged-024 (commit-071): join the OLD
+            # join the OLD
             # reader thread before overwriting the reference.
             # Pre-fix we just reassigned `self._stderr_thread = new`
             # -- the prior thread became unreachable, kept its FD,
@@ -4600,7 +4599,7 @@ class RealtimeEngine:
                 dtype="float32",
                 device=self.cfg.input_device,
             )
-            # review F-07-17 (commit-049): the monitor stream
+            # the monitor stream
             # lifecycle now lives in `_monitor_writer_loop` (spawned
             # from `_worker_preamble`). The pre-fix eager-open here
             # is gone -- the dedicated thread opens / closes the
@@ -4632,7 +4631,7 @@ class RealtimeEngine:
                     # the next mic chunk. Owns _rvc on this thread, so no
                     # race with _infer below.
                     self._maybe_swap_model()
-                    # review F-merged-017 (commit-040b): drain any
+                    # drain any
                     # multi-field cfg apply queued by `request_cfg_
                     # update()` so the rest of this chunk sees a
                     # consistent view of all queued fields. Cheap when
@@ -4641,7 +4640,7 @@ class RealtimeEngine:
                     # v0.7.0-rc4 - capture the overflow flag PortAudio
                     # returns when its internal ring buffer overran
                     # since the previous read. Pre-rc4 this was tuple-
-                    # unpacked into `_` and lost; lens 01 of the audit
+                    # unpacked into `_` and lost; area 01 of the audit
                     # flagged it as a silent mic-side drop site
                     # invisible to every existing counter.
                     #
@@ -4677,7 +4676,7 @@ class RealtimeEngine:
                         if self.cfg.input_gain_db > 0.0:
                             np.clip(audio, -1.0, 1.0, out=audio)
 
-                    # v0.14.0 (Lens 3 / C081): np.dot(a,a)/n is ~5x faster
+                    # v0.14.0 (area 3 / C081): np.dot(a,a)/n is ~5x faster
                     # than sqrt(mean(a**2)) and avoids allocating an N-element
                     # squared-intermediate per chunk on the hot path.
                     rms = float(np.sqrt(np.dot(audio, audio) / audio.size))
@@ -4775,10 +4774,10 @@ class RealtimeEngine:
                     # diagnostic, not a cuts driver.
                     if self._sola is not None:
                         self.stats.sola_fallback_count = self._sola.fallback_count
-                        # F-31-05 (commit-079): far-edge-clipped peak count.
+                        # F-31-05: far-edge-clipped peak count.
                         self.stats.sola_search_clipped = self._sola.search_window_clipped
 
-                    # review F-07-17 (commit-049): push to the
+                    # push to the
                     # bounded monitor queue (non-blocking). The
                     # dedicated `_monitor_writer_loop` thread owns
                     # the sd.OutputStream lifecycle + drains the
@@ -4798,7 +4797,7 @@ class RealtimeEngine:
                     total_ms = (time.perf_counter() - t_total) * 1000
                     with self._stats_lock:
                         self.stats.chunks_processed += 1
-                        # review F-23-14 (commit-075): clear a stale
+                        # clear a stale
                         # `last_error` once one full `chunk_seconds` has
                         # elapsed without a new failure write. The error
                         # ring (`error_history`) keeps the historical
@@ -4884,7 +4883,7 @@ class RealtimeEngine:
         except Exception as e:
             self.record_error(f"{type(e).__name__}: {e}")
             self.stats.running = False
-            # review F-17-06 (P1): mark this as a crash, not a clean
+            # mark this as a crash, not a clean
             # stop, so the headless `cmd_engine` loop can break + exit
             # non-zero instead of printing frozen stats for the full
             # --seconds.
@@ -4907,7 +4906,7 @@ class RealtimeEngine:
                 deadline = time.perf_counter() + 1.0
                 while time.perf_counter() < deadline and not self._writer_queue.empty():
                     time.sleep(0.02)
-            # review F-07-17 (commit-049): monitor stream
+            # monitor stream
             # teardown moved to `_monitor_writer_loop`'s exit. That
             # thread sees `_stop_event` set + closes its own stream
             # before exiting.
