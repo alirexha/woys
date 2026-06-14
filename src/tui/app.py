@@ -196,6 +196,7 @@ class StatusPanel(Static):
         error: str | None,
         error_age_s: float | None = None,
         mic_silent: bool = False,
+        warmup_stage: str = "",
     ) -> str:
         # an idle/stopped engine
         # previously rendered "○ status: stopped" with no next-step.
@@ -210,7 +211,11 @@ class StatusPanel(Static):
             state = f"loading {swapping}…"
         elif running and cold_start:
             light = "[bold yellow]◐[/]"
-            state = "warming up…"
+            # Surface the engine's real warmup substage ("loading sessions",
+            # "warming pipeline", …) instead of a static label, so a multi-
+            # second cold start reads as progress rather than a hang.
+            stage = warmup_stage.strip()
+            state = f"warming up… {stage}" if stage and stage != "ready" else "warming up…"
         elif running:
             light = "[bold green]●[/]"
             state = "RUNNING"
@@ -943,6 +948,7 @@ class WoysApp(App[int]):
                     error=s.last_error,
                     error_age_s=error_age_s,
                     mic_silent=mic_silent,
+                    warmup_stage=s.warmup_stage,
                 )
             )
             lat = self.query_one("#latency", LatencyPanel)
