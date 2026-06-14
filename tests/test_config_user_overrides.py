@@ -246,3 +246,38 @@ def test_first_run_save_oserror_logs_to_stderr(
     assert "cannot write" in out.err
     assert str(cfg_path) in out.err
     assert "in-memory" in out.err
+
+
+def test_profile_pinned_value_survives_migration(tmp_path: Path) -> None:
+    """A field listed in `_user_overrides` must survive a schema migration
+    when it lives inside a `[profiles.*]` sub-table, exactly as it does at top
+    level. Pre-fix the profile legs rewrote profile fields unconditionally,
+    silently clobbering a pinned profile value on the next schema bump --
+    contradicting the migration's own _user_overrides promise."""
+    from audio.engine import EngineConfig
+    from tui.config import load_config
+
+    cfg_path = tmp_path / "config.toml"
+    _write_toml(
+        cfg_path,
+        """
+config_schema_version = 0
+_user_overrides = ["output_latency_ms"]
+output_latency_ms = 300
+
+[profiles.pinned]
+output_latency_ms = 300
+sola_search_ms = 4.0
+""",
+    )
+    cfg = load_config(cfg_path)
+    prof = cfg._extras["profiles"]["pinned"]
+
+    # The pinned field survives inside the profile (the bug this guards).
+    assert prof["output_latency_ms"] == 300, (
+        "a profile field listed in _user_overrides must survive migration; "
+        f"got {prof['output_latency_ms']}"
+    )
+    # Control: a NON-pinned profile field still migrates normally.
+    assert prof["sola_search_ms"] == EngineConfig().sola_search_ms
+    assert prof["sola_search_ms"] != 4.0
