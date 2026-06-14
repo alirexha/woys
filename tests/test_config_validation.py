@@ -78,6 +78,8 @@ def test_validate_field_rejects_invalid(name: str, value: object, error_fragment
         ("mic_rate", 16_000),
         ("embedder", "onnx"),
         ("gpu_anti_jitter_mode", "off"),
+        ("gpu_anti_jitter_mode", "keepalive"),
+        ("gpu_anti_jitter_mode", "clock_lock"),
         ("gpu_anti_jitter_mode", "both"),
         ("monitor", True),
         ("monitor", False),

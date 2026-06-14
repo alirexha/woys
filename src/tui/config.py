@@ -139,7 +139,7 @@ _FIELD_VALIDATORS: dict[str, _FieldSpec] = {
     "sink_name": _FieldSpec(str),
     "embedder": _FieldSpec(str, choices=("onnx",)),
     "evdev_hotkey": _FieldSpec(str),
-    "gpu_anti_jitter_mode": _FieldSpec(str, choices=("off", "clock_only", "stream_only", "both")),
+    "gpu_anti_jitter_mode": _FieldSpec(str, choices=("off", "keepalive", "clock_lock", "both")),
     # Numeric -- pitch / speaker / rates.
     "f0_up_key": _FieldSpec(int, minimum=-24, maximum=24),
     "sid": _FieldSpec(int, minimum=0, maximum=1000),
