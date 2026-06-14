@@ -63,19 +63,23 @@ def test_pinned_requirements_install_before_editable_no_deps_package() -> None:
 
 
 def test_install_sh_hard_fails_on_missing_nvidia_smi() -> None:
-    """a missing NVIDIA GPU must hard-fail
-    unless --allow-cpu is explicitly passed -- not warn-and-continue,
-    advertising an ONNX-Runtime CPU "fallback" that does not exist."""
+    """a missing NVIDIA GPU must hard-fail UNCONDITIONALLY -- not
+    warn-and-continue, and with no opt-out flag that promises a CPU path
+    the engine does not actually provide (woys is GPU-only)."""
     # The pre-fix warn-and-continue line must be gone.
     assert "engine will fall back to CPU" not in INSTALL_SH, (
         "the misleading 'fall back to CPU' warning must be removed"
     )
-    # The nvidia-smi block must hard-fail, gated on the --allow-cpu opt-out.
+    # The nvidia-smi block must hard-fail with no conditional opt-out.
     start = INSTALL_SH.index("command -v nvidia-smi")
     block = INSTALL_SH[start : INSTALL_SH.index("\n\n", start)]
     assert "fail " in block, "a missing nvidia-smi must call fail()"
-    assert "ALLOW_CPU" in block, "the hard-fail must be gated on --allow-cpu"
-    assert "--allow-cpu) " in INSTALL_SH, "--allow-cpu must be a parsed flag"
+    assert "ALLOW_CPU" not in block, "the hard-fail must be unconditional"
+    # The broken --allow-cpu opt-out (accepted, printed success, but never
+    # threaded to the engine -> guaranteed CpuFallbackError at first run)
+    # must be gone entirely.
+    assert "--allow-cpu" not in INSTALL_SH, "the --allow-cpu flag must be removed"
+    assert "ALLOW_CPU" not in INSTALL_SH, "the ALLOW_CPU variable must be removed"
 
 
 def test_install_sh_verifies_all_three_foundation_weights() -> None:

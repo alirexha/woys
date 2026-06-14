@@ -25,8 +25,6 @@
 #   ./install.sh              # full install
 #   ./install.sh --skip-models  # don't pre-fetch ONNX weights (~1 GiB)
 #   ./install.sh --no-systemd   # don't register the user service
-#   ./install.sh --allow-cpu    # proceed without an NVIDIA GPU (unsupported:
-#                               # realtime RVC is not viable on CPU)
 
 set -euo pipefail
 
@@ -72,14 +70,12 @@ UV_BIN="${UV_BIN:-$HOME/.local/bin/uv}"
 
 SKIP_MODELS=0
 NO_SYSTEMD=0
-ALLOW_CPU=0
 for arg in "$@"; do
     case "$arg" in
     --skip-models) SKIP_MODELS=1 ;;
     --no-systemd)  NO_SYSTEMD=1 ;;
-    --allow-cpu)   ALLOW_CPU=1 ;;
     -h|--help)
-        sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
+        sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
         exit 0
         ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -103,15 +99,9 @@ pactl info | grep -q PipeWire || fail "PipeWire not running (pactl info reports 
 # hard-fail on a missing NVIDIA GPU. The
 # pre-fix `say "warn: ... fall back to CPU"` advertised a CPU fallback
 # that does not exist — ONNX Runtime CUDA-EP sessions do not silently
-# become CPU sessions, and realtime RVC on CPU is not viable. --allow-cpu
-# is the explicit, documented opt-out for users who understand that.
+# become CPU sessions, and realtime RVC on CPU is not viable.
 if ! command -v nvidia-smi >/dev/null; then
-    if [ "$ALLOW_CPU" -eq 1 ]; then
-        say "  warn: nvidia-smi missing — proceeding with --allow-cpu (UNSUPPORTED;"
-        say "        realtime RVC is not viable on CPU, expect continuous underruns)"
-    else
-        fail "nvidia-smi not found — woys requires an NVIDIA GPU (ONNX Runtime CUDA EP); realtime RVC on CPU is not viable. Re-run with --allow-cpu to override."
-    fi
+    fail "nvidia-smi not found — woys requires an NVIDIA GPU (ONNX Runtime CUDA EP); realtime RVC on CPU is not viable."
 fi
 
 # Install uv if absent.
