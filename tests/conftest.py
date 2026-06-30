@@ -10,14 +10,18 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+SRC_ROOT = PROJECT_ROOT / "src"
 SERVER_ROOT = PROJECT_ROOT / "src" / "server"
 MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 FIXTURES_DIR = PROJECT_ROOT / "tests" / "fixtures"
 
 # upstream uses unprefixed imports (from voice_changer.X import Y); inject the
 # server dir on sys.path before any test collection so those imports resolve.
-if str(SERVER_ROOT) not in sys.path:
-    sys.path.insert(0, str(SERVER_ROOT))
+# src/ itself goes on too so `import tui.config` resolves without leaning on
+# the editable install (which breaks the moment the project dir is renamed).
+for _root in (SRC_ROOT, SERVER_ROOT):
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
 
 
 @pytest.fixture(scope="session")
@@ -35,6 +39,25 @@ def models_dir() -> Path:
 def fixtures_dir() -> Path:
     FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
     return FIXTURES_DIR
+
+
+@pytest.fixture(autouse=True)
+def _isolate_woys_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hard-isolate the on-disk config for EVERY test.
+
+    Pre-fix, any test that called load_config()/save_config()/cli_profile_*
+    with no explicit path wrote the user's REAL ~/.config/woys/config.toml --
+    a bare save_config(AppConfig()) reset it to pristine defaults and wiped
+    every saved profile (happened 2026-05-15, -06-07, -06-14). Redirect the
+    module globals that load_config/save_config resolve at call time so no
+    test can reach the real file, even one that forgets to pass a tmp path.
+    """
+    import tui.config as _cfg
+
+    cfg_dir = tmp_path / "woys-config"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(_cfg, "CONFIG_DIR", cfg_dir)
+    monkeypatch.setattr(_cfg, "CONFIG_FILE", cfg_dir / "config.toml")
 
 
 def _has_gpu() -> bool:

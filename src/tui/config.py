@@ -299,7 +299,7 @@ def app_config_to_engine_config(cfg: AppConfig, *, rvc_model: Path | None = None
     return engine_cfg
 
 
-def load_config(path: Path = CONFIG_FILE) -> AppConfig:
+def load_config(path: Path | None = None) -> AppConfig:
     """Load config from disk; on first run, write defaults to $path before returning.
 
     Writing defaults on first run gives the user a discoverable place to twiddle
@@ -310,7 +310,16 @@ def load_config(path: Path = CONFIG_FILE) -> AppConfig:
     A clear message is printed to stderr and an in-memory `AppConfig()`
     with EngineConfig-forwarded defaults is returned instead. The bad
     file is left in place for the user to inspect / fix.
+
+    `path` defaults to None and is resolved to the module-level CONFIG_FILE
+    at call time -- NOT captured as an import-time default arg. That keeps
+    CONFIG_FILE the single source of truth a caller (or a test) can redirect
+    by monkeypatching `tui.config.CONFIG_FILE`. A baked default arg silently
+    ignored that patch, so the test suite wrote the user's real config and
+    wiped saved profiles.
     """
+    if path is None:
+        path = CONFIG_FILE
     if not path.exists():
         cfg = AppConfig()
         # Read-only home / unwritable XDG dir → fall back to in-memory defaults.
@@ -555,7 +564,13 @@ _CONFIG_HEADER = b"""# woys config.toml -- managed by `woys` (the engine, TUI, C
 """
 
 
-def save_config(cfg: AppConfig, path: Path = CONFIG_FILE) -> None:
+def save_config(cfg: AppConfig, path: Path | None = None) -> None:
+    # `path` resolves to CONFIG_FILE at call time (see load_config) so the
+    # module global stays the single, monkeypatchable source of truth -- a
+    # baked default arg here is what let `save_config(cfg)` write the user's
+    # real config from inside the test suite and wipe saved profiles.
+    if path is None:
+        path = CONFIG_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {k: v for k, v in asdict(cfg).items() if not k.startswith("_")}
     data.update(cfg._extras)
