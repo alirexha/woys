@@ -167,7 +167,9 @@ def test_server_rejects_command_over_max_bytes_with_clear_error(
 # --- client-side framing (replies) ----------------------------------------
 
 
-def test_client_receives_full_reply_longer_than_512_bytes(tmp_path: Path) -> None:
+def test_client_receives_full_reply_longer_than_512_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Bug-class half-B: server emits a reply > 512 bytes. The pre-fix
     `s.recv(512)` truncated it; the client must now see the FULL reply."""
     from tui.control import send_command
@@ -179,12 +181,10 @@ def test_client_receives_full_reply_longer_than_512_bytes(tmp_path: Path) -> Non
 
     srv = _start_server(sock, handler)
     try:
-        # send_command uses the canonical XDG_RUNTIME_DIR path, so we
-        # monkeypatch by way of `control_socket_path`. Simpler: call
-        # send_command after pointing the env var.
-        import os
-
-        os.environ["XDG_RUNTIME_DIR"] = str(tmp_path)
+        # send_command uses the canonical XDG_RUNTIME_DIR path, so point
+        # the env var at tmp_path. monkeypatch restores it afterwards; a
+        # bare os.environ write leaked into every later test.
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
         # send_command resolves $XDG_RUNTIME_DIR/woys/control.sock; our
         # server is at tmp_path/c.sock, so move the server-side path.
         srv.stop()
