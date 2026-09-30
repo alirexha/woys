@@ -15,7 +15,9 @@ from __future__ import annotations
 import contextlib
 import sys
 import threading
+import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -109,6 +111,20 @@ def test_spawn_checked_returns_a_live_proc() -> None:
         proc.wait(timeout=2)
 
 
+class _NoSleepTime:
+    """`time` stand-in for the engine module: sleep() returns at once,
+    everything else is the real module."""
+
+    def __init__(self) -> None:
+        self.sleeps: list[float] = []
+
+    def sleep(self, secs: float) -> None:
+        self.sleeps.append(secs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(time, name)
+
+
 def test_watchdog_loop_caps_respawn_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     """A playback helper that can never respawn must stop the engine after
     `_PLAYER_RESPAWN_CAP` attempts. Pre-fix the watchdog retried forever
@@ -128,9 +144,15 @@ def test_watchdog_loop_caps_respawn_failures(monkeypatch: pytest.MonkeyPatch) ->
         raise RuntimeError("helper permanently broken")
 
     monkeypatch.setattr(eng, "_open_pacat", _always_fails)
-    # Spin the loop fast: no real waiting.
+    # Spin the loop fast: no real waiting. `engine.time` IS the global time
+    # module, so patching its `sleep` would turn time.sleep into a no-op for
+    # every thread in the process; swap the engine module's `time` name for
+    # a stand-in instead.
+    real_sleep = time.sleep
     monkeypatch.setattr(eng._pacat_dead_event, "wait", lambda timeout=None: None)
-    monkeypatch.setattr(engine.time, "sleep", lambda *_a: None)
+    fast_time = _NoSleepTime()
+    monkeypatch.setattr(engine, "time", fast_time)
+    assert time.sleep is real_sleep, "the patch must not leak into other threads"
 
     t = threading.Thread(target=eng._watchdog_loop, daemon=True)
     t.start()
@@ -144,6 +166,7 @@ def test_watchdog_loop_caps_respawn_failures(monkeypatch: pytest.MonkeyPatch) ->
     assert not alive, "watchdog did not terminate -- the respawn loop is uncapped"
     assert eng._stop_event.is_set(), "hitting the cap must set _stop_event"
     assert eng.stats.last_error and "respawned" in eng.stats.last_error
+    assert fast_time.sleeps, "the respawn back-off must have gone through the stand-in"
 
 
 # ---- parent-death signal on playback-helper spawns ----
