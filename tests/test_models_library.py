@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from woys.models import (
@@ -75,9 +74,3 @@ def test_model_entry_dataclass_round_trip(tmp_path: Path) -> None:
     assert e.sample_rate is None
     assert e.is_v2 is None
     assert e.f0 is None
-
-
-def test_cleanup() -> None:  # pragma: no cover - keeps pytest happy if temp leaks
-    leftover = Path("/tmp/woys_models_test")
-    if leftover.exists():
-        shutil.rmtree(leftover, ignore_errors=True)
