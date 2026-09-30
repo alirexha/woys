@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
@@ -138,8 +139,11 @@ class HelpScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         yield Static(self.HELP_TEXT, id="help-box")
 
-    def on_key(self, event: object) -> None:
-        _ = event  # any key closes the modal
+    def on_key(self, event: events.Key) -> None:
+        # Any key closes the modal, and only that: stop the key here so the
+        # app's binding for it (t toggles, q quits, ...) doesn't fire too.
+        event.stop()
+        event.prevent_default()
         self.dismiss(None)
 
 
