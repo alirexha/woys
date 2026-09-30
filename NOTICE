@@ -65,7 +65,6 @@ Tests — all tests/test_*.py and tests/conftest.py:
   tests/test_chain.py
   tests/test_convert.py
   tests/test_download_weights.py
-  tests/test_embedder.py
   tests/test_engine_config_drift.py
   tests/test_engine_inference.py
   tests/test_engine_routing.py
@@ -172,6 +171,10 @@ The src/server/ directory was created by:
      native-client launchers, etc.).
   6. Pruning of dead engine references in const.py, ModelSlot.py,
      VoiceChangerManager.py, VoiceChangerV2.py, SampleDownloader.py.
+  7. Deleting the 89 files no woys entry point imports (checked with an
+     import graph from src/{woys,audio,tui}, scripts/ and tests/). Only
+     the `woys convert` export path and its imports remain; see
+     src/server/NOTICE.
 
 The trimming changes are detailed in CHANGELOG.md under "Phase 1 — Lean Core".
 Individual upstream files inside src/server/ do not all carry per-file

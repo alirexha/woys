@@ -13,6 +13,15 @@ CHANGELOG.md under "Phase 1 — Lean Core". No upstream file in this
 subtree was modified beyond that removal; any per-file copyright header
 present in an upstream file is left intact.
 
+A second trim removed every file that no woys entry point can import
+(the web server, REST/socket.io layers, downloaders, the upstream
+realtime pipeline and its FAISS index path, the torch/crepe/whisper
+extractors and embedders). What remains is the .pth -> .onnx export path
+used by `woys convert`: onnxExporter/, inferencer/models.py and
+rvc_models/infer_pack/, plus const.py, data/ModelSlot.py,
+deviceManager/DeviceManager.py and the VoiceChangerParams helpers they
+import.
+
 This subtree remains MIT-licensed. It is the only MIT-licensed code in
 the woys repository — everything outside src/server/ and upstream/ is
 proprietary under the repository-root ./LICENSE (All Rights Reserved).
