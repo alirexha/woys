@@ -108,10 +108,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--monitor",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=None,
-        help="also play transformed audio to your default output (self-monitor). "
-        "OFF by default - engine writes only to WoysSink.",
+        help="--monitor also plays the transformed audio to your default output "
+        "(self-monitor); --no-monitor turns it off. Applies to this session; "
+        "without either flag the config.toml `monitor` setting is used (off "
+        "unless set). The engine always writes to WoysSink.",
     )
 
     sub.add_parser("toggle", help="toggle a running TUI's engine on/off")
