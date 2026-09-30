@@ -96,7 +96,7 @@ def test_handler_without_a_saved_prior_falls_back_to_default(
     """Nothing to restore: the re-raise must hit SIG_DFL, not this handler."""
     eng = engine.RealtimeEngine(engine.EngineConfig())
     kills: list[int] = []
-    monkeypatch.setattr(engine.os, "kill", lambda _pid, sig: kills.append(sig))
+    monkeypatch.setattr(os, "kill", lambda _pid, sig: kills.append(sig))
     signal.signal(signal.SIGTERM, eng._signal_handler_revert_lock)
     eng._prior_signal_handlers = {}
 

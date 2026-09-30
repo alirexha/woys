@@ -96,7 +96,7 @@ def test_query_max_graphics_clock_happy_path() -> None:
     completed = subprocess.CompletedProcess(
         args=["nvidia-smi"], returncode=0, stdout="2100\n", stderr=""
     )
-    with patch("audio.engine.subprocess.run", return_value=completed):
+    with patch("subprocess.run", return_value=completed):
         assert RealtimeEngine._query_max_graphics_clock_mhz() == 2100
 
 
@@ -108,14 +108,14 @@ def test_query_max_graphics_clock_handles_unit_suffix() -> None:
     completed = subprocess.CompletedProcess(
         args=["nvidia-smi"], returncode=0, stdout="1845.0\n", stderr=""
     )
-    with patch("audio.engine.subprocess.run", return_value=completed):
+    with patch("subprocess.run", return_value=completed):
         assert RealtimeEngine._query_max_graphics_clock_mhz() == 1845
 
 
 def test_query_max_graphics_clock_zero_on_nvidia_smi_missing() -> None:
     from audio.engine import RealtimeEngine
 
-    with patch("audio.engine.subprocess.run", side_effect=FileNotFoundError("nvidia-smi")):
+    with patch("subprocess.run", side_effect=FileNotFoundError("nvidia-smi")):
         assert RealtimeEngine._query_max_graphics_clock_mhz() == 0
 
 
@@ -125,7 +125,7 @@ def test_query_max_graphics_clock_zero_on_garbage_output() -> None:
     completed = subprocess.CompletedProcess(
         args=["nvidia-smi"], returncode=0, stdout="not a number\n", stderr=""
     )
-    with patch("audio.engine.subprocess.run", return_value=completed):
+    with patch("subprocess.run", return_value=completed):
         assert RealtimeEngine._query_max_graphics_clock_mhz() == 0
 
 
@@ -136,7 +136,7 @@ def test_query_max_graphics_clock_zero_on_out_of_range() -> None:
     completed = subprocess.CompletedProcess(
         args=["nvidia-smi"], returncode=0, stdout="100\n", stderr=""
     )
-    with patch("audio.engine.subprocess.run", return_value=completed):
+    with patch("subprocess.run", return_value=completed):
         assert RealtimeEngine._query_max_graphics_clock_mhz() == 0
 
 
@@ -207,7 +207,7 @@ def test_resolve_clock_lock_range_fails_when_auto_detect_unavailable() -> None:
 
 def test_run_nvidia_smi_returns_false_when_binary_missing() -> None:
     eng = _mk_engine()
-    with patch("audio.engine.shutil.which", return_value=None):
+    with patch("shutil.which", return_value=None):
         ok, msg = eng._run_nvidia_smi(["-lgc", "1845,1845"])
     assert ok is False
     assert "not on PATH" in msg
@@ -222,8 +222,8 @@ def test_run_nvidia_smi_happy_path() -> None:
         stderr="",
     )
     with (
-        patch("audio.engine.shutil.which", return_value="/usr/bin/nvidia-smi"),
-        patch("audio.engine.subprocess.run", return_value=completed),
+        patch("shutil.which", return_value="/usr/bin/nvidia-smi"),
+        patch("subprocess.run", return_value=completed),
     ):
         ok, msg = eng._run_nvidia_smi(["-lgc", "1845,1845"])
     assert ok is True
@@ -236,8 +236,8 @@ def test_run_nvidia_smi_nonzero_exit_is_failure() -> None:
         args=["sudo", "nvidia-smi"], returncode=1, stdout="", stderr="permission denied"
     )
     with (
-        patch("audio.engine.shutil.which", return_value="/usr/bin/nvidia-smi"),
-        patch("audio.engine.subprocess.run", return_value=completed),
+        patch("shutil.which", return_value="/usr/bin/nvidia-smi"),
+        patch("subprocess.run", return_value=completed),
     ):
         ok, msg = eng._run_nvidia_smi(["-lgc", "1845,1845"])
     assert ok is False
@@ -256,8 +256,8 @@ def test_run_nvidia_smi_error_in_output_is_failure() -> None:
         stderr="",
     )
     with (
-        patch("audio.engine.shutil.which", return_value="/usr/bin/nvidia-smi"),
-        patch("audio.engine.subprocess.run", return_value=completed),
+        patch("shutil.which", return_value="/usr/bin/nvidia-smi"),
+        patch("subprocess.run", return_value=completed),
     ):
         ok, msg = eng._run_nvidia_smi(["-lgc", "1845,1845"])
     assert ok is False
@@ -267,9 +267,9 @@ def test_run_nvidia_smi_error_in_output_is_failure() -> None:
 def test_run_nvidia_smi_timeout_is_failure() -> None:
     eng = _mk_engine()
     with (
-        patch("audio.engine.shutil.which", return_value="/usr/bin/nvidia-smi"),
+        patch("shutil.which", return_value="/usr/bin/nvidia-smi"),
         patch(
-            "audio.engine.subprocess.run",
+            "subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd="nvidia-smi", timeout=4.0),
         ),
     ):

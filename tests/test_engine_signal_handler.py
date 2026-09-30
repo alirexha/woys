@@ -16,6 +16,7 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 
 from __future__ import annotations
 
+import os
 import signal
 import sys
 from pathlib import Path
@@ -61,7 +62,7 @@ def test_signal_handler_does_no_fork_or_subprocess_work(
     # Stub os.kill so the handler's re-raise never actually signals the
     # test process -- just record it.
     reraised: list[int] = []
-    monkeypatch.setattr(engine.os, "kill", lambda _pid, sig: reraised.append(sig))
+    monkeypatch.setattr(os, "kill", lambda _pid, sig: reraised.append(sig))
 
     eng._signal_handler_revert_lock(signal.SIGTERM, None)
 
@@ -79,7 +80,7 @@ def test_signal_handler_reentrancy_guard(monkeypatch: pytest.MonkeyPatch) -> Non
     eng = _mk_engine()
 
     reraised: list[int] = []
-    monkeypatch.setattr(engine.os, "kill", lambda _pid, sig: reraised.append(sig))
+    monkeypatch.setattr(os, "kill", lambda _pid, sig: reraised.append(sig))
     restore_calls: list[bool] = []
     monkeypatch.setattr(
         eng,
