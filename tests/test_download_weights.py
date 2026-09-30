@@ -89,14 +89,18 @@ def test_sha256_table_keys_are_subset_of_weights(download_weights) -> None:
 
 
 def test_print_hashes_does_not_crash_on_missing_cache(
-    download_weights, monkeypatch, capsys
+    download_weights, monkeypatch, capsys, tmp_path
 ) -> None:
     """`--print-hashes` should report missing files to stderr without raising,
     so a fresh-checkout dev can still inspect what would be hashed."""
-    nonexistent = Path("/tmp/woys-test-cache-does-not-exist-12345")
+    nonexistent = tmp_path / "cache-does-not-exist"
     monkeypatch.setattr(download_weights, "CACHE", nonexistent)
     rc = download_weights.main(["--print-hashes"])
+    out = capsys.readouterr()
     assert rc == 0
+    for name in download_weights.WEIGHTS:
+        assert f"{name}: missing" in out.err, f"{name} must be reported missing on stderr"
+        assert name not in out.out, f"no hash line may be printed for missing {name}"
 
 
 # ---- integrity gate must be real + fail-closed ----
