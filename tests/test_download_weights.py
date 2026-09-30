@@ -9,6 +9,7 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -176,3 +177,46 @@ def test_fetch_skip_verify_bypasses_the_gate(download_weights, tmp_path, monkeyp
     dest = tmp_path / "unlisted_weight.onnx"
     download_weights.fetch("http://example/x", dest, force=True, skip_verify=True)
     assert dest.exists()
+
+
+# ---- cached files are verified too ----
+
+
+def test_fetch_redownloads_a_cached_file_that_fails_the_hash(
+    download_weights, tmp_path, monkeypatch
+) -> None:
+    """Pre-fix an existing file was trusted as-is ("[skip] already cached"),
+    so a truncated or tampered weight survived every re-install."""
+    good = b"the real weight bytes"
+    monkeypatch.setitem(
+        download_weights.WEIGHTS_SHA256, "rmvpe_wrapped.onnx", hashlib.sha256(good).hexdigest()
+    )
+    monkeypatch.setattr(
+        download_weights.urllib.request, "urlopen", lambda _url, timeout=0: _FakeResponse(good)
+    )
+    dest = tmp_path / "rmvpe_wrapped.onnx"
+    dest.write_bytes(b"truncated")
+
+    download_weights.fetch("http://example/x", dest, force=False)
+
+    assert dest.read_bytes() == good
+
+
+def test_fetch_keeps_a_cached_file_that_passes_the_hash(
+    download_weights, tmp_path, monkeypatch
+) -> None:
+    good = b"the real weight bytes"
+    monkeypatch.setitem(
+        download_weights.WEIGHTS_SHA256, "rmvpe_wrapped.onnx", hashlib.sha256(good).hexdigest()
+    )
+
+    def no_network(*_a: object, **_k: object) -> None:
+        raise AssertionError("a verified cached file must not be downloaded again")
+
+    monkeypatch.setattr(download_weights.urllib.request, "urlopen", no_network)
+    dest = tmp_path / "rmvpe_wrapped.onnx"
+    dest.write_bytes(good)
+
+    download_weights.fetch("http://example/x", dest, force=False)
+
+    assert dest.read_bytes() == good

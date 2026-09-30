@@ -79,9 +79,15 @@ def _sha256(path: Path) -> str:
 
 def fetch(url: str, dest: Path, force: bool, *, skip_verify: bool = False) -> None:
     if dest.exists() and not force:
+        # A cached copy gets the same hash check as a fresh download: it
+        # may predate the SHA table, come from the vcclient-cachy
+        # migration or a hand copy, or be truncated on disk.
+        expected_cached = WEIGHTS_SHA256.get(dest.name)
         size_mb = dest.stat().st_size / (1024 * 1024)
-        print(f"  [skip] {dest.name}  ({size_mb:.1f} MiB) - already cached")
-        return
+        if skip_verify or expected_cached is None or _sha256(dest) == expected_cached:
+            print(f"  [skip] {dest.name}  ({size_mb:.1f} MiB) - already cached")
+            return
+        print(f"  [bad ] {dest.name}  ({size_mb:.1f} MiB) - cached copy fails SHA256, re-fetching")
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     print(f"  [get ] {dest.name}  ← {url}")
