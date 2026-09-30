@@ -80,8 +80,6 @@ def _run_install(
     except `-m pip`, which fails like it does in a real uv venv."""
     home = tmp_path / "home dir"  # a space, to catch unquoted paths
     home.mkdir()
-    if callable(setup_home):
-        setup_home(home)
     repo = tmp_path / "repo"
     repo.mkdir()
     shutil.copy(REPO / "install.sh", repo / "install.sh")
@@ -135,6 +133,8 @@ def _run_install(
     for name, body in default_stubs.items():
         if body is not None:
             _write_stub(stub_dir / name, body)
+    if callable(setup_home):
+        setup_home(home)
 
     env = {"HOME": str(home), "PATH": f"{stub_dir}:{sysbin}"}
     proc = subprocess.run(
@@ -361,6 +361,26 @@ def test_install_does_not_claim_enabled_when_enable_fails(tmp_path: Path) -> Non
     assert run.rc == 0, run.out
     assert "failed to enable woys-mic.service" in run.out
     assert "woys-mic.service enabled" not in run.out
+
+
+def _existing_venv(home: Path) -> None:
+    venv_bin = home / ".local" / "share" / "woys" / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    # Same stubs `uv venv` would lay down; reinstalls reuse the venv.
+    for name in ("python", "woys"):
+        shutil.copy(home.parent / "venv-template" / name, venv_bin / name)
+
+
+def test_reinstall_removes_stale_wheel_with_uv_not_pip(tmp_path: Path) -> None:
+    """install.sh builds its venv with `uv venv`, which has no pip. Pre-fix
+    every reinstall ran `python -m pip uninstall`, printed "No module named
+    pip" plus a warning, and never removed the stale wheel."""
+    run = _run_install(tmp_path, "--skip-models", "--no-systemd", setup_home=_existing_venv)
+    assert run.rc == 0, run.out
+    assert "reusing existing venv" in run.out
+    assert "No module named pip" not in run.out
+    assert "failed to uninstall" not in run.out
+    assert "uv pip uninstall --python" in run.calls and "vcclient-cachy" in run.calls
 
 
 def test_install_help_prints_the_whole_header() -> None:

@@ -148,9 +148,12 @@ mkdir -p "$APP_HOME" "$BIN_DIR" "$SYSTEMD_USER_DIR"
 "$UV_BIN" python install 3.11 >/dev/null
 if [ -x "$VENV/bin/python" ]; then
     say "reusing existing venv at $VENV (skip 5 GB re-download)…"
-    # B38 / pkg-005: don't blanket-suppress stderr — surface real errors.
-    if ! "$VENV/bin/python" -m pip uninstall -y vcclient-cachy >/dev/null; then
-        say "warning: failed to uninstall stale vcclient-cachy wheel; continuing"
+    # The venv comes from `uv venv`, which has no pip, so go through uv.
+    # B38 / pkg-005: don't blanket-suppress stderr of the uninstall itself.
+    if "$UV_BIN" pip show --python "$VENV/bin/python" vcclient-cachy >/dev/null 2>&1; then
+        if ! "$UV_BIN" pip uninstall --python "$VENV/bin/python" vcclient-cachy >/dev/null; then
+            say "warning: failed to uninstall stale vcclient-cachy wheel; continuing"
+        fi
     fi
 else
     say "creating Python 3.11 venv at $VENV…"
