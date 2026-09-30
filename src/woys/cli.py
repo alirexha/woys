@@ -271,6 +271,11 @@ def cmd_info() -> int:
     # command that revealed it. `_make_session` now hard-fails that case;
     # this is where you confirm the GPU inference path is healthy *before*
     # a run.
+    #
+    # get_available_providers() lists the providers compiled into the wheel,
+    # not ones that can run on this machine, so word it that way; the
+    # nvidia-smi line below is what says whether there is a GPU for it.
+    cuda_ok = False
     try:
         import onnxruntime as ort
 
@@ -283,8 +288,17 @@ def cmd_info() -> int:
         cuda_ok = "CUDAExecutionProvider" in providers
         trt_ok = "TensorrtExecutionProvider" in providers
         print(f"  onnxruntime: {ort.__version__}")
-        print(f"  CUDAExecutionProvider: {'available' if cuda_ok else 'NOT available'}")
-        print(f"  TensorrtExecutionProvider: {'available' if trt_ok else 'not available'}")
+        if cuda_ok:
+            print("  CUDAExecutionProvider: built into this onnxruntime")
+        else:
+            print(
+                "  CUDAExecutionProvider: NOT in this onnxruntime build "
+                "(CPU-only wheel? reinstall onnxruntime-gpu)"
+            )
+        print(
+            "  TensorrtExecutionProvider: "
+            f"{'built into this onnxruntime' if trt_ok else 'not in this build'}"
+        )
     except ImportError:
         print("  onnxruntime: NOT INSTALLED")
 
@@ -295,6 +309,7 @@ def cmd_info() -> int:
             if "Server Name" in line or "Server Version" in line:
                 print(f"  {line.strip()}")
     nvsmi = shutil.which("nvidia-smi")
+    gpu_seen = False
     if nvsmi:
         out = subprocess.run(
             [nvsmi, "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
@@ -302,8 +317,14 @@ def cmd_info() -> int:
             text=True,
             timeout=3,
         )
-        if out.returncode == 0:
+        if out.returncode == 0 and out.stdout.strip():
+            gpu_seen = True
             print(f"  gpu: {out.stdout.strip()}")
+    if cuda_ok and not gpu_seen:
+        print(
+            "  gpu: no NVIDIA GPU detected (nvidia-smi missing or failed) -- "
+            "the CUDA provider cannot run without a GPU and driver"
+        )
 
     # Active RVC model -- a missing model is the most common first-run
     # failure; surface it here rather than as an opaque error mid-start.
