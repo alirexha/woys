@@ -74,8 +74,9 @@ woys models list                              # see what's now in your library
 woys models use <model-name>                  # pick one by file stem, e.g. `woys models use amitaro_v2_16k`
 ```
 
-The TUI picks up the new selection on the next engine restart (`q`,
-then `woys run --autostart`).
+If the TUI is running, `woys models use` hot-swaps the voice right away
+(it prints `[models] hot-swapped → …`). Otherwise it saves the choice to
+`config.toml` and the next `woys run` loads it.
 
 ## What You Get
 
