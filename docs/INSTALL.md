@@ -34,12 +34,13 @@ Then log out and log back in.
 ## Step 1 — clone the repo
 
 ```
-cd ~/ai
+cd ~
 git clone https://github.com/alirexha/woys.git
 cd woys
 ```
 
-`cd ~/ai` puts you in the AI workspace folder.
+`cd ~` puts you in your home folder, so the checkout lands in `~/woys`
+(the path the rest of this guide uses).
 `git clone …` copies the source tree from GitHub to disk.
 `cd woys` walks into the freshly-cloned directory.
 
@@ -98,11 +99,18 @@ woys info
 You should see something like:
 
 ```
-woys 0.13.3
+woys 0.15.0
   python: 3.11.15
+  onnxruntime: 1.22.0
+  CUDAExecutionProvider: available
+  TensorrtExecutionProvider: not available
   Server Name: PulseAudio (on PipeWire 1.6.4)
   gpu: NVIDIA GeForce RTX 2070, 595.71.05, 8192 MiB
+  active rvc model: (none configured)
 ```
+
+`CUDAExecutionProvider: available` is the line that matters: without it
+woys cannot run.
 
 Then check the persistent virtual mic is loaded:
 
