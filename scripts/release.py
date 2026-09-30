@@ -7,7 +7,7 @@ in pyproject.toml, src/woys/__init__.py, README.md, PROGRESS.md and
 pkg/PKGBUILD, and the four drifted from each other. Hatchling now reads
 __version__ out of src/woys/__init__.py at build time (see
 [tool.hatch.version] in pyproject.toml); this script handles the remaining
-*documentation* surfaces.
+*documentation* surfaces: README.md, pkg/PKGBUILD and pkg/.SRCINFO.
 
 Usage::
 
@@ -67,6 +67,17 @@ def main() -> int:
             REPO / "pkg" / "PKGBUILD",
             r"^pkgver=[0-9]+\.[0-9]+\.[0-9]+$",
             f"pkgver={version}",
+        ),
+        # .SRCINFO mirrors PKGBUILD: pkgver and the source tag
+        (
+            REPO / "pkg" / ".SRCINFO",
+            r"^\tpkgver = [0-9]+\.[0-9]+\.[0-9]+$",
+            f"\tpkgver = {version}",
+        ),
+        (
+            REPO / "pkg" / ".SRCINFO",
+            r"^\tsource = woys-[0-9]+\.[0-9]+\.[0-9]+::(.*)#tag=v[0-9]+\.[0-9]+\.[0-9]+$",
+            rf"\tsource = woys-{version}::\1#tag=v{version}",
         ),
     ]
 
