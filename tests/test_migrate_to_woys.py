@@ -370,3 +370,35 @@ def test_migrate_does_not_rewrite_an_existing_config_it_did_not_move(tmp_path: P
 
     assert cfg.read_text() == "output_latency_ms = 150\n"
     assert (tmp_path / ".config" / "vcclient-cachy" / "config.toml").is_file()
+
+
+@pytest.mark.parametrize("pname", ["my voice", "v1.2", 'a"b'])
+def test_migrate_writes_valid_toml_for_any_profile_name(tmp_path: Path, pname: str) -> None:
+    """Profile names are free text (`woys profile save "my voice"`). The
+    rewritten config must stay valid TOML and keep every key and value."""
+    import tomli_w
+    from migrate_to_woys import migrate
+
+    old = tmp_path / ".config" / "vcclient-cachy"
+    old.mkdir(parents=True)
+    mp = str(tmp_path / ".local" / "share" / "vcclient-cachy" / "models" / "a.onnx")
+    (old / "config.toml").write_text(
+        tomli_w.dumps(
+            {
+                "rvc_model": mp,
+                "note": "x\ny",
+                "profiles": {pname: {"rvc_model": mp, "f0_up_key": 3}},
+            }
+        )
+    )
+
+    migrate(home=tmp_path)
+
+    cfg = tmp_path / ".config" / "woys" / "config.toml"
+    with open(cfg, "rb") as f:
+        out = tomllib.load(f)
+    assert list(out["profiles"]) == [pname]
+    assert out["profiles"][pname]["rvc_model"].endswith("woys/models/a.onnx")
+    assert out["profiles"][pname]["f0_up_key"] == 3
+    assert out["note"] == "x\ny"
+    assert cfg.stat().st_mode & 0o777 == 0o600

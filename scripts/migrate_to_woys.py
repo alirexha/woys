@@ -1,8 +1,9 @@
 """v0.6.0 - migrate an existing vcclient-cachy install to woys.
 
-Run by `install.sh` before installing the new code, so the user's models +
-config + systemd unit move to the new layout in one atomic step. Safe to
-re-run (idempotent) and safe to invoke on a fresh install (no-op).
+Run by `install.sh` with the new venv's python, after the venv and its
+dependencies are built, so the user's models + config + systemd unit move
+to the new layout. Safe to re-run (idempotent) and safe to invoke on a
+fresh install (no-op).
 
 What moves:
     ~/.config/vcclient-cachy/         →  ~/.config/woys/
@@ -38,7 +39,9 @@ PipeWire:
     exists. See `docs/10-monitor-leak-diag.md`.
 
 Usage:
-    python3 scripts/migrate_to_woys.py [--dry-run]
+    ~/.local/share/woys/venv/bin/python scripts/migrate_to_woys.py [--dry-run]
+
+    Writing the rewritten config.toml needs tomli_w (in the woys venv).
 
 Exits 0 on success or no-op, non-zero on hard error.
 """
@@ -174,43 +177,19 @@ def _rewrite_paths_in_value(value: Any, *, key: str | None = None) -> Any:
 
 
 def _toml_dump(data: dict[str, Any], path: Path) -> None:
-    """Hand-rolled minimal TOML emitter - sufficient for config.toml's flat
-    [section]-based layout. We avoid pulling in `tomli_w` here so the
-    migrator runs on a stock Python 3.11 (the install.sh runs us BEFORE
-    creating the venv).
+    """Write `data` to a new file at `path`, created 0600 from the start.
+
+    install.sh runs us with the venv python after the dependencies are
+    installed, so tomli_w is available; it quotes keys such as profile
+    names with spaces or dots, which a hand-rolled emitter got wrong.
     """
-    lines: list[str] = []
-    top_level = {k: v for k, v in data.items() if not isinstance(v, dict)}
-    sections = {k: v for k, v in data.items() if isinstance(v, dict)}
+    import tomli_w
 
-    def _fmt(v: Any) -> str:
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        if isinstance(v, (int, float)):
-            return repr(v)
-        if isinstance(v, str):
-            escaped = v.replace("\\", "\\\\").replace('"', '\\"')
-            return f'"{escaped}"'
-        if isinstance(v, list):
-            return "[" + ", ".join(_fmt(item) for item in v) + "]"
-        raise TypeError(f"unsupported TOML value type: {type(v).__name__}")
-
-    for k, v in top_level.items():
-        lines.append(f"{k} = {_fmt(v)}")
-
-    for section_name, section in sections.items():
-        lines.append("")
-        lines.append(f"[{section_name}]")
-        for k, v in section.items():
-            if isinstance(v, dict):
-                # Nested section, e.g. [profiles.default]
-                lines.append(f"\n[{section_name}.{k}]")
-                for sub_k, sub_v in v.items():
-                    lines.append(f"{sub_k} = {_fmt(sub_v)}")
-            else:
-                lines.append(f"{k} = {_fmt(v)}")
-
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        tomli_w.dump(data, f)
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def _rewrite_config_toml(config_path: Path, *, dry_run: bool, log: list[str]) -> None:
@@ -232,11 +211,11 @@ def _rewrite_config_toml(config_path: Path, *, dry_run: bool, log: list[str]) ->
         return
     # Atomic write via .tmp + rename so a crash mid-write can't corrupt config.
     tmp = config_path.with_suffix(config_path.suffix + ".tmp")
+    # B65 / sec-003: the file is created 0600 (never world-readable, even
+    # briefly). A stale .tmp from a crashed run is removed first so the
+    # exclusive create can't pick up its mode or contents.
+    tmp.unlink(missing_ok=True)
     _toml_dump(rewritten, tmp)
-    # B65 / sec-003: enforce 0600 BEFORE the atomic rename so the file is
-    # never world-readable, even briefly. Pre-v0.8.0 we relied on the
-    # caller's umask, which on a typical user (022) inherited 0644.
-    os.chmod(tmp, 0o600)
     os.replace(tmp, config_path)
 
 
