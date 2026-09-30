@@ -3747,8 +3747,13 @@ class RealtimeEngine:
         # but the engine wins same-class tie-breaks during contention.
         self._apply_thread_priority(label="writer", priority=59)
         while not self._stop_event.is_set():
+            q = self._writer_queue
+            if q is None:
+                # The session that owned this writer has torn down its
+                # queue; polling None would spin a core until stop().
+                break
             try:
-                payload = self._writer_queue.get(timeout=0.1) if self._writer_queue else None
+                payload = q.get(timeout=0.1)
             except queue.Empty:
                 continue
             if payload is None:
@@ -4924,9 +4929,11 @@ class RealtimeEngine:
             # teardown moved to `_monitor_writer_loop`'s exit. That
             # thread sees `_stop_event` set + closes its own stream
             # before exiting.
-            # Tearing down threads + pacat. _stop_event was set by stop()
-            # (or we're here via exception); writer/watchdog will exit on
-            # the next loop iteration.
+            # Tearing down threads + pacat. stop() has usually set
+            # _stop_event already; on the crash path nobody has, so set it
+            # here (after the drain) or the writer/watchdog/monitor threads
+            # outlive this run and the joins below just time out.
+            self._stop_event.set()
             with self._pacat_lock:
                 final_proc = self._pacat_proc
                 self._pacat_proc = None
