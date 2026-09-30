@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import errno
 import logging
 import os
 import signal
@@ -368,13 +369,27 @@ class ControlServer:
 
     def _loop(self) -> None:
         assert self._sock is not None
+        accept_failing = False
         while not self._stop.is_set():
             try:
                 conn, _ = self._sock.accept()
             except TimeoutError:
                 continue
-            except OSError:
+            except OSError as e:
+                if self._stop.is_set():
+                    break  # stop() closed the socket under us
+                if e.errno in _TRANSIENT_ACCEPT_ERRNOS:
+                    # Out of fds or a client gave up mid-handshake; the
+                    # listener itself is fine. Back off briefly and retry
+                    # rather than leave a socket file nobody answers.
+                    if not accept_failing:  # once per streak, not 10/s
+                        logger.warning("control accept failed, retrying: %s", e)
+                    accept_failing = True
+                    time.sleep(0.1)
+                    continue
+                logger.exception("control listener stopped: accept failed: %s", e)
                 break
+            accept_failing = False
             # hand each accepted connection
             # to a worker. Pre-fix the per-connection body ran inline
             # here; a slow handler stalled every other client at the
@@ -462,6 +477,11 @@ class ControlServer:
 # RUNTIME_DIR layer; it does NOT replace those (filesystem perms still
 # do the heavy lifting cross-UID).
 _SO_PEERCRED_STRUCT = "iII"  # 1 x signed pid (i), 2 x unsigned uid/gid (I)
+
+
+_TRANSIENT_ACCEPT_ERRNOS = frozenset(
+    {errno.EMFILE, errno.ENFILE, errno.ENOBUFS, errno.ENOMEM, errno.ECONNABORTED, errno.EINTR}
+)
 
 
 def _check_peer_uid(conn: socket.socket) -> bool:
