@@ -96,8 +96,8 @@ v0.14.0: the parallel shell-script implementation
 (`scripts/v013_2_rnnoise_chain.sh`) was retired -- it duplicated the
 chain topology without `set -euo pipefail` or pactl rc checks, so a
 partial load reported "active" silently. Use `woys chain enable`
-(installed by `pip install -e .` / AUR / `install.sh`); if `woys`
-isn't on PATH, install it.
+(installed by `./install.sh`); if `woys` isn't on PATH, install it
+or add `~/.local/bin` to your PATH.
 
 ## Selecting the cleaned mic in apps (v0.13.3)
 

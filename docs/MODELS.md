@@ -169,7 +169,7 @@ print(f"wrote {OUT}")
 Run:
 
 ```
-.venv/bin/python convert_pth_to_onnx.py
+~/.local/share/woys/venv/bin/python convert_pth_to_onnx.py
 ```
 
 For 256-dim (v1) models, swap the import to `SynthesizerTrnMs256NSFsid_ONNX`

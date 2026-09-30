@@ -47,14 +47,20 @@ Then `source ~/.bashrc` (or open a fresh terminal).
 The pip-shipped CUDA libs that come with `onnxruntime-gpu` aren't on
 `LD_LIBRARY_PATH`. We work around this internally via `ort.preload_dlls()`,
 which is called automatically. If you see this error, your venv is probably
-out of date:
+out of date. Refresh it from the checkout:
 
 ```
 cd ~/woys
-.venv/bin/python -m pip install --upgrade onnxruntime-gpu
+./install.sh --skip-models
 ```
 
-Or run `./install.sh --skip-models` to refresh the install.
+The venv is built by `uv` and has no `pip`, so `pip install` inside it
+fails. To reinstall only the pinned dependencies:
+
+```
+cd ~/woys
+uv pip install --python ~/.local/share/woys/venv/bin/python -r requirements.txt
+```
 
 ## "No GPU found, falling back to CPU"
 
@@ -72,10 +78,12 @@ isn't seeing CUDA. Check ORT version is **≥ 1.20**:
 ~/.local/share/woys/venv/bin/python -c "import onnxruntime; print(onnxruntime.__version__)"
 ```
 
-If it's older, re-install:
+If it's older, re-install the pinned version (the venv has no `pip`;
+use `uv`, or re-run `./install.sh --skip-models`):
 
 ```
-~/.local/share/woys/venv/bin/pip install -U "onnxruntime-gpu>=1.20"
+cd ~/woys
+uv pip install --python ~/.local/share/woys/venv/bin/python -r requirements.txt
 ```
 
 ## After upgrading to v0.6.5, my apps lost the input device
@@ -248,12 +256,15 @@ the inference-only benchmark used in `docs/05-perf.md`:
 
 ```
 cd ~/woys
-.venv/bin/python scripts/smoke_rvc_onnx.py
+~/.local/share/woys/venv/bin/python scripts/smoke_rvc_onnx.py
 ```
 
-Or via pytest:
+Or via pytest, from a development environment (`uv sync --extra dev` in
+the checkout creates `~/woys/.venv` with pytest; the install venv has
+none):
 
 ```
+cd ~/woys
 .venv/bin/python -m pytest tests/test_smoke_rvc_onnx.py -v -s
 ```
 
