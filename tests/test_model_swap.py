@@ -45,17 +45,28 @@ def _have_two_models() -> tuple[Path, Path] | None:
     return (voices[0], voices[1]) if len(voices) >= 2 else None
 
 
-def test_engine_honors_cfg_rvc_model_on_init() -> None:
+@pytest.fixture
+def dummy_voices(tmp_path: Path) -> tuple[Path, Path]:
+    """Two placeholder voice files in a tmp library. The config plumbing,
+    STATUS and `models use` paths only look at the path/name, so these run
+    everywhere instead of skipping on machines without a real library."""
+    lib = tmp_path / "models"
+    lib.mkdir()
+    a = lib / "voice_a.onnx"
+    b = lib / "voice_b.onnx"
+    a.write_bytes(b"not-a-real-onnx")
+    b.write_bytes(b"not-a-real-onnx")
+    return a, b
+
+
+def test_engine_honors_cfg_rvc_model_on_init(dummy_voices: tuple[Path, Path]) -> None:
     """v0.4.1 #1: the TUI used to drop `cfg.rvc_model` on construct.
     Verify it's now plumbed through to EngineConfig."""
     from audio.engine import DEFAULT_RVC_MODEL
     from tui.app import VCClientApp
     from tui.config import AppConfig
 
-    pair = _have_two_models()
-    if pair is None:
-        pytest.skip("need ≥ 2 ONNX voice models in the library")
-    target, _ = pair
+    target, _ = dummy_voices
 
     cfg = AppConfig()
     cfg.rvc_model = str(target.resolve())
@@ -78,7 +89,6 @@ def test_engine_falls_back_to_default_when_cfg_path_invalid(tmp_path: Path) -> N
     assert app.engine.cfg.rvc_model == DEFAULT_RVC_MODEL
 
 
-@pytest.mark.gpu
 def test_resamplers_initialized_in_constructor() -> None:
     """`_resampler_in` / `_resampler_out` must be
     initialized in `__init__`.
@@ -136,10 +146,13 @@ def test_ensure_sessions_raises_clean_filenotfound_for_missing_model(
     ), "remediation hint must name a concrete fix command"
 
 
+@pytest.mark.gpu
+@pytest.mark.slow
 def test_request_model_swap_replaces_rvc_session() -> None:
     """`request_model_swap` queues; `_maybe_swap_model` picks it up + replaces
     the ORT session. We call _maybe_swap_model directly here to avoid
-    spinning up the audio thread."""
+    spinning up the audio thread. Builds real CUDA sessions from the user's
+    library, hence gpu + slow."""
     from audio.engine import EngineConfig, RealtimeEngine
 
     pair = _have_two_models()
@@ -190,15 +203,12 @@ def test_request_model_swap_queues_each_request_per_call_event() -> None:
     assert len(eng._outstanding_swaps) == 2
 
 
-def test_status_handler_includes_model_name() -> None:
+def test_status_handler_includes_model_name(dummy_voices: tuple[Path, Path]) -> None:
     """v0.4.1 #3: STATUS reply must contain `model=<basename>`."""
     from tui.app import VCClientApp
     from tui.config import AppConfig
 
-    pair = _have_two_models()
-    if pair is None:
-        pytest.skip("need ≥ 2 ONNX voice models")
-    target, _ = pair
+    target, _ = dummy_voices
 
     cfg = AppConfig()
     cfg.rvc_model = str(target.resolve())
@@ -221,15 +231,14 @@ def test_model_command_unknown_slug_returns_error() -> None:
 
 
 def test_cli_models_use_falls_back_to_config_when_no_socket(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dummy_voices: tuple[Path, Path]
 ) -> None:
     """When no engine is running, `models use` must still update config -
     just without the obnoxious 'restart the engine' message.
 
     Patches load_config / save_config inside the models module so they read
     and write a tmp config rather than the user's real ~/.config file.
-    `tui.config.CONFIG_FILE` is bound as a default arg at function definition,
-    so we have to inject the path through the wrappers themselves.
+    Name resolution runs against the tmp library via `models_dir`.
     """
     import sys
 
@@ -241,10 +250,7 @@ def test_cli_models_use_falls_back_to_config_when_no_socket(
     cfg_path = tmp_path / "config.toml"
     real_save(AppConfig(), cfg_path)
 
-    pair = _have_two_models()
-    if pair is None:
-        pytest.skip("need ≥ 2 ONNX voice models")
-    target, _ = pair
+    target, _ = dummy_voices
 
     def fake_load(*_args: object, **_kwargs: object) -> AppConfig:
         return real_load(cfg_path)
@@ -263,7 +269,7 @@ def test_cli_models_use_falls_back_to_config_when_no_socket(
     from woys.models import cli_models_use
 
     with patch("tui.control.send_command", return_value="ERR control socket not found"):
-        rc = cli_models_use(target.stem)
+        rc = cli_models_use(target.stem, models_dir=target.parent)
     assert rc == 0
     cfg2 = real_load(cfg_path)
     assert cfg2.rvc_model == str(target.resolve())
@@ -281,8 +287,8 @@ def test_cli_models_use_falls_back_to_config_when_no_socket(
 #
 # These tests are self-contained: they synthesize a fake model file in
 # tmp_path so they run on CI without a real ~/.local/share/woys/models
-# library. The existing `test_cli_models_use_falls_back_to_config_when_
-# no_socket` above keeps the integration-style real-model test.
+# library. `test_cli_models_use_falls_back_to_config_when_no_socket` above
+# covers the end-to-end name lookup against a tmp library.
 
 _SOCKET_ERR_STRINGS = [
     "ERR control socket not found - TUI not running?",  # pre-fix: already matched
