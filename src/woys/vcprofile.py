@@ -202,6 +202,7 @@ def import_profile(
     *,
     config_path: Path | None = None,
     models_dir: Path | None = None,
+    overwrite: bool = False,
 ) -> str:
     """Import a .vcprofile into config.toml.
 
@@ -209,6 +210,11 @@ def import_profile(
     (resolved via models.discover_models), the imported profile's
     `rvc_model` is set to that path. Otherwise we leave `rvc_model = ""`
     and warn the user.
+
+    The name usually comes from the shared file, so a clash with an
+    existing local profile raises ValueError unless `overwrite` is True;
+    otherwise someone else's `main.vcprofile` would replace the user's own
+    `main` without a word.
 
     Returns the name the profile was saved under.
     """
@@ -242,6 +248,14 @@ def import_profile(
     name = target_name or raw.get("meta", {}).get("profile_name") or path.stem
     if not name:
         raise ValueError(".vcprofile has no profile name and none was provided")
+    from woys.profiles import _PROFILE_FIELDS, _profiles_bag
+
+    if name in _profiles_bag(cfg) and not overwrite:
+        raise ValueError(
+            f"a profile named {name!r} already exists; import it under another "
+            f"name with --name, or delete the local one first "
+            f"(woys profile delete {name})"
+        )
 
     # Try to bind the .vcprofile's model expectation to a local file.
     if desired_sha:
@@ -294,8 +308,6 @@ def import_profile(
     # B29 / corr-013: use the `_profiles_bag` helper so a corrupt
     # `_extras["profiles"]` (non-dict, e.g. user hand-edited config to
     # `profiles = "broken"`) coerces to {} instead of raising mid-save.
-    from woys.profiles import _PROFILE_FIELDS, _profiles_bag
-
     bag = dict(_profiles_bag(cfg))
     full_snap: dict[str, Any] = {}
     for k in _PROFILE_FIELDS:
@@ -325,13 +337,13 @@ def cli_profile_export(name: str, output: str) -> int:
     return 0
 
 
-def cli_profile_import(path: str, name: str | None = None) -> int:
+def cli_profile_import(path: str, name: str | None = None, *, overwrite: bool = False) -> int:
     in_path = Path(path).expanduser()
     if not in_path.exists():
         print(f"[profile import] ERROR: no such file: {in_path}", file=sys.stderr)
         return 1
     try:
-        new_name = import_profile(in_path, name)
+        new_name = import_profile(in_path, name, overwrite=overwrite)
     except Exception as e:
         print(f"[profile import] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
