@@ -215,9 +215,10 @@ MODEL WEIGHTS (NOT in this repository)
 This repository does NOT bundle voice-conversion model weights. Foundation
 weights downloaded by scripts/download_weights.py at install time:
 
-  rmvpe.onnx, rmvpe_wrapped.onnx      mirrored from huggingface.co/lj1995
-                                       and huggingface.co/wok000 — see those
-                                       repos for the upstream license terms
+  rmvpe_wrapped.onnx                   huggingface.co/wok000/weights_gpl
+                                       (rmvpe/rmvpe_20231006.onnx) — same
+                                       GPL-3.0 repo as contentvec; the note
+                                       below applies to it too.
   contentvec-f.onnx                    huggingface.co/wok000/weights_gpl —
                                        distributed under GPL-3.0 (the
                                        upstream repo name explicitly
@@ -236,8 +237,8 @@ that repo." That was an understatement: the upstream
 repo name `wok000/weights_gpl` explicitly declares the GPL-3.0
 licensing posture. The correct, explicit statement:
 
-  * `contentvec-f.onnx` is distributed under **GPL-3.0** (per the
-    upstream `weights_gpl` repo's own naming).
+  * `contentvec-f.onnx` and `rmvpe_wrapped.onnx` are distributed under
+    **GPL-3.0** (per the upstream `weights_gpl` repo's own naming).
   * woys **never redistributes** this weight; `scripts/
     download_weights.py` fetches it directly from Hugging Face
     into the user's local cache. The user retains the GPL-3.0
@@ -248,7 +249,7 @@ licensing posture. The correct, explicit statement:
     respect GPL-3.0 (source-availability, no proprietary linking
     of the bundled work, etc.). The current repo's All-Rights-
     Reserved license for original work does NOT extend to a
-    bundled GPL-3.0 weight.
+    bundled GPL-3.0 weight. The same holds for rmvpe_wrapped.onnx.
 
 The same explicit-GPL-3.0 statement is mirrored in `docs/MODELS.md`
 so a maintainer or downstream packager sees the obligation in
