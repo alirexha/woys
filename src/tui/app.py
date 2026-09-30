@@ -575,15 +575,12 @@ class WoysApp(App[int]):
             jid = cmd[len("JOB ") :].strip()
             return self._jobs.status_line(jid)
         if cmd == "QUIT":
-            # action_quit is async; post a sync shim instead so call_from_thread
-            # gets a non-coroutine callable (Textual typing requires it).
-            def _quit_shim() -> None:
-                self.engine.stop()
-                self._control.stop()
-                self._save_cfg()
-                self.exit(0)
-
-            self.call_from_thread(_quit_shim)
+            # Only schedule the quit; never wait for it. This handler runs on
+            # a ControlServer pool worker and the teardown's _control.stop()
+            # joins that pool, so waiting here deadlocks the event loop.
+            # action_quit also keeps engine.stop() off the loop and shows the
+            # shutdown overlay, same as pressing `q`.
+            self.call_from_thread(self.call_later, self.action_quit)
             return "OK quitting"
         return f"ERR unknown: {cmd!r}"
 
