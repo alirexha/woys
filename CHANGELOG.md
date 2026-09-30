@@ -11,6 +11,117 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-09-30 — audit fixes
+
+A full audit (ten review lenses, then a refute round that tried to break
+every P0/P1 finding) found one data-loss bug, a CI gate that had been red
+since the last commit on `main`, and a long tail of misleading successes.
+This release fixes everything that could be proven on a machine without a
+GPU or PipeWire. Nothing on the audio path's timing changed: chunk sizes,
+latency and buffer sizes, SOLA, the GPU clock lock and keep-alive, cuDNN
+settings, the resampler, the input gate and `bin/woys-pw-out.c` are as
+they were, and a new golden-output test pins the engine's output bytes.
+
+### Upgrade notes
+
+- `./uninstall.sh` now **keeps** your voice models; pass `--purge-models`
+  to delete them (it also removes `woys-pw-out` now).
+- `./install.sh` now **stops** when gcc, make or the PipeWire development
+  headers are missing, instead of finishing without the native helper the
+  engine uses by default. It also finds `uv` on your PATH (e.g. from
+  `pacman -S uv`) or wherever `UV_BIN` points.
+- The GPU clock-lock sudoers rule changed: the old `nvidia-smi -lgc *`
+  rule let any extra arguments run as root. Replace it with the rule in
+  `docs/22-gpu-clock-lock.md`.
+- The config lives in `$XDG_CONFIG_HOME/woys/` (default `~/.config/woys/`;
+  `WOYS_CONFIG_DIR` overrides). An existing `~/.config/woys/config.toml` is
+  still used if the XDG location has none.
+- `woys run --autostart` / `--monitor` now apply to that session only;
+  `--no-monitor` is new.
+- 11 unused runtime dependencies (librosa, scipy, torchaudio, torchcrepe,
+  ...) and the `[convert]` / `[worldpitch]` extras are gone; `soxr` is now
+  a direct dependency at the same version.
+
+### Data safety
+
+- A typo in `config.toml` no longer costs your profiles: woys still starts
+  on in-memory defaults, but refuses to save over the broken file (the next
+  `profile save`, `models use` or TUI quit used to wipe it).
+- A running TUI no longer deletes profiles you saved, deleted or imported
+  from the CLI meanwhile; `profile import` refuses to replace an existing
+  profile unless `--force` is given and only accepts plain names.
+- The vcclient-cachy migration merges into an existing woys folder (it
+  used to strand old voice models) and runs once instead of rewriting
+  `output_latency_ms` on every reinstall; the migrated file is valid TOML
+  for any profile name and created 0600.
+- `woys fp16-convert` writes atomically and never leaves a truncated model.
+- Cached foundation weights are hash-checked and re-fetched on mismatch.
+
+### Engine and CLI
+
+- A corrupt model no longer hangs the engine at "loading sessions"; a
+  crash stops the helper threads (the writer used to busy-spin); a failed
+  model swap keeps the current voice and reports the error; self-stops
+  (circuit breaker, respawn cap) mark the engine crashed so `woys engine`
+  exits non-zero; restarting after a crash tears the old run down first;
+  SIGTERM keeps working after the TUI stops the engine.
+- An onnxruntime build without a CUDA provider now hard-fails like a
+  broken CUDA install (GPU-only is the rule; there is no CPU mode).
+- `woys diag` fails on a crash, zero processed chunks or dropped chunks,
+  prints the error history and each warning once; `woys info` no longer
+  calls a compiled-in CUDA provider "available"; a missing configured
+  voice model is an error, not a silent switch to the default voice.
+- `woys status`, `toggle` and `pitch` no longer import the engine, CUDA
+  libraries or Textual (~0.6 s -> ~0.1 s per keypress).
+
+### TUI and control socket
+
+- Socket `QUIT` no longer deadlocks the TUI; `TOGGLE`, `MODEL` and
+  `PROFILE` report failures (and the CLI exits non-zero) instead of
+  "OK"; `models use` sends the full path; pitch is clamped to +-24 and
+  concurrent `PITCH` steps are not lost; slow clients can't starve the
+  socket; the control listener survives a transient `accept()` error.
+- Profile names and error text are shown literally (a name with markup
+  crashed the TUI); the audio-health row shows native-pw underruns.
+
+### Chain and PipeWire
+
+- `woys chain teardown` / `disable` and `woys pw teardown` exit 2 when
+  modules stay loaded; `chain status --check` fails when pactl or pw-link
+  can't answer; `chain disable` keeps the unit if systemctl fails.
+
+### Security and permissions
+
+- Config dir 0700, log dir/files 0700/0600, lock file 0600, SLOW dump
+  refuses symlinks; an existing `$XDG_RUNTIME_DIR/woys` gets the same
+  owner/mode checks as the /tmp fallback; `models download` refuses repo
+  files named like a foundation weight.
+
+### Packaging, dead code, docs
+
+- 89 vendored upstream files no entry point imports are deleted (the web
+  server, the realtime Pipeline with its FAISS index path, unused
+  extractors); only the `woys convert` export path remains.
+- The woys-mic unit uses the absolute launcher path; `.SRCINFO` is kept
+  in step with the version; the PKGBUILD is marked as a draft.
+- Docs corrected where they disagreed with the code (installer behaviour,
+  device labels, log location, the unwired evdev hotkey, exit codes).
+
+### Tests and CI
+
+- `lint-typecheck` is green again (an unused `noqa`).
+- The suite no longer touches the real config, log, runtime dir or
+  instance lock; tests that could not fail were rewritten; ~280 new tests.
+- New `tests/test_engine_golden.py`: runs the real engine loop on CPU with
+  fixed input and checks the output bytes (slow-marked; needs the
+  foundation weights).
+
+Also since 0.15.0 (committed before this audit): the `gpu_anti_jitter_mode`
+validator accepts its documented values, the broken `--allow-cpu` install
+flag is gone, engine errors are mirrored to the log file, the TUI shows the
+warmup substage, `woys diag` holds the single-instance lock, and profile
+migration honours `_user_overrides`.
+
 ## [0.15.0] — 2026-05-16 — phase-6 hardening (213-finding code review, 80 fix commits)
 
 **Status:** released from branch `hardening`, merged to `main`
@@ -198,7 +309,7 @@ gap on the MIT subtree).
   version was hardcoded in 4 places. Closes F-merged-029 /
   F-CX2-03.
 - **Logging framework keystone** — `RotatingFileHandler` +
-  `~/.local/share/woys/logs/` + level-via-env. Closes F-merged-014.
+  `~/.local/state/woys/woys.log` (`$XDG_STATE_HOME`). Closes F-merged-014.
 
 #### Build / packaging / install
 
@@ -215,8 +326,7 @@ gap on the MIT subtree).
   Closes F-19-11 / F-CX6-03.
 - **`.vcprofile` forward-compat reader + migration ladder** —
   F-16-08.
-- **`config.toml` header template + `config.example.toml`** —
-  F-16-06.
+- **`config.toml` header template** — F-16-06.
 - **Config-migration honors `_user_overrides`** + the false
   comment that said otherwise — F-16-01.
 - **`validate()` boundary for TOML config + `.vcprofile`** —
@@ -352,7 +462,7 @@ For users upgrading from v0.14.3:
 ```
 
 If `woys run` raises `CpuFallbackError` after upgrade, see
-`docs/22-gpu-clock-lock.md` and `woys info` to diagnose the CUDA
+`docs/TROUBLESHOOTING.md` and `woys info` to diagnose the CUDA
 EP state — that's the v0.15.0 hard-fail on what was previously a
 silent CPU fallback.
 
@@ -1716,9 +1826,11 @@ For `clock_lock` or `both` modes, install
 <your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
 ```
 
-The wildcard is bounded by application logic — the engine validates
-clock values in code before invoking. Documented in
-`docs/22-gpu-clock-lock.md`.
+> **Superseded in v0.16.0 — do not copy the rule above.** The `-lgc *`
+> wildcard also matches extra arguments (`-lgc 1,1 -f /any/file`), so any
+> process running as you could run `nvidia-smi` as root with arguments of
+> its choosing; the engine's own checks never see those calls. Use the
+> exact-argument rule in `docs/22-gpu-clock-lock.md` instead.
 
 ### Tests
 
@@ -1821,10 +1933,11 @@ For "clock_lock" or "both" modes, install `/etc/sudoers.d/woys-gpu-clock`:
 <your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
 ```
 
-Limited to those two subcommands; any other `nvidia-smi` call still
-prompts for the user's password. The engine validates clock values
-in code before invoking, so the sudoers wildcard cannot be used to
-push the GPU above stock spec.
+> **Superseded in v0.16.0 — do not copy the rule above.** The `-lgc *`
+> wildcard also matches extra arguments (`-lgc 1,1 -f /any/file`), so any
+> process running as you could run `nvidia-smi` as root with arguments of
+> its choosing; the engine's own checks never see those calls. Use the
+> exact-argument rule in `docs/22-gpu-clock-lock.md` instead.
 
 ### Engine additions
 
