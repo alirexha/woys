@@ -91,3 +91,54 @@ def test_cli_import_reports_the_clash_and_changes_nothing(
     assert cli_profile_import(str(vp)) == 1
     assert "already exists" in capsys.readouterr().err
     assert _main_profile(cfg_path)["f0_up_key"] == 7
+
+
+def _vcprofile_named(tmp_path: Path, name_toml: str) -> Path:
+    vp = tmp_path / "shared.vcprofile"
+    vp.write_text(
+        f"[meta]\nformat_version = 1\nprofile_name = {name_toml}\n"
+        '[profile]\nf0_up_key = 1\n[model]\nsha256 = ""\n'
+    )
+    return vp
+
+
+@pytest.mark.parametrize(
+    "name_toml",
+    [
+        "123",
+        '"x[/bold]"',
+        '"[@click=app.quit]x[/]"',
+        '"a\\nb"',
+        '"a]b"',
+        '"-rf"',
+        '"trailing "',
+        '"' + "n" * 65 + '"',
+        '"caf\\u00e9"',
+    ],
+)
+def test_import_rejects_unsafe_profile_names(tmp_path: Path, name_toml: str) -> None:
+    from tui.config import load_config
+    from woys.profiles import _profiles_bag
+    from woys.vcprofile import import_profile
+
+    cfg_path = tmp_path / "config.toml"
+    vp = _vcprofile_named(tmp_path, name_toml)
+    with pytest.raises(ValueError, match="invalid profile name"):
+        import_profile(vp, config_path=cfg_path, models_dir=tmp_path)
+    assert _profiles_bag(load_config(cfg_path)) == {}
+
+
+def test_import_rejects_an_unsafe_name_given_on_the_command_line(tmp_path: Path) -> None:
+    from woys.vcprofile import import_profile
+
+    vp = _vcprofile_named(tmp_path, '"fine"')
+    with pytest.raises(ValueError, match="invalid profile name"):
+        import_profile(vp, "x[/bold]", config_path=tmp_path / "c.toml", models_dir=tmp_path)
+
+
+@pytest.mark.parametrize("name", ["main", "Work 2", "deep_voice-v1.2", "7", "n" * 64])
+def test_import_accepts_plain_profile_names(tmp_path: Path, name: str) -> None:
+    from woys.vcprofile import import_profile
+
+    vp = _vcprofile_named(tmp_path, f'"{name}"')
+    assert import_profile(vp, config_path=tmp_path / "c.toml", models_dir=tmp_path) == name
