@@ -288,16 +288,41 @@ class VirtualMic:
 
         v0.6.5: also unloads any orphan `vcclient-mic` remap-source from
         pre-rename installs.
+
+        Raises PipeWireError if any of those modules is still loaded
+        afterwards, so `woys pw teardown` cannot report "removed" over a
+        denied or failed unload.
         """
         state = get_state()
+        errors: list[str] = []
         # Unload source first; it depends on the sink's monitor.
-        if state.source_module_id is not None:
-            _run_pactl(["unload-module", str(state.source_module_id)])
-        if state.sink_module_id is not None:
-            _run_pactl(["unload-module", str(state.sink_module_id)])
+        for mod_id in (state.source_module_id, state.sink_module_id):
+            if mod_id is None:
+                continue
+            out = _run_pactl(["unload-module", str(mod_id)])
+            if out.returncode != 0:
+                errors.append(f"{mod_id}: {out.stderr.strip() or f'exit {out.returncode}'}")
         _unload_legacy_source()
         # Sweep orphans (defensive - should be a no-op when linger=False).
         _destroy_orphan_nodes()
+
+        # Judge by what is still loaded rather than by the rcs alone: an
+        # unload that raced a concurrent one fails but leaves the module gone.
+        after = get_state()
+        left = [
+            str(mod_id)
+            for mod_id in (
+                after.source_module_id,
+                after.sink_module_id,
+                _find_legacy_source_module_id(),
+            )
+            if mod_id is not None
+        ]
+        if left:
+            detail = f" ({'; '.join(errors)})" if errors else ""
+            raise PipeWireError(
+                f"teardown incomplete: module(s) {', '.join(left)} still loaded{detail}"
+            )
 
     # ---- internals ----------------------------------------------------------
 
