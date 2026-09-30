@@ -48,7 +48,7 @@ def test_tray_module_imports_in_fresh_python() -> None:
         )
 
 
-def test_tray_engine_status_returns_safely_with_no_running_tui() -> None:
+def test_tray_engine_status_returns_safely_with_no_running_tui(tmp_path: Path) -> None:
     """`_engine_status` should return (False, error_string) - never raise -
     when there is no TUI listening on the control socket."""
     # Run in a subprocess so we don't accidentally hit a TUI the dev started.
@@ -59,8 +59,11 @@ def test_tray_engine_status_returns_safely_with_no_running_tui() -> None:
     else:
         env["PYTHONPATH"] = src
     # Override XDG_RUNTIME_DIR to a tempdir so the test cannot connect to a
-    # real running TUI.
-    env["XDG_RUNTIME_DIR"] = "/tmp/woys-tray-test-no-such-runtime-dir"
+    # real running TUI. The lookup creates `<dir>/woys/`, so a fixed path in
+    # /tmp would be left behind (and break the test if someone else owns it).
+    runtime_dir = tmp_path / "run"
+    runtime_dir.mkdir(mode=0o700)
+    env["XDG_RUNTIME_DIR"] = str(runtime_dir)
 
     code = (
         "from woys.tray import _engine_status\n"
