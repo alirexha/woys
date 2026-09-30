@@ -373,12 +373,10 @@ def convert_pth_to_onnx(
     # Late-import upstream's _export2onnx. The opset arg isn't in upstream's
     # signature; we pass it through via monkey-patching torch.onnx.export.
     #
-    # the upstream subtree imports
-    # fastapi / uvicorn / python-socketio / python-multipart /
-    # websockets / pyOpenSSL transitively. Pre-fix these were
-    # mandatory runtime deps; now they live in the `[convert]`
-    # optional extra. Surface an actionable install hint if the
-    # user runs `woys convert` on a default install.
+    # The exporter's import closure is torch, onnx, onnxsim, numpy and
+    # onnxruntime -- no web stack -- all core deps. So an ImportError here
+    # means a broken install; name the module rather than point at an
+    # extra that would not fix it.
     sys.path.append(str(Path(__file__).resolve().parent.parent / "server"))
     try:
         import torch
@@ -387,12 +385,11 @@ def convert_pth_to_onnx(
         )
     except ImportError as e:
         raise RuntimeError(
-            f"woys convert needs the [convert] extra. Install it with:\n"
-            f"  pip install -e '.[convert]'   (from the repo checkout)\n"
-            f"  -- or --\n"
-            f"  pip install 'woys[convert]'   (if installed from a wheel)\n"
-            f"\n"
-            f"(missing import: {type(e).__name__}: {e})"
+            f"woys convert could not import {e.name or 'a module'} "
+            f"({type(e).__name__}: {e}).\n"
+            f"Converting needs torch, onnx and onnxsim, which are core woys "
+            f"dependencies, so this install is incomplete. Re-run ./install.sh "
+            f"from the repo checkout to repair it."
         ) from e
 
     metadata_dict = {
