@@ -12,14 +12,14 @@ mic is the same kind of OS-level audio routing Windows users do every day for
 mic processing. **VAC has no problem with this.**
 
 What VAC *does* take issue with is `evdev` raw-input grabbing for global
-hotkeys. That's why woys ships with the evdev hotkey **off by
-default**, exposing the same toggle through:
+hotkeys. woys does not grab input at all. The engine toggle is exposed
+through:
 
 - the TUI (`t` key while focused)
 - the CLI (`woys toggle`) → bind to a KDE/GNOME shortcut
 
-If you really want a global hotkey, see `docs/TROUBLESHOOTING.md` for the
-opt-in evdev setup, but understand it's at your own risk.
+A desktop shortcut running `woys toggle` is the way to get a global
+hotkey; woys has no built-in one.
 
 ## Step 1 — start the engine
 

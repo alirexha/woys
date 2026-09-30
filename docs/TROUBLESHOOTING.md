@@ -231,27 +231,15 @@ If you see this:
 
 ## Can I make the global hotkey work without VAC banning me?
 
-The default woys build does **not** use evdev raw-grabbing — it
-exposes toggling via the TUI key (`t`) and the Unix socket
-(`woys toggle`). The latter is what you bind to a KDE/GNOME shortcut.
+woys does **not** use evdev raw-grabbing. It exposes toggling via the
+TUI key (`t`) and the Unix socket (`woys toggle`). For a system-wide
+hotkey, bind `woys toggle` to a KDE/GNOME (or any desktop) shortcut.
 
-If you need a system-wide hotkey *outside* of CS2, the opt-in evdev path:
-
-```
-pip install -e ~/woys[evdev]
-sudo usermod -aG input $USER
-# logout / login
-```
-
-Then in `~/.config/woys/config.toml`:
-
-```toml
-enable_evdev_hotkey = true
-evdev_hotkey = "ctrl+alt+v"
-```
-
-**Don't enable this if you play VAC-protected games.** The brief and the user
-Q&A both flagged this as a real risk.
+There is no built-in evdev hotkey: setting `enable_evdev_hotkey` or
+`evdev_hotkey` in config.toml has no effect. Don't add yourself to the
+`input` group for it: that
+gives every program you run raw access to all keyboards and buys you
+nothing here.
 
 ## How do I check my measured latency?
 
