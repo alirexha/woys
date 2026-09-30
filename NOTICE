@@ -191,15 +191,16 @@ DEPENDENCIES (third-party Python packages, not redistributed in source)
 Pinned in requirements.txt; installed at runtime by install.sh into a venv.
 Each carries its own license. Notable:
 
-  torch, torchaudio                   BSD-3
+  torch                               BSD-3
   onnxruntime-gpu                     MIT
-  faiss-cpu                           MIT
-  textual                             MIT
-  fastapi, uvicorn                    MIT
-  numpy, scipy                        BSD-3
-  librosa                             ISC
+  onnx                                Apache-2.0
+  onnxconverter-common                MIT
+  onnxsim                             MIT AND (Apache-2.0 OR BSD-2-Clause)
+  textual, rich                       MIT
+  numpy                               BSD-3
+  soxr (python-soxr)                  LGPL-2.1+
   sounddevice                         MIT
-  python-socketio                     MIT
+  tomli-w                             MIT
   huggingface_hub                     Apache-2.0
 
 If this repository is redistributed in a form that includes its dependencies

@@ -25,53 +25,38 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
     "Private :: Do Not Upload",
 ]
-# v0.14.0 (area 14 / C229): runtime deps audited. Many web-server-only
-# deps (fastapi/uvicorn/python-socketio/python-multipart/websockets/
-# pyOpenSSL) are imported by `src/server/` (vendored upstream) and
-# kept because the wheel ships that subtree for the convert path.
-# `dasbus` was removed -- D-Bus integration was replaced by Unix-domain
-# sockets (src/tui/control.py) in v0.5.x, dasbus had zero imports.
+# Runtime deps are exactly what src/woys, src/audio, src/tui and the
+# vendored `woys convert` export path (src/server/) import. An import-graph
+# audit found 11 declared packages nothing imported (torchaudio, librosa,
+# resampy, torchcrepe, torchfcpe, einops, scipy, soundfile, dataclasses-json,
+# tqdm, psutil -- ~400 MB with numba/llvmlite) and dropped them; the web
+# stack the old `[convert]` extra carried was only reachable from vendored
+# files that no entry point imports, which are gone too. `dasbus` was
+# removed earlier -- D-Bus integration was replaced by Unix-domain sockets
+# (src/tui/control.py) in v0.5.x.
 dependencies = [
     # ML / inference
     "numpy>=1.26,<2.2",
-    "scipy>=1.13",
     # pin-bump (F-cx5-01): re-verify `_gated_torch_load`'s keyword-only
     # assumption (src/woys/convert.py) and `export2onnx.py:61`'s call signature
     # against `torch.load`'s defaults before raising the upper bound. The
     # `weights_only` default flipped to True in torch 2.6; the consent gate
     # currently relies on that not having flipped silently.
     "torch>=2.4,<2.6",
-    "torchaudio>=2.4,<2.6",
     "onnxruntime-gpu>=1.20,<1.23",
     "onnxsim>=0.4.36",
-    # RVC pieces
-    "librosa>=0.10",
-    "resampy>=0.4.3",
-    "torchcrepe>=0.0.22",
-    "torchfcpe>=0.0.4",
+    # The engine's stream resampler (`_StreamResampler`). It used to arrive
+    # only transitively through librosa; requirements.txt keeps the version
+    # the resampler was tuned on.
+    "soxr>=0.3",
     # woys is INDEX-FREE.
     # `faiss-cpu` was a runtime dep for RVC's optional speaker-
     # similarity index file, but woys never implemented `index_rate`
     # consumption -- the dep was paid every install for a feature
     # that didn't exist. Drop it. `download_repo` now skips .index
     # files; the engine path has no faiss imports.
-    "einops>=0.8",
-    "soundfile>=0.12",
-    # the web stack (fastapi /
-    # uvicorn / python-socketio / python-multipart / websockets /
-    # pyOpenSSL) is imported only by `src/server/` (vendored
-    # upstream) which is only consumed by `woys convert` (.pth ->
-    # .onnx). Pre-fix these were mandatory runtime deps -- 6
-    # packages every user paid for a feature only used at
-    # conversion time. Moved to the `[convert]` optional extra.
-    # `woys convert` surfaces an ImportError → install hint if
-    # the user runs convert without `pip install '.[convert]'`.
-    # (See `[project.optional-dependencies] convert` below.)
     # Utilities
     "huggingface_hub>=0.25",
-    "dataclasses-json>=0.6",
-    "tqdm>=4.66",
-    "psutil>=6",
     "onnx>=1.17",  # Phase C convert subcommand (.pth -> .onnx) + fp16 conversion
     "onnxconverter-common>=1.16",
     # TUI + config + IPC
@@ -89,26 +74,16 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
     "py-spy>=0.3.14",
+    # tests/test_engine_golden.py and scripts/sola_ab_harness.py,
+    # scripts/benchmark_probe.py read and analyse WAV files.
+    "soundfile>=0.12",
+    "scipy>=1.13",
 ]
-# pyworld is only needed for harvest/dio f0 detectors (RMVPE/Crepe/Fcpe don't
-# need it). Optional — installs C extensions, sometimes painful.
-worldpitch = ["pyworld>=0.3.4"]
 # evdev is opt-in for the global hotkey (CS2/VAC users should stay off).
 evdev = ["evdev>=1.7"]
 # Optional system-tray icon (KDE Plasma 6 / GNOME via libappindicator).
 # pystray pulls in Pillow + xlib/dbus runtime libs.
 tray = ["pystray>=0.19", "pillow>=10"]
-# convert-only web stack. Used by
-# the `src/server/` vendored upstream which `woys convert` consumes.
-# Not needed for inference, daily use, or any non-convert path.
-convert = [
-    "fastapi>=0.110,<0.116",
-    "uvicorn[standard]>=0.30",
-    "python-socketio>=5.11",
-    "python-multipart>=0.0.9",
-    "websockets>=12",
-    "pyOpenSSL>=24.0",
-]
 
 [project.scripts]
 # v0.6.0 introduced the `woys` binary (renamed from `vcclient-cachy`). The
@@ -166,7 +141,7 @@ disallow_any_unimported = false
 exclude = ["upstream/", ".venv/", "build/", "src/server/"]
 
 [[tool.mypy.overrides]]
-module = ["soundfile", "sounddevice", "evdev", "textual.*", "rich.*", "onnxruntime", "onnxruntime.*", "librosa.*", "numpy.*", "scipy.*", "torch.*", "huggingface_hub.*", "onnxconverter_common", "onnxconverter_common.*", "onnx", "onnx.*", "pystray", "pystray.*", "PIL", "PIL.*", "tensorrt_libs"]
+module = ["soundfile", "sounddevice", "evdev", "textual.*", "rich.*", "onnxruntime", "onnxruntime.*", "numpy.*", "scipy.*", "torch.*", "huggingface_hub.*", "onnxconverter_common", "onnxconverter_common.*", "onnx", "onnx.*", "pystray", "pystray.*", "PIL", "PIL.*", "tensorrt_libs"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
