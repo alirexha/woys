@@ -50,7 +50,6 @@ def test_convert_amitaro_pth_to_onnx(tmp_path: Path) -> None:
     assert "audio" in out_names
 
 
-@pytest.mark.gpu
 def test_convert_metadata_probe_v2() -> None:
     """The metadata probe alone (no torch.onnx.export) - fast unit check."""
     if not PTH_FIXTURE.exists():
