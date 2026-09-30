@@ -454,16 +454,15 @@ class WoysApp(App[int]):
                 delta = int(arg)
             except ValueError:
                 return f"ERR bad pitch: {arg!r}"
-            new = int(self.pitch) + delta
 
-            def apply() -> None:
-                self.pitch = new
-                self.engine.cfg.f0_up_key = new
-                self.cfg.f0_up_key = new
-                mark_override(self.cfg, "f0_up_key")
+            def step() -> int:
+                # Read and write on the event loop: up to four handlers
+                # run at once, and reading self.pitch here on the worker
+                # would let two of them start from the same base.
+                self._apply_pitch(int(self.pitch) + delta)
+                return int(self.pitch)
 
-            self.call_from_thread(apply)
-            return f"OK pitch={new}"
+            return f"OK pitch={self.call_from_thread(step)}"
         if cmd == "STATUS":
             from tui.control import PROTOCOL_VERSION
 
