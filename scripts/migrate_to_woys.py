@@ -66,19 +66,7 @@ NEW_SINK_NAME = "WoysSink"
 DEFAULT_HOME = Path.home()
 
 
-def _move_dir(old: Path, new: Path, *, dry_run: bool, log: list[str]) -> None:
-    """Atomic rename if same filesystem; tree-copy fallback otherwise. No-op
-    if `new` already exists (treated as 'already migrated' on idempotent
-    re-run).
-    """
-    if not old.exists():
-        return
-    if new.exists():
-        log.append(f"  skip move (target exists): {new}")
-        return
-    log.append(f"  move: {old}  →  {new}")
-    if dry_run:
-        return
+def _move_path(old: Path, new: Path) -> None:
     new.parent.mkdir(parents=True, exist_ok=True)
     try:
         os.rename(old, new)  # atomic when on the same filesystem
@@ -86,8 +74,65 @@ def _move_dir(old: Path, new: Path, *, dry_run: bool, log: list[str]) -> None:
         # Cross-FS fallback. On a personal dev box this should never
         # happen ($HOME is one mount), but install.sh shouldn't crash if
         # the user's $HOME spans two mounts.
-        shutil.copytree(old, new)
-        shutil.rmtree(old)
+        if old.is_dir():
+            shutil.copytree(old, new, symlinks=True)
+            shutil.rmtree(old)
+        else:
+            shutil.copy2(old, new, follow_symlinks=False)
+            old.unlink()
+
+
+def _move_dir(
+    old: Path,
+    new: Path,
+    *,
+    dry_run: bool,
+    log: list[str],
+    drop_on_conflict: frozenset[str] = frozenset(),
+) -> None:
+    """Move `old` to `new`: a plain rename when `new` does not exist yet,
+    otherwise a merge.
+
+    install.sh builds ~/.local/share/woys/venv before it runs us, so the
+    share target always exists by then. Merging moves every entry that is
+    missing in `new`, recurses into directories present on both sides, and
+    never overwrites: a conflicting file stays in `old`. Names in
+    `drop_on_conflict` (the legacy venv) are deleted instead when `new`
+    already has its own copy. `old` is removed once it is empty.
+    """
+    if not old.exists():
+        return
+    if not new.exists():
+        log.append(f"  move: {old}  →  {new}")
+        if not dry_run:
+            _move_path(old, new)
+        return
+    if not (old.is_dir() and new.is_dir()) or old.is_symlink() or new.is_symlink():
+        log.append(f"  skip (target exists): {new}")
+        return
+    log.append(f"  merge: {old}  →  {new}")
+    for child in sorted(old.iterdir()):
+        dst = new / child.name
+        if not dst.exists() and not dst.is_symlink():
+            log.append(f"  move: {child}  →  {dst}")
+            if not dry_run:
+                _move_path(child, dst)
+        elif child.name in drop_on_conflict:
+            log.append(f"  remove stale legacy {child.name}: {child}")
+            if not dry_run:
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        elif child.is_dir() and dst.is_dir() and not child.is_symlink():
+            _move_dir(child, dst, dry_run=dry_run, log=log)
+        else:
+            log.append(f"  keep (target exists, left in place): {child}")
+    if not dry_run:
+        try:
+            old.rmdir()
+        except OSError:
+            log.append(f"  {old} still holds files that conflict with {new}; left in place")
 
 
 def _rewrite_paths_in_value(value: Any, *, key: str | None = None) -> Any:
@@ -250,8 +295,15 @@ def migrate(home: Path | None = None, *, dry_run: bool = False) -> tuple[bool, l
     #    service can't race a half-renamed dir).
     _stop_old_systemd_unit(h, dry_run=dry_run, log=log)
 
-    # 2) Move the three user-data dirs.
-    _move_dir(old_share, new_share, dry_run=dry_run, log=log)
+    # 2) Move the three user-data dirs. install.sh has already built a
+    #    fresh venv in the share dir, so the legacy one is dropped.
+    _move_dir(
+        old_share,
+        new_share,
+        dry_run=dry_run,
+        log=log,
+        drop_on_conflict=frozenset({"venv"}),
+    )
     _move_dir(old_config, new_config, dry_run=dry_run, log=log)
     _move_dir(old_cache, new_cache, dry_run=dry_run, log=log)
 

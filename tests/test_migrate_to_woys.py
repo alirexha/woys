@@ -111,10 +111,10 @@ def test_migrate_idempotent_when_target_exists(tmp_path: Path) -> None:
     assert changed is False
 
 
-def test_migrate_skips_target_if_already_migrated_partial(tmp_path: Path) -> None:
-    """If the new dir already exists from a half-finished previous run, the
-    migrator should not overwrite it (the old dir would still be present and
-    would be left alone - operator intervention required)."""
+def test_migrate_merges_into_already_existing_target(tmp_path: Path) -> None:
+    """If the new dir already exists (install.sh pre-creates it, or a
+    half-finished previous run), the migrator merges into it without
+    trampling anything already there."""
     from migrate_to_woys import migrate
 
     _build_old_install(tmp_path)
@@ -125,8 +125,9 @@ def test_migrate_skips_target_if_already_migrated_partial(tmp_path: Path) -> Non
     migrate(home=tmp_path)
     # The marker should still be there (we didn't trample the new dir).
     assert (tmp_path / ".local" / "share" / "woys" / "marker").read_text() == "preexisting"
-    # The old dir should still exist (we didn't move on top of the existing target).
-    assert (tmp_path / ".local" / "share" / "vcclient-cachy").exists()
+    # The legacy content moved in, and the emptied old dir is gone.
+    assert (tmp_path / ".local" / "share" / "woys" / "models" / "donald_trump.onnx").is_file()
+    assert not (tmp_path / ".local" / "share" / "vcclient-cachy").exists()
 
 
 def test_migrate_dry_run_reports_but_changes_nothing(tmp_path: Path) -> None:
@@ -288,3 +289,45 @@ def test_migrate_does_not_rewrite_unrelated_strings_containing_sink_word(
         data = tomllib.load(f)
     assert data["_note"] == "fwd from old VCClientCachySink era"
     assert data["sink_name"] == "WoysSink"
+
+
+def test_migrate_merges_legacy_share_into_existing_woys_dir(tmp_path: Path) -> None:
+    """install.sh creates ~/.local/share/woys (and its venv) before it runs
+    the migrator. The legacy models must still land in woys/models/, where
+    the rewritten config points; skipping the move stranded them."""
+    from migrate_to_woys import migrate
+
+    _build_old_install(tmp_path)
+    new_share = tmp_path / ".local" / "share" / "woys"
+    (new_share / "venv" / "bin").mkdir(parents=True)
+    (new_share / "venv" / "bin" / "python").write_text("fresh venv")
+
+    migrate(home=tmp_path)
+
+    assert (new_share / "models" / "donald_trump.onnx").is_file()
+    assert (new_share / "models" / "amitaro_v2_16k.onnx").is_file()
+    # The venv install.sh just built is kept; the legacy one is dropped.
+    assert (new_share / "venv" / "bin" / "python").read_text() == "fresh venv"
+    # Nothing is left behind, so install.sh's legacy-dir guard goes false.
+    assert not (tmp_path / ".local" / "share" / "vcclient-cachy").exists()
+    with open(tmp_path / ".config" / "woys" / "config.toml", "rb") as f:
+        data = tomllib.load(f)
+    assert Path(data["rvc_model"]).is_file()
+
+
+def test_migrate_merge_never_overwrites_existing_files(tmp_path: Path) -> None:
+    """A file already present in the woys dir wins; the legacy copy stays
+    where it was so nothing is lost."""
+    from migrate_to_woys import migrate
+
+    _build_old_install(tmp_path)
+    new_models = tmp_path / ".local" / "share" / "woys" / "models"
+    new_models.mkdir(parents=True)
+    (new_models / "amitaro_v2_16k.onnx").write_bytes(b"new")
+
+    migrate(home=tmp_path)
+
+    assert (new_models / "amitaro_v2_16k.onnx").read_bytes() == b"new"
+    assert (new_models / "donald_trump.onnx").is_file()
+    old_copy = tmp_path / ".local" / "share" / "vcclient-cachy" / "models" / "amitaro_v2_16k.onnx"
+    assert old_copy.read_bytes() == b"\x00" * 16
