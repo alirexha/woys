@@ -115,6 +115,14 @@ def _safe_tmp_fallback() -> Path:
     return path
 
 
+def config_home() -> Path:
+    """`$XDG_CONFIG_HOME`, or `~/.config` when it is unset, empty or
+    relative (the XDG spec says to ignore a relative value; an empty one
+    would otherwise resolve against the current directory)."""
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    return Path(xdg) if os.path.isabs(xdg) else Path.home() / ".config"
+
+
 def config_dir() -> Path:
     """Resolve the woys config directory (holds `config.toml`).
 
@@ -134,10 +142,7 @@ def config_dir() -> Path:
     if override:
         return Path(override)
     legacy = Path.home() / ".config" / "woys"
-    xdg = os.environ.get("XDG_CONFIG_HOME", "")
-    if not os.path.isabs(xdg):
-        return legacy
-    path = Path(xdg) / "woys"
+    path = config_home() / "woys"
     if not (path / "config.toml").exists() and (legacy / "config.toml").exists():
         return legacy
     return path

@@ -107,8 +107,9 @@ class ChainError(RuntimeError):
 
 
 def _systemd_unit_path() -> Path:
-    base = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
-    return base / "systemd" / "user" / SYSTEMD_UNIT_NAME
+    from woys.xdg import config_home
+
+    return config_home() / "systemd" / "user" / SYSTEMD_UNIT_NAME
 
 
 def _c_locale_env() -> dict[str, str]:
