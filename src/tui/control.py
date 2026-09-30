@@ -118,18 +118,37 @@ MAX_REPLY_BYTES = 64 * 1024
 # so the contract has a paper trail.
 PROTOCOL_VERSION = 1
 
+# Whole-command read deadline on the server. conn.settimeout() bounds
+# each recv() only, so a client trickling one byte at a time could hold
+# a worker for hours and four of them starved the pool. Real commands
+# arrive in one packet well under this.
+_COMMAND_READ_DEADLINE_S = 1.0
 
-def _recv_line(conn: socket.socket, max_bytes: int = MAX_COMMAND_BYTES) -> str | None:
+
+def _recv_line(
+    conn: socket.socket,
+    max_bytes: int = MAX_COMMAND_BYTES,
+    *,
+    deadline: float | None = None,
+) -> str | None:
     """Read from `conn` until a `\\n` byte or `max_bytes` is reached.
 
     Returns the decoded line (`\\n` stripped) on success, `None` on
     immediate EOF, or raises `ValueError` when `max_bytes` is exceeded
     before a newline arrives. Used server-side to honor the docstring's
-    "newline-terminated" framing promise.
+    "newline-terminated" framing promise. With `deadline` (a
+    time.monotonic() value) the whole read raises TimeoutError once it
+    passes, however slowly the bytes trickle in.
     """
     chunks: list[bytes] = []
     total = 0
+    per_recv = conn.gettimeout() if deadline is not None else None
     while total < max_bytes:
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("command not received before the read deadline")
+            conn.settimeout(remaining if per_recv is None else min(per_recv, remaining))
         try:
             chunk = conn.recv(min(4096, max_bytes - total))
         except (TimeoutError, OSError):
@@ -408,7 +427,9 @@ class ControlServer:
                 # "newline-terminated" promise. Pre-fix this was a
                 # single recv(256) that silently truncated.
                 try:
-                    data = _recv_line(conn) or ""
+                    data = (
+                        _recv_line(conn, deadline=time.monotonic() + _COMMAND_READ_DEADLINE_S) or ""
+                    )
                 except ValueError:
                     reply = "ERR command too long"
                 else:
@@ -428,6 +449,8 @@ class ControlServer:
                         # the failure mode.
                         logger.exception("control handler raised on %r: %s", data, handler_err)
                         reply = f"ERR internal: {type(handler_err).__name__}: {handler_err}"
+                # The read deadline may have left a near-zero timeout.
+                conn.settimeout(0.5)
                 conn.sendall((reply + "\n").encode("utf-8"))
             except (TimeoutError, OSError) as e:
                 logger.warning("control conn error: %s", e)
