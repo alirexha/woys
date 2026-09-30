@@ -49,8 +49,11 @@ from audio.engine import USER_VISIBLE_ENGINE_FIELDS as _ENGINE_FIELDS  # noqa: E
 _PROFILE_FIELDS: tuple[str, ...] = ("rvc_model", *_ENGINE_FIELDS)
 
 
-# Same rule as the .vcprofile import: names land in TOML keys, TUI toasts
-# and shell completions, so keep them to plain printable ASCII.
+# Profile names (`profile save` and `.vcprofile` import): 1-64 ASCII
+# letters, digits, spaces, '.', '_' and '-', starting with a letter or
+# digit and not ending in a space. Names land in TOML table keys, CLI
+# arguments and TUI toasts, so brackets, quotes, control characters and a
+# leading '-' are kept out.
 _PROFILE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}")
 
 

@@ -23,7 +23,6 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 from __future__ import annotations
 
 import hashlib
-import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -48,14 +47,6 @@ DEFAULT_EXTENSION = ".vcprofile"
 # DELIVERABLE for this commit is the mechanism; entries land alongside
 # real format revisions.
 _VCPROFILE_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
-
-# Names an imported profile may be saved under: 1-64 ASCII letters,
-# digits, spaces, '.', '_' and '-', starting with a letter or digit and
-# not ending in a space. The name usually comes from someone else's file
-# and ends up as a TOML table key, a CLI argument (`woys profile use
-# NAME`) and in TUI toasts rendered with markup, so brackets, quotes,
-# control characters and a leading '-' are all kept out.
-_PROFILE_NAME_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._ -]{0,62}[A-Za-z0-9._-])?")
 
 
 def _ensure_path() -> None:
@@ -257,13 +248,16 @@ def import_profile(
     name = target_name or raw.get("meta", {}).get("profile_name") or path.stem
     if not name:
         raise ValueError(".vcprofile has no profile name and none was provided")
-    if not isinstance(name, str) or not _PROFILE_NAME_RE.fullmatch(name):
+    from woys.profiles import _PROFILE_FIELDS, _profiles_bag, valid_profile_name
+
+    # The name usually comes from someone else's file and ends up as a TOML
+    # table key, a CLI argument and in TUI toasts; `valid_profile_name` is
+    # the one rule `profile save` applies too.
+    if not isinstance(name, str) or not valid_profile_name(name):
         raise ValueError(
             f"invalid profile name {name!r}: use 1-64 letters, digits, spaces, "
             f"'.', '_' or '-', starting with a letter or digit; pick one with --name"
         )
-    from woys.profiles import _PROFILE_FIELDS, _profiles_bag
-
     if name in _profiles_bag(cfg) and not overwrite:
         raise ValueError(
             f"a profile named {name!r} already exists; import it under another "
