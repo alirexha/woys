@@ -113,3 +113,31 @@ def _safe_tmp_fallback() -> Path:
             f"re-run."
         )
     return path
+
+
+def config_dir() -> Path:
+    """Resolve the woys config directory (holds `config.toml`).
+
+    Priority:
+      1. `$WOYS_CONFIG_DIR` (explicit override; the test suite points it
+         at a temp dir so no test can reach the real config).
+      2. `$XDG_CONFIG_HOME/woys/` when XDG_CONFIG_HOME is an absolute
+         path (the XDG spec says a relative one must be ignored).
+      3. `~/.config/woys/`.
+
+    Before this helper existed the config always lived at
+    `~/.config/woys/` regardless of XDG_CONFIG_HOME. If the XDG dir has
+    no config yet but that legacy location does, keep using the legacy
+    one so a user's saved settings and profiles don't vanish.
+    """
+    override = os.environ.get("WOYS_CONFIG_DIR")
+    if override:
+        return Path(override)
+    legacy = Path.home() / ".config" / "woys"
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    if not os.path.isabs(xdg):
+        return legacy
+    path = Path(xdg) / "woys"
+    if not (path / "config.toml").exists() and (legacy / "config.toml").exists():
+        return legacy
+    return path

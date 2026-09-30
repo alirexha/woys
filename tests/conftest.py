@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import atexit
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -22,6 +25,14 @@ FIXTURES_DIR = PROJECT_ROOT / "tests" / "fixtures"
 for _root in (SRC_ROOT, SERVER_ROOT):
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
+
+
+# Point the config dir at a throwaway location BEFORE any test module imports
+# tui.config: CONFIG_DIR/CONFIG_FILE are computed at import, so a monkeypatch
+# alone can't cover code that bound the path earlier. The autouse fixture
+# below still redirects per test on top of this.
+os.environ["WOYS_CONFIG_DIR"] = tempfile.mkdtemp(prefix="woys-test-config-")
+atexit.register(shutil.rmtree, os.environ["WOYS_CONFIG_DIR"], ignore_errors=True)
 
 
 @pytest.fixture(scope="session")

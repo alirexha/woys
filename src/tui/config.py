@@ -1,4 +1,5 @@
-"""User config persisted at `~/.config/woys/config.toml`.
+"""User config persisted at `$XDG_CONFIG_HOME/woys/config.toml`
+(`~/.config/woys/config.toml` by default; see `woys.xdg.config_dir`).
 
 Round-trips (load → save → load) are stable: any unknown keys present in the
 on-disk file pass through untouched.
@@ -25,8 +26,9 @@ import tomli_w
 
 from audio.engine import USER_VISIBLE_ENGINE_FIELDS as _USER_VISIBLE_ENGINE_FIELDS
 from audio.engine import EngineConfig as _EngineConfig
+from woys.xdg import config_dir as _config_dir
 
-CONFIG_DIR = Path.home() / ".config" / "woys"
+CONFIG_DIR = _config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
 # Single shared instance - evaluated at module import. AppConfig's
@@ -557,7 +559,7 @@ _CONFIG_HEADER = b"""# woys config.toml -- managed by `woys` (the engine, TUI, C
 # values alongside the runtime state.
 #
 # Path: this file lives at $XDG_CONFIG_HOME/woys/config.toml
-# (typically ~/.config/woys/config.toml). The directory is mode
+# (typically ~/.config/woys/config.toml; $WOYS_CONFIG_DIR overrides). The directory is mode
 # 0700; the file is mode 0600 -- woys' tuning + model paths are
 # user-private by design (F-32-02 / commit-047).
 
