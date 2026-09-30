@@ -19,6 +19,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 INSTALL_SH = (REPO / "install.sh").read_text()
 
@@ -29,6 +31,7 @@ _SYSTEM_TOOLS = [
     "cat",
     "chmod",
     "cp",
+    "cut",
     "dirname",
     "env",
     "find",
@@ -381,6 +384,30 @@ def test_reinstall_removes_stale_wheel_with_uv_not_pip(tmp_path: Path) -> None:
     assert "No module named pip" not in run.out
     assert "failed to uninstall" not in run.out
     assert "uv pip uninstall --python" in run.calls and "vcclient-cachy" in run.calls
+
+
+def _config_backups(home: Path) -> None:
+    cfg = home / ".config" / "woys"
+    cfg.mkdir(parents=True)
+    # Name order and age order disagree on purpose.
+    for name, mtime in (
+        ("config.toml.bak-pacat-old", 1_767_225_600),  # 2026-01-01, oldest
+        ("config.toml.bak-microcut-20260601", 1_780_272_000),  # 2026-06-01
+        ("config.toml.bak-leak", 1_788_220_800),  # 2026-09-01, newest
+    ):
+        (cfg / name).write_text(name)
+        os.utime(cfg / name, (mtime, mtime))
+
+
+@pytest.mark.parametrize("flags", [(), ("--no-systemd",)])
+def test_install_keeps_the_newest_config_backup(tmp_path: Path, flags: tuple[str, ...]) -> None:
+    """Pre-fix the pruning sorted by name and kept whichever name sorted
+    last (here the oldest backup). It also only ran with systemd
+    registration enabled, which has nothing to do with backups."""
+    run = _run_install(tmp_path, "--skip-models", *flags, setup_home=_config_backups)
+    assert run.rc == 0, run.out
+    left = sorted(p.name for p in (run.home / ".config" / "woys").glob("config.toml.bak-*"))
+    assert left == ["config.toml.bak-leak"], run.out
 
 
 def test_install_help_prints_the_whole_header() -> None:
