@@ -105,6 +105,8 @@ def _run_install(
         tmpl / "python",
         'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then\n'
         '    echo "No module named pip" >&2; exit 1\nfi\n'
+        # Never hit the network: the weights download is logged, not run.
+        f'case "$1" in *download_weights.py) echo "python $*" >> "{log}"; exit 0;; esac\n'
         f'exec "{sys.executable}" "$@"',
     )
     _write_stub(
@@ -229,11 +231,31 @@ def test_install_sh_hard_fails_on_missing_nvidia_smi() -> None:
     assert "ALLOW_CPU" not in INSTALL_SH, "the ALLOW_CPU variable must be removed"
 
 
-def test_install_sh_verifies_all_three_foundation_weights() -> None:
+_WEIGHTS = ("rmvpe_wrapped.onnx", "contentvec-f.onnx", "amitaro_v2_16k.onnx")
+
+
+def test_install_sh_verifies_all_three_foundation_weights(tmp_path: Path) -> None:
     """the install must verify ALL three foundation
-    weights, not just amitaro_v2_16k.onnx."""
-    for weight in ("rmvpe_wrapped.onnx", "contentvec-f.onnx", "amitaro_v2_16k.onnx"):
-        assert weight in INSTALL_SH, f"install.sh must verify the {weight} foundation weight"
+    weights, not just amitaro_v2_16k.onnx. Run it rather than grep for the
+    names, which would also pass if they only appeared in a comment."""
+    run = _run_install(tmp_path, "--no-systemd")
+    assert "download_weights.py" in run.calls
+    assert run.rc == 1, run.out
+    assert "missing foundation weights" in run.out
+    for weight in _WEIGHTS:
+        assert weight in run.out, f"install.sh must verify the {weight} foundation weight"
+
+
+def test_install_passes_when_all_foundation_weights_are_present(tmp_path: Path) -> None:
+    def weights(home: Path) -> None:
+        models = home / ".local" / "share" / "woys" / "models"
+        models.mkdir(parents=True)
+        for weight in _WEIGHTS:
+            (models / weight).write_bytes(b"w")
+
+    run = _run_install(tmp_path, "--no-systemd", setup_home=weights)
+    assert run.rc == 0, run.out
+    assert "all 3 foundation weights present" in run.out
 
 
 def _run_install_until_uv(tmp_path: Path, uv_dir: Path | None, env_uv_bin: str | None) -> str:
