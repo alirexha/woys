@@ -1051,7 +1051,15 @@ def main(argv: list[str] | None = None) -> int:
     # of Python's lastResort stderr, which Textual hijacks.
     from woys.logsetup import setup_logging
 
-    log_file = setup_logging()
+    # Outside the operational-error guard below, so a broken log dir (a file
+    # in its place, a read-only home) must not take every command down with
+    # a traceback: warn and run without the file log.
+    log_file: Path | None
+    try:
+        log_file = setup_logging()
+    except OSError as e:
+        log_file = None
+        print(f"warning: no log file ({e}); continuing without one", file=sys.stderr)
     logger = logging.getLogger("woys.cli")
     parser = build_parser()
     args = parser.parse_args(argv)  # argparse SystemExit on bad args is intentional
