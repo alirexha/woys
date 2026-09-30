@@ -19,6 +19,7 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 from __future__ import annotations
 
 import fcntl
+import re
 import sys
 import tomllib
 from collections.abc import Iterator
@@ -45,6 +46,17 @@ from audio.engine import USER_VISIBLE_ENGINE_FIELDS as _ENGINE_FIELDS  # noqa: E
 # `rvc_model` is a profile field too, but it's stored as a string at this
 # layer (Path on EngineConfig). Prepend explicitly.
 _PROFILE_FIELDS: tuple[str, ...] = ("rvc_model", *_ENGINE_FIELDS)
+
+
+# Same rule as the .vcprofile import: names land in TOML keys, TUI toasts
+# and shell completions, so keep them to plain printable ASCII.
+_PROFILE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}")
+
+
+def valid_profile_name(name: str) -> bool:
+    """1-64 chars of ASCII letters, digits, space, `.`, `_`, `-`; starts
+    with a letter or digit; no trailing space."""
+    return bool(_PROFILE_NAME_RE.fullmatch(name)) and not name.endswith(" ")
 
 
 def _ensure_tui_path() -> None:
@@ -168,6 +180,13 @@ def cli_profile_save(name: str) -> int:
     _ensure_tui_path()
     from tui.config import load_config, save_config
 
+    if not valid_profile_name(name):
+        print(
+            f"[profile] invalid profile name {name!r}: use 1-64 ASCII letters, digits, "
+            "spaces, '.', '_' or '-', starting with a letter or digit",
+            file=sys.stderr,
+        )
+        return 1
     with config_lock():
         cfg = load_config()
         save_profile(cfg, name)
