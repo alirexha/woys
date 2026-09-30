@@ -227,7 +227,23 @@ fi
 # ---- systemd user unit --------------------------------------------------------
 
 if [ "$NO_SYSTEMD" -eq 0 ]; then
-    install -m 0644 "$REPO_DIR/pkg/woys-mic.service" "$SYSTEMD_USER_DIR/"
+    # systemd's user manager does not read shell rc files, so ~/.local/bin
+    # is usually not on its PATH and `/usr/bin/env woys` exits 127 at login.
+    # The installed copy gets the absolute launcher path instead, quoted and
+    # %-escaped for systemd. The repo template keeps /usr/bin/env for the
+    # PKGBUILD, which installs /usr/bin/woys.
+    unit_bin="$VENV/bin/woys"
+    unit_bin="${unit_bin//\\/\\\\}"
+    unit_bin="${unit_bin//\"/\\\"}"
+    unit_bin="\"${unit_bin//%/%%}\""
+    unit_tmp="$SYSTEMD_USER_DIR/.woys-mic.service.tmp"
+    UNIT_BIN="$unit_bin" awk '{
+        i = index($0, "/usr/bin/env woys")
+        if (i > 0) $0 = substr($0, 1, i - 1) ENVIRON["UNIT_BIN"] substr($0, i + 17)
+        print
+    }' "$REPO_DIR/pkg/woys-mic.service" > "$unit_tmp"
+    chmod 0644 "$unit_tmp"
+    mv -f "$unit_tmp" "$SYSTEMD_USER_DIR/woys-mic.service"
     # B38 / pkg-005: surface failure of the systemctl steps so the user
     # learns about it now, not when the mic doesn't auto-load on next boot.
     if ! systemctl --user daemon-reload; then

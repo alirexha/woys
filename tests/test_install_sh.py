@@ -12,6 +12,7 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -335,6 +336,23 @@ def test_install_migrates_legacy_models_into_the_new_share_dir(tmp_path: Path) -
     cfg = (run.home / ".config" / "woys" / "config.toml").read_text()
     assert str(new_model) in cfg
     assert not (run.home / ".local" / "share" / "vcclient-cachy").exists()
+
+
+def test_installed_woys_mic_unit_runs_without_local_bin_on_path(tmp_path: Path) -> None:
+    """systemd's user manager does not read shell rc files, so its PATH
+    usually lacks ~/.local/bin. Pre-fix the unit ran `/usr/bin/env woys`,
+    which exits 127 there, and woys-mic never came up at login."""
+    run = _run_install(tmp_path, "--skip-models")
+    assert run.rc == 0, run.out
+    unit = (run.home / ".config" / "systemd" / "user" / "woys-mic.service").read_text()
+    systemd_path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+    execs = [ln for ln in unit.splitlines() if ln.startswith(("ExecStart", "ExecStop"))]
+    assert len(execs) == 3, unit
+    for line in execs:
+        argv = shlex.split(line.split("=", 1)[1].replace("%%", "%"))
+        proc = subprocess.run(argv, env={"HOME": str(run.home), "PATH": systemd_path})
+        assert proc.returncode == 0, line
+    assert "woys pw setup" in (tmp_path / "calls.log").read_text()
 
 
 def test_install_help_prints_the_whole_header() -> None:
