@@ -80,3 +80,74 @@ def test_diag_reports_cpu_bound_sessions(
     out = capsys.readouterr().out
     assert "cpu fallback" in out
     assert "CPU-only" in out
+
+
+def test_diag_exits_zero_on_a_healthy_run(diag: Callable[..., int]) -> None:
+    assert diag() == 0
+
+
+def test_diag_exits_nonzero_when_engine_crashed(diag: Callable[..., int]) -> None:
+    def warmup_failed(e: _FakeEngine) -> None:
+        e.stats.crashed = True
+        e.stats.running = False
+        e.record("engine warmup: FileNotFoundError: contentvec model not found")
+
+    assert diag(warmup_failed) == 1
+
+
+def test_diag_exits_nonzero_when_no_chunk_was_processed(
+    diag: Callable[..., int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    def still_warming(e: _FakeEngine) -> None:
+        e.stats.warmup_stage = "warming pipeline"
+
+    assert diag(still_warming) == 1
+    assert "--seconds" in capsys.readouterr().out
+
+
+def test_diag_exits_nonzero_on_dropped_chunks(diag: Callable[..., int]) -> None:
+    def drops(e: _FakeEngine) -> None:
+        _healthy(e)
+        e.stats.dropped_chunks = 3
+
+    assert diag(drops) == 1
+
+
+def test_diag_reads_the_child_pid_before_stop_clears_it(
+    diag: Callable[..., int],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import tui.config as tcfg
+
+    real = tcfg.app_config_to_engine_config
+
+    def subprocess_mode(*a: Any, **k: Any) -> eng_mod.EngineConfig:
+        cfg = real(*a, **k)
+        cfg.inference_subprocess = True
+        return cfg
+
+    monkeypatch.setattr(tcfg, "app_config_to_engine_config", subprocess_mode)
+
+    def child_up(e: _FakeEngine) -> None:
+        _healthy(e)
+        e.stats.child_pid = 4242
+
+    assert diag(child_up) == 0
+    assert "SUBPROCESS (child pid=4242)" in capsys.readouterr().out
+
+
+def test_diag_exits_nonzero_when_the_child_never_came_up(
+    diag: Callable[..., int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tui.config as tcfg
+
+    real = tcfg.app_config_to_engine_config
+
+    def subprocess_mode(*a: Any, **k: Any) -> eng_mod.EngineConfig:
+        cfg = real(*a, **k)
+        cfg.inference_subprocess = True
+        return cfg
+
+    monkeypatch.setattr(tcfg, "app_config_to_engine_config", subprocess_mode)
+    assert diag() == 1

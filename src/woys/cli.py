@@ -382,6 +382,9 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     # a live `woys run` / `woys engine` would open a second capture+convert path
     # on the same mic and produce out-of-phase, double-converted audio (the same
     # hazard the run/engine paths already guard against).
+    # stop() clears child_pid and warmup_stage; read them before it runs.
+    child_pid: int | None = None
+    warmup_stage = ""
     try:
         with acquire_instance_lock():
             engine.start()
@@ -395,6 +398,8 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
                         # Surface non-recovery errors immediately.
                         print(f"  [warn] {s.last_error}")
             finally:
+                child_pid = engine.stats.child_pid
+                warmup_stage = engine.stats.warmup_stage
                 engine.stop(timeout=2.0)
     except InstanceLockBusy as e:
         print(f"error: {e}", file=sys.stderr)
@@ -405,8 +410,8 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     # v0.8.0-rc4 - surface the inference path explicitly so silent
     # fallbacks (rc2 corruption bug) can never hide again.
     if engine.cfg.inference_subprocess:
-        if s.child_pid is not None:
-            print(f"  inference path   : SUBPROCESS (child pid={s.child_pid})")
+        if child_pid is not None:
+            print(f"  inference path   : SUBPROCESS (child pid={child_pid})")
         else:
             print("  inference path   : IN-PROCESS (subprocess requested but NOT running!)")
     else:
@@ -635,9 +640,25 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
         for reason in s.helper_exit_reasons:
             print(f"    {reason}")
 
-    # Exit non-zero if we saw any underruns or restarts - useful for CI
-    # / shell scripting on top of this command.
-    return 1 if (s.xruns or s.queue_full_events or s.player_restarts) else 0
+    # Exit non-zero unless the self-test actually converted audio cleanly:
+    # a crash, no chunks at all, dropped chunks, underruns / restarts, or a
+    # requested inference subprocess that never came up all fail it -
+    # useful for CI / shell scripting on top of this command.
+    if s.chunks_processed == 0 and not s.crashed:
+        print(
+            f"  [!] no chunks processed (engine stage: {warmup_stage or 'not started'}); "
+            f"warmup can take several seconds - try a longer --seconds"
+        )
+    failed = (
+        s.crashed
+        or s.chunks_processed == 0
+        or s.dropped_chunks
+        or s.xruns
+        or s.queue_full_events
+        or s.player_restarts
+        or (engine.cfg.inference_subprocess and child_pid is None)
+    )
+    return 1 if failed else 0
 
 
 def cmd_engine(seconds: float, quiet: bool) -> int:
