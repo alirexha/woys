@@ -82,6 +82,17 @@ def test_uninstall_purge_models_removes_the_app_dir(tmp_path: Path) -> None:
     assert not (home / ".local" / "share" / "woys").exists()
 
 
+def test_uninstall_removes_the_native_helper(tmp_path: Path) -> None:
+    """install.sh installs ~/.local/bin/woys-pw-out. Pre-fix uninstall left
+    it on PATH, where the engine picks it up first on a later reinstall."""
+    rc, out, home = _run_uninstall(tmp_path)
+    assert rc == 0, out
+    assert not (home / ".local" / "bin" / "woys-pw-out").exists()
+    assert not (home / ".local" / "bin" / "woys").exists()
+    # What it leaves behind on purpose is spelled out.
+    assert ".cache/woys" in out and ".local/state/woys" in out
+
+
 def test_uninstall_still_accepts_keep_models(tmp_path: Path) -> None:
     rc, out, home = _run_uninstall(tmp_path, "--keep-models")
     assert rc == 0, out

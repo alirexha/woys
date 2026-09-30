@@ -5,6 +5,7 @@
 #   $HOME/.local/share/woys/                   (venv etc.; models/ only with --purge-models)
 #   $HOME/.local/share/vcclient-cachy/         (legacy path, same rule, if still present)
 #   $HOME/.local/bin/woys                      (launcher symlink)
+#   $HOME/.local/bin/woys-pw-out               (native PipeWire helper)
 #   $HOME/.local/bin/vcclient-cachy            (deprecated shim from v0.6.x)
 #   $HOME/.config/systemd/user/woys-mic.service
 #   $HOME/.config/systemd/user/woys-chain.service    (RNNoise chain user unit, v0.13.x+)
@@ -14,6 +15,8 @@
 #   $HOME/.local/share/woys/models/           (foundation weights + your voice models)
 #   $HOME/.config/woys/config.toml            (your settings)
 #   $HOME/.config/vcclient-cachy/config.toml  (legacy settings, if still present)
+#   $HOME/.cache/woys/                        (TensorRT engine cache, if any)
+#   ${XDG_STATE_HOME:-$HOME/.local/state}/woys/  (woys.log)
 #
 # Usage:
 #   ./uninstall.sh                # remove everything except models and config
@@ -100,8 +103,9 @@ for unit in woys-mic.service woys-chain.service vcclient-cachy-mic.service; do
 done
 systemctl --user daemon-reload 2>/dev/null || true
 
-# Remove launcher symlinks (current + legacy shim).
-rm -f "$BIN_DIR/woys" "$BIN_DIR/vcclient-cachy"
+# Remove the launcher symlink, the native helper and the legacy shim. A
+# stale woys-pw-out left on PATH would be picked up by a later install.
+rm -f "$BIN_DIR/woys" "$BIN_DIR/woys-pw-out" "$BIN_DIR/vcclient-cachy"
 
 # Remove app dirs (optionally keeping models).
 for HOME_DIR in "$APP_HOME" "$LEGACY_APP_HOME"; do
@@ -122,6 +126,8 @@ cat <<EOF
   Config preserved (woys)         : $HOME/.config/woys/config.toml
   Config preserved (legacy)       : $HOME/.config/vcclient-cachy/config.toml (if still present)
   Models preserved                : $([ "$KEEP_MODELS" -eq 1 ] && echo "yes" || echo no)
+  Left in place (safe to delete)  : $HOME/.cache/woys/ (TensorRT cache)
+                                    ${XDG_STATE_HOME:-$HOME/.local/state}/woys/ (logs)
 
   To wipe everything (including config):
     rm -rf $HOME/.config/woys/ $HOME/.config/vcclient-cachy/
