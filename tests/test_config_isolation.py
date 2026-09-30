@@ -23,7 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import tui.config as cfg_mod  # noqa: E402
+import tui.config as cfg_mod
 
 REAL_CONFIG = Path.home() / ".config" / "woys" / "config.toml"
 
@@ -42,9 +42,7 @@ def test_config_path_is_isolated_during_tests() -> None:
     assert cfg_mod.CONFIG_FILE.resolve() != REAL_CONFIG.resolve()
 
 
-def test_no_path_save_writes_isolated_file_not_real_config(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_no_path_save_writes_isolated_file_not_real_config(tmp_path: Path, monkeypatch) -> None:
     """End-to-end guarantee: save_config() with NO explicit path honors the
     patched CONFIG_FILE. This is the exact call shape (cli_profile_save ->
     save_config(cfg)) that wiped the profiles."""
