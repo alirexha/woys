@@ -24,8 +24,9 @@ should work on any modern Linux with PipeWire + an NVIDIA GPU.
   foundation models + one RVC voice loaded. 8 GB total system RAM
   is comfortable for the engine alongside Discord / a game / a
   browser; 16 GB is generous. Below 4 GB free is not tested.
-- **VRAM:** ~1.1 GB peak (foundation models dominate; one RVC voice
-  adds ~150 MB).
+- **VRAM:** ~1.35 GiB measured with the foundation models + the sample
+  voice loaded (foundation models dominate; one RVC voice is ~150 MB of
+  that). See `docs/05-perf.md`.
 - **OS / audio:** Linux + PipeWire. PipeWire 1.2+ tested; PulseAudio
   / bare-ALSA are not supported (the engine speaks to PipeWire
   directly via `pw-cat` and `pactl`). The original development
@@ -157,9 +158,11 @@ A fork-and-trim of [w-okada/voice-changer](https://github.com/w-okada/voice-chan
   `tests/test_smoke_rvc_onnx.py::LATENCY_FLOOR_MS` (measured on
   RTX 2070, ORT-CUDA, RVC v2 + RMVPE). v0.11.0 mode=both: ~45 ms
   inference average in real Telegram session.
-- **End-to-end mic → output**: ~500-540 ms with v0.8.0 / v0.9.0 /
-  v0.9.2 / v0.11.0 defaults (chunk 150 + inference ~45 + native-pw
-  output ~170 + PipeWire codec ~30). v0.9.0 switched the playback
+- **End-to-end mic → output**: ~640 ms with the current (v0.12.4+)
+  defaults, which raised `chunk_seconds` from 0.15 to 0.25 for cleaner
+  output (see Status above). It was ~500-540 ms with the v0.8.0 /
+  v0.9.0 / v0.9.2 / v0.11.0 defaults (chunk 150 + inference ~45 +
+  native-pw output ~170 + PipeWire codec ~30). v0.9.0 switched the playback
   backend to a native PipeWire client (closes the per-quantum gap
   class from pw-cat); v0.9.1 expanded the ring-buffer slack to 191 ms
   by default — a regression that added ~170 ms of echo without

@@ -123,7 +123,8 @@ When the optional RNNoise chain is enabled (`woys chain setup`), apps
 show one friendly-named source in their input device dropdown:
 
 - **`woys-clean`** — RNNoise-cleaned source (the recommended daily
-  driver; ~13 % cuts/min reduction at the cost of ~+40 ms latency).
+  driver; ~27 % cuts/min reduction at the cost of ~+40 ms latency, see
+  `docs/23-rnnoise-chain.md`).
 
 Since v0.14.1 the raw engine output (node `woys-mic`) is relabelled
 `_internal-raw-bypass` while the chain is on, so it sorts with the other
