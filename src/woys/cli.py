@@ -410,23 +410,26 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
     print("---- environment ----")
     cmd_info()  # cuda + pipewire-server versions, gpu
 
-    if no_engine:
-        return 0
-
-    # Lazy import - diag without --no-engine is the only path that needs ORT.
-    from audio.engine import RealtimeEngine
     from audio.pipewire import PipeWireError, VirtualMic, get_state
-    from tui.config import app_config_to_engine_config, load_config
-    from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
 
     print("---- pipewire ----")
     try:
-        VirtualMic().ensure()
+        # --no-engine only reports: it must not load the virtual devices.
+        if not no_engine:
+            VirtualMic().ensure()
         st = get_state()
         print(f"  sink={st.sink_present} source={st.source_present}")
     except PipeWireError as e:
         print(f"  error: {e}")
         return 2
+
+    if no_engine:
+        return 0
+
+    # Lazy import - diag without --no-engine is the only path that needs ORT.
+    from audio.engine import RealtimeEngine
+    from tui.config import app_config_to_engine_config, load_config
+    from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
 
     print(f"---- engine self-test ({seconds:.1f} s) ----")
     cfg = load_config()

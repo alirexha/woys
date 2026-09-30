@@ -151,3 +151,20 @@ def test_diag_exits_nonzero_when_the_child_never_came_up(
 
     monkeypatch.setattr(tcfg, "app_config_to_engine_config", subprocess_mode)
     assert diag() == 1
+
+
+def test_diag_no_engine_still_reports_sink_state(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--no-engine promises "static info (CUDA, PipeWire, sink state)" but
+    returned before the PipeWire block. It must report the state without
+    loading anything (no ensure())."""
+    monkeypatch.setattr(cli, "cmd_info", lambda: 0)
+
+    def no_side_effects(_self: object) -> None:
+        raise AssertionError("--no-engine must not load the virtual devices")
+
+    monkeypatch.setattr(pw.VirtualMic, "ensure", no_side_effects)
+    monkeypatch.setattr(pw, "get_state", lambda: pw.VirtualMicState(True, False, 1, None))
+    assert cli.cmd_diag(0.0, no_engine=True) == 0
+    assert "sink=True source=False" in capsys.readouterr().out
