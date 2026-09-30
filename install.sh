@@ -15,7 +15,7 @@
 # through v0.6.x as a transition tool). The script still cleans up any
 # stale shim a previous install left behind.
 #
-# Pre-reqs (the script checks):
+# Pre-reqs (the script checks each one and stops if it is missing):
 #   - PipeWire + pipewire-pulse running
 #   - NVIDIA driver + CUDA-capable GPU
 #   - Python 3.11 (uv installs one if missing)
@@ -117,11 +117,11 @@ fi
 if [ ! -x "$UV_BIN" ]; then
     fail "uv (Astral) is required but not found at $UV_BIN.
        Install it with ONE of:
-         pip install --user uv     # via PyPI (recommended; pinnable)
-         pacman -S uv              # CachyOS / Arch
-         brew install uv           # macOS
+         sudo pacman -S uv         # CachyOS / Arch
+         pipx install uv           # via PyPI (pinnable)
          curl -LsSf https://astral.sh/uv/install.sh | sh   # Astral's own (NOT auto-run anymore -- F-05-09)
-       Then re-run ./install.sh."
+       Then re-run ./install.sh. If uv is installed somewhere that is not
+       on PATH, point at it: UV_BIN=/path/to/uv ./install.sh"
 fi
 
 # The native PipeWire helper (bin/woys-pw-out) is the default playback

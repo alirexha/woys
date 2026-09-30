@@ -10,6 +10,7 @@ Every command is copy-paste-able; every step says **what** it does and **why**.
 | CachyOS / Arch      | The fork is Linux-native; non-systemd distros work too if you know what you're doing |
 | PipeWire            | The audio routing layer (already on CachyOS) |
 | NVIDIA GPU + driver | RVC inference runs on CUDA; tested on RTX 2070 |
+| uv                  | Python installer the script uses to fetch Python 3.11 and build the venv (`sudo pacman -S uv`) |
 | gcc, make, pkg-config + PipeWire headers | Builds `woys-pw-out`, the native PipeWire playback helper woys uses by default (`sudo pacman -S base-devel pkgconf`; the Arch `pipewire` package ships the headers; Debian/Ubuntu: `build-essential pkg-config libpipewire-0.3-dev`) |
 | ~5 GB free disk     | Models (~1 GB) + venv with torch+ORT (~3.5 GB) |
 | ~5 minutes          | Most of it is downloading torch and ORT      |
@@ -50,8 +51,12 @@ cd woys
 
 What this does, in order:
 
-1. Checks for `pactl` (pipewire-pulse) and `nvidia-smi` (GPU). Warns if missing.
-2. Installs `uv` (a fast Python package installer) into `~/.local/bin/` if absent.
+1. Checks the prerequisites and stops with an error if one is missing:
+   `pactl` talking to PipeWire, `nvidia-smi` (the GPU), `uv`, and the
+   build tools for step 5. It does not install any of them for you.
+   `uv` is looked up on your `PATH`, then at `~/.local/bin/uv`; if yours
+   lives elsewhere, run `UV_BIN=/path/to/uv ./install.sh`.
+2. Uses `uv` to install Python 3.11 (user-local) if you don't have it.
 3. Creates an isolated Python 3.11 environment under `~/.local/share/woys/venv/`.
 4. Installs `woys` and all its dependencies into that environment.
    This is the slow step — it pulls ~3.5 GB of Python wheels (torch, onnxruntime-gpu, etc.).
