@@ -14,6 +14,7 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -91,6 +92,20 @@ def test_uninstall_removes_the_native_helper(tmp_path: Path) -> None:
     assert not (home / ".local" / "bin" / "woys").exists()
     # What it leaves behind on purpose is spelled out.
     assert ".cache/woys" in out and ".local/state/woys" in out
+
+
+def test_uninstall_wipe_hint_is_safe_to_paste(tmp_path: Path) -> None:
+    """The printed `rm -rf` hint must quote $HOME. Unquoted, a HOME with a
+    space splits into other paths when the user pastes it."""
+    rc, out, home = _run_uninstall(tmp_path)
+    assert rc == 0, out
+    hint = next(ln.strip() for ln in out.splitlines() if ln.strip().startswith("rm -rf"))
+    assert shlex.split(hint) == [
+        "rm",
+        "-rf",
+        f"{home}/.config/woys/",
+        f"{home}/.config/vcclient-cachy/",
+    ]
 
 
 def test_uninstall_still_accepts_keep_models(tmp_path: Path) -> None:

@@ -130,5 +130,5 @@ cat <<EOF
                                     ${XDG_STATE_HOME:-$HOME/.local/state}/woys/ (logs)
 
   To wipe everything (including config):
-    rm -rf $HOME/.config/woys/ $HOME/.config/vcclient-cachy/
+    rm -rf $(printf '%q' "$HOME/.config/woys/") $(printf '%q' "$HOME/.config/vcclient-cachy/")
 EOF
