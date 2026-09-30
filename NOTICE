@@ -36,16 +36,6 @@ covered by ./LICENSE (All Rights Reserved). The explicit enumeration is
 maintained for legal-audit purposes.
 
 Source code (Python) — all *.py under src/{woys,audio,tui}/:
-  src/woys/__init__.py
-  src/woys/chain.py
-  src/woys/cli.py
-  src/woys/convert.py
-  src/woys/fp16_convert.py
-  src/woys/instance_lock.py
-  src/woys/models.py
-  src/woys/profiles.py
-  src/woys/tray.py
-  src/woys/vcprofile.py
   src/audio/__init__.py
   src/audio/engine.py
   src/audio/inference_client.py
@@ -58,35 +48,153 @@ Source code (Python) — all *.py under src/{woys,audio,tui}/:
   src/tui/config.py
   src/tui/control.py
   src/tui/hotkey.py
+  src/woys/__init__.py
+  src/woys/chain.py
+  src/woys/cli.py
+  src/woys/convert.py
+  src/woys/fp16_convert.py
+  src/woys/instance_lock.py
+  src/woys/logsetup.py
+  src/woys/models.py
+  src/woys/profiles.py
+  src/woys/tray.py
+  src/woys/vcprofile.py
+  src/woys/xdg.py
 
 Tests — all tests/test_*.py and tests/conftest.py:
   tests/conftest.py
   tests/test_audio_pipewire.py
+  tests/test_audio_pipewire_teardown.py
   tests/test_chain.py
+  tests/test_chain_disable_systemctl.py
+  tests/test_chain_health_check_probes.py
+  tests/test_chain_pactl_wrapper.py
+  tests/test_chain_status_exit.py
+  tests/test_chain_unit_path_xdg.py
+  tests/test_chain_unload_errors.py
+  tests/test_cli_diag.py
+  tests/test_cli_error_history.py
+  tests/test_cli_info.py
+  tests/test_cli_info_providers.py
+  tests/test_cli_log_setup_failure.py
+  tests/test_cli_missing_file_hint.py
+  tests/test_cli_missing_model.py
+  tests/test_cli_pw_setup_args.py
+  tests/test_cli_run_monitor_flag.py
+  tests/test_cli_socket_exit_codes.py
+  tests/test_cli_traceback_guard.py
+  tests/test_config_dir_mode.py
+  tests/test_config_dir_xdg.py
+  tests/test_config_isolation.py
+  tests/test_config_load_failed_no_clobber.py
+  tests/test_config_managed_keys.py
+  tests/test_config_nonfinite.py
+  tests/test_config_profile_validation.py
+  tests/test_config_save_tmp.py
+  tests/test_config_user_overrides.py
+  tests/test_config_validation.py
+  tests/test_control_accept_errors.py
+  tests/test_control_client_errors.py
+  tests/test_control_client_paths.py
+  tests/test_control_concurrent_handlers.py
+  tests/test_control_framing.py
+  tests/test_control_handler_broad_except.py
+  tests/test_control_job_errors.py
+  tests/test_control_peer_uid.py
+  tests/test_control_pitch.py
+  tests/test_control_protocol_version.py
+  tests/test_control_quit_no_deadlock.py
+  tests/test_control_read_deadline.py
+  tests/test_control_slow_dump.py
+  tests/test_control_toggle_reply.py
   tests/test_convert.py
+  tests/test_convert_fp16_gate.py
+  tests/test_convert_import_hint.py
+  tests/test_convert_no_cwd_litter.py
+  tests/test_convert_probe_metadata.py
+  tests/test_convert_vendored_tmp_dir.py
+  tests/test_docs_sudoers_rule.py
   tests/test_download_weights.py
+  tests/test_engine_cfg_update_queue.py
   tests/test_engine_config_drift.py
+  tests/test_engine_cpu_fallback.py
+  tests/test_engine_crash.py
+  tests/test_engine_crash_teardown.py
+  tests/test_engine_deque_iter_safety.py
+  tests/test_engine_error_history.py
   tests/test_engine_inference.py
+  tests/test_engine_lifecycle_lock.py
+  tests/test_engine_restart_after_crash.py
   tests/test_engine_routing.py
+  tests/test_engine_self_stop.py
+  tests/test_engine_signal_handler.py
+  tests/test_engine_signal_offthread_stop.py
   tests/test_engine_sola_integration.py
+  tests/test_engine_stats_lock.py
+  tests/test_engine_stats_reset.py
+  tests/test_engine_swap_failure.py
+  tests/test_engine_swap_queue.py
+  tests/test_engine_warmup_stage.py
+  tests/test_engine_worker_errors.py
   tests/test_environment.py
+  tests/test_evdev_hotkey_leaks.py
+  tests/test_fp16_convert_atomic.py
   tests/test_gpu_anti_jitter.py
+  tests/test_index_free.py
+  tests/test_install_sh.py
   tests/test_instance_lock.py
+  tests/test_interpolate_voiced_gaps_pitch_carry.py
+  tests/test_logsetup.py
+  tests/test_logsetup_isolation.py
   tests/test_migrate_to_woys.py
-  tests/test_models_library.py
   tests/test_model_swap.py
+  tests/test_models_download_foundation_names.py
+  tests/test_models_library.py
+  tests/test_models_use_sends_path.py
+  tests/test_monitor_write_errors.py
+  tests/test_monitor_writer_decoupling.py
   tests/test_pacat_health.py
+  tests/test_package_lazy_imports.py
+  tests/test_pickle_consent_env_var_removed.py
+  tests/test_pkg_metadata.py
+  tests/test_probe_rvc_sr.py
   tests/test_profiles.py
+  tests/test_profiles_config_lock_mode.py
+  tests/test_profiles_name_validation.py
+  tests/test_profiles_use_err_reply.py
+  tests/test_quit_overlay_and_swap_error.py
+  tests/test_release_version_drift.py
   tests/test_smoke_rvc_onnx.py
   tests/test_sola.py
+  tests/test_sola_best_offset_vectorised.py
+  tests/test_sola_equal_power_fallback.py
+  tests/test_sola_search_clipped.py
   tests/test_stream_resampler.py
+  tests/test_streamresampler_cold_fade.py
+  tests/test_swap_preloader.py
   tests/test_tray_imports.py
   tests/test_tui_config.py
   tests/test_tui_control.py
+  tests/test_tui_health_underruns.py
+  tests/test_tui_help_close_key.py
+  tests/test_tui_markup_names.py
+  tests/test_tui_missing_model.py
+  tests/test_tui_on_mount.py
+  tests/test_tui_profiles_disk_sync.py
+  tests/test_tui_quit_blocks_restart.py
+  tests/test_tui_quit_offload.py
+  tests/test_tui_refresh.py
+  tests/test_tui_session_flags.py
+  tests/test_tui_swap_indicator.py
+  tests/test_uninstall_sh.py
+  tests/test_ux_onboarding.py
   tests/test_v068_polish.py
   tests/test_v070_migration.py
   tests/test_vcprofile.py
+  tests/test_vcprofile_import_safety.py
   tests/test_voice_quality.py
+  tests/test_xdg_runtime_dir.py
+  tests/test_xdg_runtime_dir_checks.py
   tests/fixtures/                     (test inputs synthesized by scripts/)
 
 Scripts — all *.py and *.sh under scripts/:
@@ -95,6 +203,9 @@ Scripts — all *.py and *.sh under scripts/:
   scripts/bench_iobinding.py
   scripts/bench_loopback.py
   scripts/bench_streaming.py
+  scripts/benchmark_compare.py
+  scripts/benchmark_probe.py
+  scripts/check_version_drift.sh
   scripts/cuts_per_min_check.py
   scripts/download_weights.py
   scripts/gen_sweep_fixture.py
@@ -102,7 +213,9 @@ Scripts — all *.py and *.sh under scripts/:
   scripts/migrate_to_woys.py
   scripts/probe_writer_jitter.py
   scripts/profile_engine.py
+  scripts/release.py
   scripts/smoke_rvc_onnx.py
+  scripts/sola_ab_harness.py
   scripts/sweep_latency.py
 
 Native helpers (C):
@@ -120,13 +233,18 @@ Packaging:
 Configuration & metadata:
   pyproject.toml
   requirements.txt
+  uv.lock
   .python-version
   .gitignore
+  .gitleaksignore
+  .github/workflows/ci.yml
+  .github/ISSUE_TEMPLATE/bug_report.yml
 
 Documentation (original) — all *.md under docs/, plus top-level prose:
   README.md
   CHANGELOG.md
   LESSONS.md
+  SECURITY.md
   NOTICE                              (this file)
   LICENSE                             (the All Rights Reserved license)
   docs/05-perf.md
