@@ -1090,8 +1090,11 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("operational error (%s): %s", type(e).__name__, e)
         print(f"error: {e}", file=sys.stderr)
         if isinstance(e, FileNotFoundError):
+            from woys.xdg import config_dir
+
             print(
-                "  -> run `woys models download`, or check rvc_model in ~/.config/woys/config.toml",
+                "  -> run `woys models download`, or check rvc_model in "
+                f"{config_dir() / 'config.toml'}",
                 file=sys.stderr,
             )
         elif isinstance(e, PipeWireError):
