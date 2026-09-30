@@ -2697,9 +2697,10 @@ class RealtimeEngine:
     def process_chunk_16k(self, audio16k: NDArrayF32) -> NDArrayF32:
         """One inference pass on a (N,) float32 chunk at 16 kHz.
 
-        Standalone path - used by tests and by the engine when SOLA is
-        disabled. Doesn't touch streaming state. The streaming engine path
-        goes through `_process_streaming_16k` instead.
+        Standalone, offline-only helper: the realtime loop never calls it
+        (with or without SOLA it goes through `_process_streaming_16k`), and
+        its only caller is the fallback in scripts/benchmark_probe.py.
+        Doesn't touch streaming state.
         """
         return self._infer(audio16k)
 
