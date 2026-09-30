@@ -19,6 +19,7 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 from __future__ import annotations
 
 import fcntl
+import os
 import re
 import sys
 import tomllib
@@ -94,12 +95,16 @@ def config_lock() -> Iterator[None]:
     config_file = _config_file()
     config_file.parent.mkdir(parents=True, exist_ok=True)
     lock_path = config_file.with_suffix(config_file.suffix + ".lock")
-    with open(lock_path, "w") as lf:
-        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+    # 0600 like config.toml itself; fchmod also tightens a lock file an
+    # older version created under the default umask.
+    fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "w"):
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+            fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 def read_disk_profiles(schema_version: object) -> dict[str, Any] | None:
