@@ -47,8 +47,12 @@ The lock is reverted automatically on:
 
 - `engine.stop()` (normal shutdown, TUI quit, `woys` Ctrl-C from an
   interactive shell)
-- `SIGTERM` (e.g., `kill <pid>`, `systemctl --user stop woys-mic`)
+- `SIGTERM` to the woys process (e.g., `kill <pid>`)
 - `SIGINT` (e.g., Ctrl-C in `woys engine`)
+
+Stopping `woys-mic.service` does **not** release the lock: that unit
+only sets up and tears down the virtual mic and never signals the
+engine process.
 
 The lock is **not** reverted on `SIGKILL` (`kill -9`) — the kernel
 delivers SIGKILL out-of-band and Python can't intercept. If the user
