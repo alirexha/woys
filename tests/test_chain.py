@@ -285,9 +285,10 @@ def test_alsa_leak_links_flags_filter_chain_to_alsa() -> None:
     assert all("filter-chain" in row for row in leaks)
 
 
-def test_alsa_leak_links_returns_empty_when_pwlink_missing() -> None:
-    with patch("shutil.which", return_value=None):
-        assert chain._alsa_leak_links() == []
+def test_alsa_leak_links_raises_when_pwlink_missing() -> None:
+    # An empty list would read as "no leaks" in the health check.
+    with patch("shutil.which", return_value=None), pytest.raises(chain.ChainError):
+        chain._alsa_leak_links()
 
 
 def test_systemd_unit_path_respects_xdg_config_home(

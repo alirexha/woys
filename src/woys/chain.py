@@ -319,18 +319,23 @@ def _alsa_leak_links() -> list[str]:
 
     Used by `status` to flag a regression of the v0.13.0 leak in case
     something else on the system later breaks our routing assumption.
+    Raises ChainError when pw-link is missing or fails: an empty list
+    must mean "no leaks", not "could not look".
     """
     pwlink = shutil.which("pw-link")
     if not pwlink:
-        return []
-    out = subprocess.run(
+        raise ChainError("pw-link not found - install `pipewire`")
+    res = subprocess.run(
         [pwlink, "-l"],
         capture_output=True,
         text=True,
         timeout=3,
         check=False,
         env=_c_locale_env(),  # English-token parsing
-    ).stdout
+    )
+    if res.returncode != 0:
+        raise ChainError(f"pw-link -l failed: {res.stderr.strip() or f'exit {res.returncode}'}")
+    out = res.stdout
     leaks: list[str] = []
     section = ""
     for line in out.splitlines():
@@ -582,7 +587,15 @@ def _health_check() -> int:
     except ImportError:
         pass  # pipewire module unavailable; still check the chain's own sink
     default_sink = _default_sink()
-    if default_sink and default_sink in woys_sinks:
+    if not default_sink:
+        # Can't tell whether the hijack is present, so don't pass the unit.
+        print(
+            "[woys chain] check: could not read the system default sink "
+            "(`pactl get-default-sink` failed)  FAIL",
+            file=sys.stderr,
+        )
+        ok = False
+    elif default_sink in woys_sinks:
         print(
             f"[woys chain] check: system default sink is {default_sink!r}, a woys "
             "null-sink -- desktop audio is being routed into woys plumbing  FAIL",
@@ -590,19 +603,24 @@ def _health_check() -> int:
         )
         ok = False
     else:
-        print(
-            f"[woys chain] check: default sink {default_sink or '(unknown)'!r} "
-            "is not a woys null-sink  OK"
-        )
+        print(f"[woys chain] check: default sink {default_sink!r} is not a woys null-sink  OK")
 
-    leaks = _alsa_leak_links()
-    if leaks:
-        print("[woys chain] check: chain audio is reaching ALSA hardware  FAIL", file=sys.stderr)
-        for leak in leaks:
-            print(f"  {leak}", file=sys.stderr)
+    try:
+        leaks = _alsa_leak_links()
+    except ChainError as exc:
+        print(f"[woys chain] check: cannot check ALSA leak links ({exc})  FAIL", file=sys.stderr)
         ok = False
     else:
-        print("[woys chain] check: no ALSA leak links  OK")
+        if leaks:
+            print(
+                "[woys chain] check: chain audio is reaching ALSA hardware  FAIL",
+                file=sys.stderr,
+            )
+            for leak in leaks:
+                print(f"  {leak}", file=sys.stderr)
+            ok = False
+        else:
+            print("[woys chain] check: no ALSA leak links  OK")
 
     if ok:
         print("[woys chain] check: PASS")
@@ -674,7 +692,11 @@ def status(check: bool = False) -> int:
             "  exactly one (`woys-clean`) when active. Check your chain state."
         )
 
-    leaks = _alsa_leak_links()
+    try:
+        leaks = _alsa_leak_links()
+    except ChainError as exc:
+        print(f"\n[woys chain] cannot check for ALSA leak links: {exc}", file=sys.stderr)
+        leaks = []
     if leaks:
         print("\n[woys chain] WARNING - chain audio is reaching ALSA hardware:")
         for leak in leaks:
