@@ -10,6 +10,8 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -87,3 +89,58 @@ def test_install_sh_verifies_all_three_foundation_weights() -> None:
     weights, not just amitaro_v2_16k.onnx."""
     for weight in ("rmvpe_wrapped.onnx", "contentvec-f.onnx", "amitaro_v2_16k.onnx"):
         assert weight in INSTALL_SH, f"install.sh must verify the {weight} foundation weight"
+
+
+def _run_install_until_uv(tmp_path: Path, uv_dir: Path | None, env_uv_bin: str | None) -> str:
+    """Run install.sh in a sandboxed HOME with stub host tools until the first
+    uv call. The stub uv exits 42 with a marker, so reaching it proves the
+    lookup resolved; the real `$HOME/.local/bin/uv` is never on PATH."""
+    home = tmp_path / "home"
+    home.mkdir()
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    for name, body in (
+        ("pactl", 'echo "Server Name: PulseAudio (on PipeWire 1.0.0)"'),
+        ("nvidia-smi", "exit 0"),
+    ):
+        (stubs / name).write_text(f"#!/bin/sh\n{body}\n")
+        (stubs / name).chmod(0o755)
+    if uv_dir is not None:
+        uv_dir.mkdir(parents=True, exist_ok=True)
+        (uv_dir / "uv").write_text("#!/bin/sh\necho STUB-UV-CALLED >&2\nexit 42\n")
+        (uv_dir / "uv").chmod(0o755)
+    path_dirs = [str(stubs)]
+    if uv_dir is not None and env_uv_bin is None:
+        path_dirs.append(str(uv_dir))
+    path_dirs += ["/usr/bin", "/bin"]
+    env = {"HOME": str(home), "PATH": os.pathsep.join(path_dirs)}
+    if env_uv_bin is not None:
+        env["UV_BIN"] = env_uv_bin
+    proc = subprocess.run(
+        ["bash", str(REPO / "install.sh"), "--skip-models", "--no-systemd"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return f"rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}"
+
+
+def test_install_finds_uv_on_path(tmp_path: Path) -> None:
+    """uv from the distro package manager (e.g. /usr/bin/uv) is not at
+    ~/.local/bin/uv. Pre-fix install.sh only looked there and failed with
+    'uv is required but not found' for those users."""
+    out = _run_install_until_uv(tmp_path, tmp_path / "pkg-bin", None)
+    assert "STUB-UV-CALLED" in out and "rc=42" in out, out
+
+
+def test_install_honors_uv_bin_override(tmp_path: Path) -> None:
+    """A UV_BIN the user exported wins over PATH lookup."""
+    custom = tmp_path / "custom"
+    out = _run_install_until_uv(tmp_path, custom, str(custom / "uv"))
+    assert "STUB-UV-CALLED" in out and "rc=42" in out, out
+
+
+def test_install_without_uv_fails_with_hint(tmp_path: Path) -> None:
+    out = _run_install_until_uv(tmp_path, None, None)
+    assert "rc=1" in out and "uv (Astral) is required" in out, out

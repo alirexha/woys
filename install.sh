@@ -19,7 +19,7 @@
 #   - PipeWire + pipewire-pulse running
 #   - NVIDIA driver + CUDA-capable GPU
 #   - Python 3.11 (uv installs one if missing)
-#   - uv (we'll fetch it user-local if absent)
+#   - uv (on PATH, at ~/.local/bin/uv, or wherever UV_BIN points)
 #
 # Usage:
 #   ./install.sh              # full install
@@ -66,7 +66,7 @@ OLD_APP_HOME="$HOME/.local/share/vcclient-cachy"
 VENV="$APP_HOME/venv"
 BIN_DIR="$HOME/.local/bin"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
-UV_BIN="${UV_BIN:-$HOME/.local/bin/uv}"
+UV_BIN="${UV_BIN:-$(command -v uv || echo "$HOME/.local/bin/uv")}"
 
 SKIP_MODELS=0
 NO_SYSTEMD=0
