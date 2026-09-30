@@ -26,18 +26,17 @@ All weights cache under:
 > downloaded.
 
 **License callout (, commit-060):**
-- `contentvec-f.onnx` is distributed under **GPL-3.0** -- the upstream
-  Hugging Face repo `wok000/weights_gpl` declares this in its name.
-  woys NEVER redistributes the weight; `scripts/download_weights.py`
-  fetches it directly from Hugging Face into the user's local cache.
-- If you build a custom artifact that BUNDLES this weight (Docker
+- `contentvec-f.onnx` and `rmvpe_wrapped.onnx` are distributed under
+  **GPL-3.0** -- both come from the upstream Hugging Face repo
+  `wok000/weights_gpl` (`content-vec/contentvec-f.onnx` and
+  `rmvpe/rmvpe_20231006.onnx`), which declares this in its name.
+  woys NEVER redistributes these weights; `scripts/download_weights.py`
+  fetches them directly from Hugging Face into the user's local cache.
+- If you build a custom artifact that BUNDLES these weights (Docker
   image, Flatpak, install tarball, etc.), you must respect GPL-3.0
   (source-availability obligations, no proprietary linking against the
   bundled work). The repo's All-Rights-Reserved license for woys'
   original work does NOT cover a bundled GPL weight.
-- `rmvpe.onnx` / `rmvpe_wrapped.onnx` follow their own upstream
-  licenses (see the source repos at huggingface.co/lj1995 and
-  huggingface.co/wok000).
 - `amitaro_v2_16k.onnx` is the sample voice; check its source repo
   for the specific terms.
 
