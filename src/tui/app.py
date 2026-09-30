@@ -30,6 +30,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
+from textual.markup import escape
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Label, ProgressBar, Static
@@ -219,7 +220,7 @@ class StatusPanel(Static):
         idle_hint = ""
         if swapping:
             light = "[bold blue]◴[/]"
-            state = f"loading {swapping}…"
+            state = f"loading {escape(swapping)}…"
         elif running and cold_start:
             light = "[bold yellow]◐[/]"
             # Surface the engine's real warmup substage ("loading sessions",
@@ -234,7 +235,9 @@ class StatusPanel(Static):
             light = "[dim]○[/]"
             state = "stopped"
             idle_hint = "\n   [dim]press [bold]t[/bold] to start, [bold]?[/bold] for help[/dim]"
-        prof = f"[italic]{profile}[/]" if profile else "[dim](none)[/]"
+        # Names and error text come from config.toml, file names and
+        # exceptions: escape them so a stray `[` can't break the render.
+        prof = f"[italic]{escape(profile)}[/]" if profile else "[dim](none)[/]"
         # render the error with an age
         # so the user can tell a stale 4-minute-old transient from a
         # fresh failure. `error_age_s` is None when the engine has not
@@ -242,7 +245,7 @@ class StatusPanel(Static):
         err = ""
         if error:
             age = f" [dim]({_fmt_age(error_age_s)})[/dim]" if error_age_s is not None else ""
-            err = f"\n[bold red]error:[/] {error}{age}"
+            err = f"\n[bold red]error:[/] {escape(error)}{age}"
         # a persistent on-panel
         # banner for "engine running, mic dead" -- the toast that fires
         # on the threshold crossing fades, but the StatusPanel must
@@ -256,7 +259,7 @@ class StatusPanel(Static):
             )
         return (
             f"{light}  status:  [bold]{state}[/]\n"
-            f"   model:   [italic]{model.name or '(none)'}[/]\n"
+            f"   model:   [italic]{escape(model.name) or '(none)'}[/]\n"
             f"   pitch:   {pitch:+d} st\n"
             f"   profile: {prof}"
             f"{idle_hint}"
@@ -413,7 +416,7 @@ class WoysApp(App[int]):
                     f"inspect), then restart. (--no-pw-setup skips this step.)"
                 )
                 self.engine.record_error(msg)
-                self.notify(msg, severity="error", timeout=12)
+                self.notify(msg, severity="error", timeout=12, markup=False)
         if pw_ok and self.cfg.autostart_engine:
             self._start_engine()
         self._control.start()
@@ -646,7 +649,7 @@ class WoysApp(App[int]):
             self.engine.start()
         except (PipeWireError, OSError, RuntimeError) as e:
             self.engine.record_error(f"engine start: {e}")
-            self.notify(f"engine start failed: {e}", severity="error", timeout=8)
+            self.notify(f"engine start failed: {e}", severity="error", timeout=8, markup=False)
             return False
         return True
 
@@ -813,7 +816,9 @@ class WoysApp(App[int]):
             # Saved by the CLI after this TUI loaded its config.
             self._reload_profiles()
         if not apply_profile(self.cfg, name):
-            self.notify(f"failed to apply profile {name!r}", severity="error", timeout=4)
+            self.notify(
+                f"failed to apply profile {name!r}", severity="error", timeout=4, markup=False
+            )
             # Raise rather than return None (which means "model unchanged")
             # so a PROFILE job ends in state=error.
             raise LookupError(f"no such profile: {name!r}")
@@ -854,12 +859,14 @@ class WoysApp(App[int]):
                 f"profile → {name} (loading {new_model.name}, pitch {self.cfg.f0_up_key:+d})",
                 severity="information",
                 timeout=3,
+                markup=False,
             )
         else:
             self.notify(
                 f"profile → {name} (pitch {self.cfg.f0_up_key:+d})",
                 severity="information",
                 timeout=2,
+                markup=False,
             )
         self._save_cfg()
         return swap_req
@@ -892,7 +899,7 @@ class WoysApp(App[int]):
             self._write_cfg()
         except OSError as e:
             logging.getLogger("woys.tui").error("config not saved: %s", e)
-            self.notify(f"config not saved: {e}", severity="error", timeout=8)
+            self.notify(f"config not saved: {e}", severity="error", timeout=8, markup=False)
             return False
         return True
 
@@ -948,7 +955,7 @@ class WoysApp(App[int]):
         # swallowed engine errors -- a silent-fallback in the observability
         # surface itself.
         if s.last_error and s.last_error != getattr(self, "_last_notified_error", None):
-            self.notify(s.last_error, severity="error", timeout=8)
+            self.notify(s.last_error, severity="error", timeout=8, markup=False)
             self._last_notified_error = s.last_error
         # F-23-14: forget the "already notified" sentinel once the engine
         # has cleared `last_error` (via the chunk-success auto-clear).
