@@ -2469,8 +2469,19 @@ class RealtimeEngine:
                     break
         if not requests:
             return
-        for req in requests:
-            self._apply_one_swap(req)
+        for i, req in enumerate(requests):
+            try:
+                self._apply_one_swap(req)
+            except Exception as e:
+                # `_apply_one_swap` handles the expected failures itself;
+                # anything else still crashes the loop, but no caller may
+                # be left parked on a request this batch already drained.
+                req.error = e
+                self._resolve_swap(req)
+                for rest in requests[i + 1 :]:
+                    rest.error = RuntimeError("swap not applied: an earlier swap failed")
+                    self._resolve_swap(rest)
+                raise
 
     def _apply_one_swap(self, req: _SwapRequest) -> None:
         """Apply a single `_SwapRequest`: flush SOLA tail, drain writer,
@@ -2560,10 +2571,36 @@ class RealtimeEngine:
         # Legacy in-process path. Existing _cv (contentvec) and _rmvpe
         # stay - they're foundation models, not voice-specific.
         # v0.5.0: pool-cached. Cache hit ≈ 10 ms; cache miss ≈ 600 ms.
+        # A model that fails to load or probe (corrupt / incompatible
+        # export, file gone) must not crash the engine: keep the old
+        # voice, report the failure on the request, and only point
+        # cfg.rvc_model at the target once it is really running.
+        prev_rvc, prev_is_half = self._rvc, self._is_half
+        try:
+            self._rvc = self._rvc_pool.get_or_create(target)
+            self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
+            # Probes through self._rvc / self._is_half, hence set above.
+            new_sr = self._cached_rvc_sr(target)
+        except Exception as e:
+            self._rvc, self._is_half = prev_rvc, prev_is_half
+            self._rebuild_sola_for_rate(self._rvc_output_sr)
+            # The SOLA flush above finalized the output stream; the old
+            # voice needs a fresh one, exactly as a successful swap would.
+            if resampler_out_was_flushed:
+                self._resampler_out = _StreamResampler(
+                    self._rvc_output_sr,
+                    self.cfg.sink_rate,
+                    cold_fade_in_samples=self.cfg.sink_rate // 200,
+                )
+            self.reset_streaming_state()
+            req.error = e
+            self.record_error(
+                f"model swap to {Path(target).name} failed: {type(e).__name__}: {e}. "
+                f"Keeping the current voice."
+            )
+            self._resolve_swap(req)
+            return
         self.cfg.rvc_model = target
-        self._rvc = self._rvc_pool.get_or_create(target)
-        self._is_half = self._rvc.get_inputs()[0].type != "tensor(float)"
-        new_sr = self._cached_rvc_sr(target)
         # v0.6.7 - rebuild the output resampler if the new model has a
         # different native rate. Identity ratios (e.g. 16k -> 16k -> 48k
         # stays the same) won't reset state, so swaps between same-rate
