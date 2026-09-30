@@ -1,9 +1,45 @@
 # Publishing `woys` to the AUR
 
-The PKGBUILD and .SRCINFO in this directory are submission-ready for the
-Arch User Repository. **Publication is gated on the GitHub repo being
-publicly accessible** — the AUR uses unauthenticated `git clone`, so a
-private source URL won't work.
+## Not working yet
+
+The PKGBUILD and .SRCINFO in this directory are a **draft**. A package
+built from them installs but does not run. Do not submit it to the AUR
+until these are fixed:
+
+- **No Python dependencies.** `depends=()` lists only python, PipeWire and
+  nvidia-utils. `python -m installer` does not resolve dependencies, so
+  numpy, torch, onnxruntime-gpu, textual, rich, soxr, huggingface_hub,
+  tomli-w, sounddevice, librosa and the rest are missing and every real
+  subcommand fails with `ModuleNotFoundError`. Either declare the Arch
+  `python-*` packages (and test against their versions, which are far
+  newer than the pins in `pyproject.toml`) or build a private venv under
+  `/opt/woys` in `package()`.
+- **No Python version that works.** `pyproject.toml` needs Python
+  `>=3.11,<3.13` (the torch / onnxruntime-gpu pins have no newer wheels).
+  The PKGBUILD now says so, which means it cannot be installed on current
+  Arch, whose `python` is newer. A `python311`/`python312` based venv is
+  the likely way out.
+- **No `woys-pw-out`.** `build()` does not run `make -C bin` and
+  `package()` does not install `bin/woys-pw-out`. woys plays audio through
+  that helper by default (`prefer_native_pw = true`) and the engine
+  refuses to start without it. Needs `make -C bin` in `build()`,
+  `install -Dm755 bin/woys-pw-out "$pkgdir/usr/bin/woys-pw-out"` in
+  `package()`, and `gcc` + `pkgconf` in `makedepends`.
+- **No way to fetch the foundation weights.** `scripts/download_weights.py`
+  is not in the wheel, but the engine's error messages point at it. It
+  needs to ship inside the `woys` package (e.g. as a `woys models`
+  subcommand) or be installed under `/usr/share/woys`.
+- **Generic top-level module names.** The wheel installs `audio`, `tui`
+  and `server` straight into site-packages, which can clash with other
+  packages in a system-wide install.
+
+Publication is also gated on the GitHub repo being publicly accessible:
+the AUR uses unauthenticated `git clone`, so a private source URL won't
+work.
+
+The steps below are for once the package works. `<version>` is the
+current `__version__` in `src/woys/__init__.py`; `scripts/release.py`
+keeps `pkgver` in PKGBUILD and .SRCINFO in step with it.
 
 ## Pre-flight
 
@@ -26,16 +62,15 @@ private source URL won't work.
 git clone ssh://aur@aur.archlinux.org/woys.git /tmp/aur-woys
 cd /tmp/aur-woys
 
-# 2. Copy the pre-built bundle
-cp ~/ai/woys/pkg/PKGBUILD .
-cp ~/ai/woys/pkg/.SRCINFO .
+# 2. Copy the PKGBUILD
+cp ~/woys/pkg/PKGBUILD .
 
-# 3. Verify on the AUR side
-makepkg --printsrcinfo > .SRCINFO   # regenerate just in case
+# 3. Generate .SRCINFO from it
+makepkg --printsrcinfo > .SRCINFO
 
 # 4. Stage + commit + push
 git add PKGBUILD .SRCINFO
-git commit -m "woys 0.13.3: initial AUR upload"
+git commit -m "woys <version>: initial AUR upload"
 git push origin master
 ```
 
@@ -46,35 +81,36 @@ After push, the package is live at `https://aur.archlinux.org/packages/woys`.
 When you cut a new version:
 
 ```
-# In the main repo
-sed -i 's/^pkgver=.*/pkgver=0.13.3/' pkg/PKGBUILD
-cd pkg && makepkg --printsrcinfo > .SRCINFO
+# In the main repo: bump src/woys/__init__.py, then
+python scripts/release.py          # patches README, PKGBUILD, .SRCINFO
+bash scripts/check_version_drift.sh
 
 # In the AUR clone
-cp ~/ai/woys/pkg/PKGBUILD .
-cp ~/ai/woys/pkg/.SRCINFO .
-git commit -am "woys 0.13.3"
+cp ~/woys/pkg/PKGBUILD .
+makepkg --printsrcinfo > .SRCINFO
+git commit -am "woys <version>"
 git push origin master
 ```
 
 ## Local install test (without publishing)
 
-`makepkg -s` from `pkg/` will fail today because:
-- the `source=` line points at a `git+https://github.com/alirexha/woys.git#tag=v0.13.3`
-- the repo is private, so the unauthenticated git clone bombs
+`makepkg -s` from `pkg/` fails while the repo is private, because the
+`source=` line is an unauthenticated
+`git+https://github.com/alirexha/woys.git#tag=v<version>` clone.
 
-To smoke-test the PKGBUILD logic locally without the network roundtrip:
+To smoke-test the PKGBUILD logic locally, lay out the source directory
+by hand and point `source=` at nothing:
 
 ```
-mkdir -p /tmp/woys-test/woys-0.13.3
-cp -a ~/ai/woys/{src,pkg,pyproject.toml,README.md,LICENSE,upstream,docs} \
-      /tmp/woys-test/woys-0.13.3/
-cp ~/ai/woys/pkg/PKGBUILD /tmp/woys-test/
+V=<version>
+mkdir -p /tmp/woys-test/src/woys-$V
+cp -a ~/woys/{src,bin,pkg,docs,pyproject.toml,README.md,LICENSE,NOTICE} \
+      /tmp/woys-test/src/woys-$V/
+sed -e 's/^source=.*/source=()/' -e 's/^sha256sums=.*/sha256sums=()/' \
+    ~/woys/pkg/PKGBUILD > /tmp/woys-test/PKGBUILD
 cd /tmp/woys-test
-# Override the source array via env so makepkg uses our local copy:
-PKGBUILD_SOURCE_OVERRIDE=local makepkg -s --noconfirm --nodeps
+makepkg -e -s --noconfirm    # -e: build from the existing src/ tree
 ```
 
-(That env-var trick is not standard makepkg behavior; the easiest "test
-build" is to wait until the repo is public, or temporarily flip the
-`source=` URL to a published mirror.)
+Do not add `--nodeps`: the missing dependencies are exactly what this
+test needs to show.

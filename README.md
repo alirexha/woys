@@ -149,7 +149,7 @@ that tradeoff.
 
 ## What it is
 
-A fork-and-trim of [w-okada/voice-changer](https://github.com/w-okada/voice-changer) (MIT) that strips the engine to RVC-only, replaces the web GUI with a Textual TUI, integrates a persistent virtual mic via PipeWire, and ships as a proper Arch package. The fork keeps RVC inference on ONNX Runtime CUDA EP and removes the Beatrice / MMVC / so-vits-svc / DDSP-SVC / Diffusion-SVC / EasyVC / LLVC engine paths along with all Windows/WSL/macOS code.
+A fork-and-trim of [w-okada/voice-changer](https://github.com/w-okada/voice-changer) (MIT) that strips the engine to RVC-only, replaces the web GUI with a Textual TUI, integrates a persistent virtual mic via PipeWire, and installs with `./install.sh` (an Arch package is drafted in `pkg/` but does not work yet). The fork keeps RVC inference on ONNX Runtime CUDA EP and removes the Beatrice / MMVC / so-vits-svc / DDSP-SVC / Diffusion-SVC / EasyVC / LLVC engine paths along with all Windows/WSL/macOS code.
 
 ## Goals (measured, not claimed)
 
@@ -225,9 +225,12 @@ v0.13.0 → v0.13.3 history.
 
 ### AUR
 
-`pkg/PKGBUILD` and `pkg/.SRCINFO` are submission-ready. To push to
-`aur.archlinux.org/packages/woys`, follow `pkg/README-AUR.md`.
-Until then, `./install.sh` is the supported install path.
+`pkg/PKGBUILD` is a draft and does **not** produce a working package
+yet: it declares none of the Python dependencies, does not build or
+ship the `woys-pw-out` helper that woys plays audio through, and the
+pinned torch / onnxruntime-gpu need Python < 3.13 while Arch ships a
+newer one. `pkg/README-AUR.md` lists what is missing. `./install.sh` is
+the supported install path.
 
 ## Credits
 
