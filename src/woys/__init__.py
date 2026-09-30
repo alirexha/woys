@@ -7,4 +7,4 @@ imports it from here. Bump the literal below, then run
 `python scripts/release.py` to propagate it to the README status header.
 """
 
-__version__ = "0.16.1"
+__version__ = "0.16.2"

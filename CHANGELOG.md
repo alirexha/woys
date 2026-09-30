@@ -11,6 +11,23 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.16.2] — 2026-09-30 — dead code: evdev hotkey and the Arch package
+
+Two leftovers that the 0.16.0 audit reported but did not remove.
+
+- The evdev global hotkey is gone: `src/tui/hotkey.py`, its tests, the
+  `[evdev]` extra and the `enable_evdev_hotkey` / `evdev_hotkey` config
+  fields. Nothing ever started it. Bind `woys toggle` to a desktop
+  shortcut instead (see `docs/TROUBLESHOOTING.md`). A `config.toml` that
+  still has the two keys loads and saves as before; woys ignores them.
+- The Arch package is gone: `pkg/PKGBUILD`, `pkg/.SRCINFO` and
+  `pkg/README-AUR.md`. It never built a working package. `./install.sh`
+  is the only install path. `pkg/woys-mic.service` stays, because
+  `install.sh` installs it.
+- The version-drift gate and `scripts/release.py` now cover only the
+  README status header, and `tests/test_release_version_drift.py` tests
+  that header instead of `.SRCINFO`.
+
 ## [0.16.1] — 2026-09-30 — engine split
 
 `src/audio/engine.py` (5,100 lines) is split along its real seams. No

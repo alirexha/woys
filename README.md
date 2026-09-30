@@ -112,7 +112,7 @@ on a decent connection.
 convert` exports it to `.onnx` for use with this engine. See
 `docs/MODELS.md`.
 
-## Status (v0.16.1)
+## Status (v0.16.2)
 
 v0.15.0 is a hardening release: a multi-area code review across
 **correctness, observability, UX, security, and legal hygiene**,
