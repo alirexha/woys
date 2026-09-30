@@ -15,6 +15,7 @@ installs reproduced the v0.6.7 micro-cut bug we'd just fixed).
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 import sys
 import tomllib
@@ -234,6 +235,11 @@ def validate_field(name: str, value: Any) -> str | None:
             else:
                 want = "/".join(t.__name__ for t in types_tuple)
                 return f"{name}: expected {want}, got {type(value).__name__} ({value!r})"
+
+    # TOML accepts `nan`, and every comparison with NaN is False, so it
+    # would pass both range checks below and crash the engine later.
+    if isinstance(value, float) and not math.isfinite(value):
+        return f"{name}: must be a finite number, got {value!r}"
 
     if spec.choices is not None and value not in spec.choices:
         choices_display = list(spec.choices)
