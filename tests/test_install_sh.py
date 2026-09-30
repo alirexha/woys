@@ -313,6 +313,30 @@ def test_install_fails_when_the_helper_build_fails(tmp_path: Path) -> None:
     assert "woys-pw-out" in run.out and "[install] done." not in run.out
 
 
+def _legacy_install(home: Path) -> None:
+    share = home / ".local" / "share" / "vcclient-cachy"
+    (share / "models").mkdir(parents=True)
+    (share / "venv" / "bin").mkdir(parents=True)
+    (share / "models" / "myvoice.onnx").write_bytes(b"voice")
+    cfg = home / ".config" / "vcclient-cachy"
+    cfg.mkdir(parents=True)
+    (cfg / "config.toml").write_text(f'rvc_model = "{share}/models/myvoice.onnx"\n')
+
+
+def test_install_migrates_legacy_models_into_the_new_share_dir(tmp_path: Path) -> None:
+    """install.sh builds the woys venv before migrating, so the migrator
+    finds ~/.local/share/woys already there. The legacy voice must still
+    end up where the rewritten config points, and the legacy dir must be
+    gone so the next install does not migrate again."""
+    run = _run_install(tmp_path, "--skip-models", "--no-systemd", setup_home=_legacy_install)
+    assert run.rc == 0, run.out
+    new_model = run.home / ".local" / "share" / "woys" / "models" / "myvoice.onnx"
+    assert new_model.read_bytes() == b"voice"
+    cfg = (run.home / ".config" / "woys" / "config.toml").read_text()
+    assert str(new_model) in cfg
+    assert not (run.home / ".local" / "share" / "vcclient-cachy").exists()
+
+
 def test_install_help_prints_the_whole_header() -> None:
     out = subprocess.run(
         ["bash", str(REPO / "install.sh"), "--help"], capture_output=True, text=True, check=True
