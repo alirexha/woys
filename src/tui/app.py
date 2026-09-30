@@ -78,6 +78,10 @@ _PITCH_WARN_ST = 24
 _MIC_SILENCE_RMS = 0.001
 _MIC_SILENCE_TICKS = 24
 
+# How long a MODEL / PROFILE / `p` job waits for the engine worker to pick
+# up a queued model swap before the job reports it as not applied.
+_SWAP_WAIT_S = 10.0
+
 
 def _fmt_age(seconds: float) -> str:
     """Format a duration as a short, human-readable age suffix.
@@ -530,21 +534,14 @@ class WoysApp(App[int]):
                         self._active_profile = matched
                     self._save_cfg()
 
-                self.call_from_thread(apply_main)
-                if req_holder:
-                    req = req_holder[0]
-                    req.completion.wait(timeout=10.0)
-                    # F-23-17: surface a swap *failure* through the
-                    # designed engine-error-escalation surface. The
-                    # TUI's `_refresh_stats` already toasts a new
-                    # `last_error`; the StatusPanel banner names the
-                    # failed target.
-                    if req.error is not None:
-                        self.engine.record_error(
-                            f"model swap to {new_path.name} failed: "
-                            f"{type(req.error).__name__}: {req.error}"
-                        )
-                self._swap_in_flight = None
+                try:
+                    self.call_from_thread(apply_main)
+                    self._await_swap(
+                        req_holder[0] if req_holder else None,
+                        f"model swap to {new_path.name}",
+                    )
+                finally:
+                    self._swap_in_flight = None
 
             jid = self._jobs.submit(do_swap)
             return f"OK job={jid} model={new_path.name}"
@@ -558,22 +555,17 @@ class WoysApp(App[int]):
                 def apply_main() -> None:
                     req_holder.append(self._apply_profile_named(target))
 
-                self.call_from_thread(apply_main)
-                # wait on the PER-CALL
-                # request the profile-apply returned (None if the model
-                # didn't change -- in that case there's nothing to wait
-                # for). On failure, route to record_error so the
-                # StatusPanel banner names the failed profile.
-                if req_holder:
-                    req = req_holder[0]
-                    if req is not None:
-                        req.completion.wait(timeout=10.0)
-                        if req.error is not None:
-                            self.engine.record_error(
-                                f"profile {target!r} swap failed: "
-                                f"{type(req.error).__name__}: {req.error}"
-                            )
-                self._swap_in_flight = None
+                # wait on the PER-CALL request the profile-apply returned
+                # (None if the model didn't change -- nothing to wait for).
+                # An unknown profile raises out of call_from_thread.
+                try:
+                    self.call_from_thread(apply_main)
+                    self._await_swap(
+                        req_holder[0] if req_holder else None,
+                        f"profile {target!r} swap",
+                    )
+                finally:
+                    self._swap_in_flight = None
 
             jid = self._jobs.submit(do_profile)
             return f"OK job={jid} profile={target}"
@@ -744,24 +736,38 @@ class WoysApp(App[int]):
             def apply_main() -> None:
                 req_holder.append(self._apply_profile_named(next_name))
 
-            self.call_from_thread(apply_main)
-            # wait on the per-call
-            # request and check its `.error` after completion so a
-            # swap failure on the cycle key surfaces through the
-            # designed engine-error escalation surface, not into
-            # the JobRegistry status_line nobody reads.
-            if req_holder:
-                req = req_holder[0]
-                if req is not None:
-                    req.completion.wait(timeout=10.0)
-                    if req.error is not None:
-                        self.engine.record_error(
-                            f"profile cycle to {next_name!r} swap failed: "
-                            f"{type(req.error).__name__}: {req.error}"
-                        )
-            self._swap_in_flight = None
+            # a swap failure on the cycle key surfaces through
+            # record_error inside _await_swap, not only through the
+            # JobRegistry status_line nobody reads for this job.
+            try:
+                self.call_from_thread(apply_main)
+                self._await_swap(
+                    req_holder[0] if req_holder else None,
+                    f"profile cycle to {next_name!r} swap",
+                )
+            finally:
+                self._swap_in_flight = None
 
         self._jobs.submit(_runner)
+
+    def _await_swap(self, req: _SwapRequest | None, what: str) -> None:
+        """Wait for a queued model swap; raise if it was not applied.
+
+        Runs on a JobRegistry thread. Raising is what turns the job into
+        `state=error`, so `models use` / `profile use` report the failure
+        instead of success. The failure also goes to record_error so the
+        StatusPanel banner and toast name it (F-23-17).
+        """
+        if req is None:
+            return
+        if not req.completion.wait(timeout=_SWAP_WAIT_S):
+            msg = f"{what} not applied within {_SWAP_WAIT_S:g} s"
+            self.engine.record_error(msg)
+            raise TimeoutError(msg)
+        if req.error is not None:
+            msg = f"{what} failed: {type(req.error).__name__}: {req.error}"
+            self.engine.record_error(msg)
+            raise RuntimeError(msg)
 
     def _profile_for_model_path(self, path: Path) -> str | None:
         """v0.5.0: reverse-lookup a saved profile whose rvc_model matches `path`.
@@ -789,13 +795,16 @@ class WoysApp(App[int]):
         `req.completion` so the JobRegistry reports done only when the
         swap actually completes, and reads `req.error` so a failed
         swap routes to `engine.record_error()`. /
-        F-23-17."""
+        F-23-17. Raises LookupError for a profile that exists neither in
+        memory nor on disk."""
         if name not in list_profiles(self.cfg):
             # Saved by the CLI after this TUI loaded its config.
             self._reload_profiles()
         if not apply_profile(self.cfg, name):
             self.notify(f"failed to apply profile {name!r}", severity="error", timeout=4)
-            return None
+            # Raise rather than return None (which means "model unchanged")
+            # so a PROFILE job ends in state=error.
+            raise LookupError(f"no such profile: {name!r}")
         self._active_profile = name
         # route the multi-field
         # cfg update through `request_cfg_update`. Pre-fix the four
