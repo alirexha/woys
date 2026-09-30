@@ -18,10 +18,10 @@ Cache: HuggingFace-derived inputs are downloaded into
 Security: `.pth` files are pickle archives. `torch.load(weights_only=False)`
 will execute arbitrary Python on load. We try `weights_only=True` first;
 if torch's safe-load mode rejects the checkpoint (older RVC formats with
-custom unpickle constructors do), we require explicit consent via the
-`--yes-i-trust-the-pickle` flag (or `WOYS_YES_I_TRUST_THE_PICKLE=1`)
-before falling back. Only consent for files you trust - RVC checkpoints
-shared on Discord / unknown forks are an RCE vector.
+custom unpickle constructors do), we require explicit per-run consent via
+the `--yes-i-trust-the-pickle` flag before falling back; there is no
+environment-variable equivalent. Only consent for files you trust - RVC
+checkpoints shared on Discord / unknown forks are an RCE vector.
 
 Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
@@ -348,7 +348,7 @@ def convert_pth_to_onnx(
     `trust_pickle=True` permits the unsafe `torch.load(weights_only=False)`
     fall-through for older RVC checkpoints (see module docstring). Default
     False makes safe-load attempt-then-fail unless the user opted in via
-    the CLI flag or env var.
+    the `--yes-i-trust-the-pickle` CLI flag.
     """
     pth_path = Path(pth_path).resolve()
     if not pth_path.exists():
