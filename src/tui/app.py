@@ -64,11 +64,11 @@ _REFRESH_STARTUP_TICKS = 8
 
 # RVC f0 shifts past ±24 st mangle the
 # voice (formants and pitch decouple to where the output stops sounding
-# like a voice). The review picked WARN over hard-clamp -- the pitch
-# action still applies, but a toast fires on the threshold crossing so a
-# user who tap-keyed past it can back off if they hit it by accident. Tap
-# counter: only the *first* tap past ±24 in each direction toasts; further
-# taps in the same direction stay silent so the toast doesn't spam.
+# like a voice), and config.toml only accepts f0_up_key in -24..24: a
+# saved +30 came back as 0 on the next launch, and a huge socket delta
+# overflowed the engine's 2 ** (f0_up_key / 12) on every chunk. So pitch
+# is clamped to ±24; the first tap past the limit in each direction
+# toasts, further taps stay silent so the toast doesn't spam.
 _PITCH_WARN_ST = 24
 
 # "no mic signal" hint. `_refresh_stats`
@@ -672,6 +672,8 @@ class WoysApp(App[int]):
         only feedback was the next refresh tick updating the StatusPanel
         -- so a tap-key user with their eyes on Discord had no idea
         whether `+` registered."""
+        requested = new_pitch
+        new_pitch = max(-_PITCH_WARN_ST, min(_PITCH_WARN_ST, new_pitch))
         self.pitch = new_pitch
         self.engine.cfg.f0_up_key = new_pitch
         self.cfg.f0_up_key = new_pitch
@@ -680,24 +682,24 @@ class WoysApp(App[int]):
         # not silent. Short timeout -- the rapid + / - users do not want
         # a stacking toast queue.
         self.notify(f"pitch {new_pitch:+d} st", severity="information", timeout=1.5)
-        # F-23-15: warn when crossing ±_PITCH_WARN_ST. The action still
-        # applies (soft, not hard, clamp); the toast is once per crossing.
-        if new_pitch > _PITCH_WARN_ST:
+        # F-23-15: say why the pitch stopped at ±_PITCH_WARN_ST, once per
+        # crossing.
+        if requested > _PITCH_WARN_ST:
             if not self._pitch_warned_high:
                 self.notify(
-                    f"pitch past +{_PITCH_WARN_ST} st -- formants and pitch decouple, "
-                    "voice may stop sounding like a voice",
+                    f"pitch capped at +{_PITCH_WARN_ST} st -- past that formants and "
+                    "pitch decouple and the voice stops sounding like a voice",
                     severity="warning",
                     timeout=5,
                 )
                 self._pitch_warned_high = True
         else:
             self._pitch_warned_high = False
-        if new_pitch < -_PITCH_WARN_ST:
+        if requested < -_PITCH_WARN_ST:
             if not self._pitch_warned_low:
                 self.notify(
-                    f"pitch past -{_PITCH_WARN_ST} st -- formants and pitch decouple, "
-                    "voice may stop sounding like a voice",
+                    f"pitch capped at -{_PITCH_WARN_ST} st -- past that formants and "
+                    "pitch decouple and the voice stops sounding like a voice",
                     severity="warning",
                     timeout=5,
                 )

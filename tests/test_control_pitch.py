@@ -49,3 +49,27 @@ def test_concurrent_pitch_steps_are_not_lost() -> None:
     assert app.engine.cfg.f0_up_key == 8
     assert app.cfg.f0_up_key == 8
     assert sorted(replies) == sorted(f"OK pitch={n}" for n in range(1, 9))
+
+
+def test_socket_pitch_is_clamped_to_the_config_range() -> None:
+    from tui.config import validate_field
+
+    app = _app()
+
+    assert app._handle_control("PITCH +30") == "OK pitch=24"
+    assert app._handle_control("PITCH +20000") == "OK pitch=24"
+    assert app.engine.cfg.f0_up_key == 24
+    assert app._handle_control("PITCH -60") == "OK pitch=-24"
+    assert validate_field("f0_up_key", app.cfg.f0_up_key) is None
+
+
+def test_pitch_keys_stop_at_the_config_range() -> None:
+    import tui.config as tc
+
+    app = _app()
+    for _ in range(30):
+        app.action_pitch_up()
+    assert int(app.pitch) == 24
+    assert app._save_cfg()
+    # Pre-fix a saved +30 came back as 0 on the next launch.
+    assert tc.load_config().f0_up_key == 24
