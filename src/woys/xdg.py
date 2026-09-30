@@ -21,6 +21,11 @@ This module provides ONE `safe_runtime_dir()` used by both, with:
   * `lstat`-based refuse on a pre-existing fallback unless it is a
     real dir owned by `os.getuid()` with no group/other perms.
 
+The same lstat check runs on a pre-existing `$XDG_RUNTIME_DIR/woys/`:
+an inherited or misconfigured XDG_RUNTIME_DIR (`sudo -E`, `su` without
+`-l`, a container env pointing into /tmp) can point at a directory
+another user controls.
+
 Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
 
@@ -32,7 +37,7 @@ from pathlib import Path
 
 
 class UnsafeRuntimeDir(RuntimeError):
-    """Raised when the `/tmp` runtime-dir fallback is pre-existing in
+    """Raised when the runtime dir (XDG or the `/tmp` fallback) is pre-existing in
     an attacker-controllable state (wrong owner, world-perms, symlink).
 
     The caller may choose to surface the error (preferred -- a hard-
@@ -46,25 +51,35 @@ def safe_runtime_dir() -> Path:
     socket, slow-chunk log, instance lock).
 
     Priority:
-      1. `$XDG_RUNTIME_DIR/woys/` (preferred; user-private tmpfs,
-         mode 0700 by the systemd-logind contract).
-      2. `/tmp/woys-{uid}/` (fallback; created with `mode=0700,
-         exist_ok=False`; if pre-existing, lstat-refused unless real-
-         dir + own-UID + no group/other perms).
+      1. `$XDG_RUNTIME_DIR/woys/` when XDG_RUNTIME_DIR is absolute
+         (preferred; user-private tmpfs, mode 0700 by the
+         systemd-logind contract).
+      2. `/tmp/woys-{uid}/` (fallback).
 
-    Raises `UnsafeRuntimeDir` if the `/tmp` fallback exists in an
+    Either dir is created with mode 0700; if it already exists it is
+    lstat-refused unless it is a real dir owned by our uid with no
+    group/other perms.
+
+    Raises `UnsafeRuntimeDir` if the chosen dir exists in an
     attacker-controllable state.
 
     Returns the resolved Path; the directory is guaranteed to exist
     on return (creating it if needed under the mode constraint).
     """
-    xdg = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg:
+    xdg = os.environ.get("XDG_RUNTIME_DIR", "")
+    # A relative value would resolve against the CWD; the XDG spec says
+    # to ignore it.
+    if os.path.isabs(xdg):
         path = Path(xdg) / "woys"
-        # The XDG_RUNTIME_DIR is per the systemd-logind contract mode
-        # 0700 -- so `woys/` underneath inherits the parent's safety.
-        # We still create it with mode 0700 explicitly for parity.
-        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # logind makes XDG_RUNTIME_DIR 0700, but the variable can be
+        # inherited from another user, so an existing `woys/` is checked
+        # rather than trusted.
+        try:
+            path.mkdir(mode=0o700, parents=True)
+            return path
+        except FileExistsError:
+            pass
+        _check_private_dir(path, "runtime dir")
         return path
     return _safe_tmp_fallback()
 
@@ -79,13 +94,17 @@ def _safe_tmp_fallback() -> Path:
         return path
     except FileExistsError:
         pass  # validate below
+    _check_private_dir(path, "runtime-dir fallback")
+    return path
 
+
+def _check_private_dir(path: Path, label: str) -> None:
+    """Raise UnsafeRuntimeDir unless `path` is a real directory (not a
+    symlink) owned by our uid with no group/other permissions."""
     try:
         st = os.lstat(path)
     except OSError as e:
-        raise UnsafeRuntimeDir(
-            f"runtime-dir fallback {path}: cannot stat ({type(e).__name__}: {e})"
-        ) from e
+        raise UnsafeRuntimeDir(f"{label} {path}: cannot stat ({type(e).__name__}: {e})") from e
 
     # Order: not-a-dir first (catches symlinks), then mode (the most
     # likely real-world hit: an old umask-0022 dir from a pre-fix
@@ -93,26 +112,25 @@ def _safe_tmp_fallback() -> Path:
     # is more likely an attacker than a user mistake).
     if not stat.S_ISDIR(st.st_mode):
         raise UnsafeRuntimeDir(
-            f"runtime-dir fallback {path}: not a directory "
+            f"{label} {path}: not a directory "
             f"(mode={oct(st.st_mode)}). Refusing -- a co-resident "
             f"attacker may have pre-created a symlink or non-dir at "
             f"this path. Remove it and re-run."
         )
     if st.st_mode & 0o077:
         raise UnsafeRuntimeDir(
-            f"runtime-dir fallback {path}: world/group-accessible "
+            f"{label} {path}: world/group-accessible "
             f"(mode={oct(st.st_mode & 0o777)}, expected 0700 or "
             f"stricter). Refusing -- chmod 0700 it or remove it and "
             f"re-run."
         )
     if st.st_uid != os.getuid():
         raise UnsafeRuntimeDir(
-            f"runtime-dir fallback {path}: owned by uid={st.st_uid}, "
+            f"{label} {path}: owned by uid={st.st_uid}, "
             f"expected {os.getuid()}. Refusing -- a co-resident "
             f"attacker may have pre-created this path. Remove it and "
             f"re-run."
         )
-    return path
 
 
 def config_home() -> Path:

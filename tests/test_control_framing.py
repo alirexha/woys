@@ -189,7 +189,7 @@ def test_client_receives_full_reply_longer_than_512_bytes(tmp_path: Path) -> Non
         # server is at tmp_path/c.sock, so move the server-side path.
         srv.stop()
         sock = tmp_path / "woys" / "control.sock"
-        sock.parent.mkdir(parents=True, exist_ok=True)
+        sock.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         srv = _start_server(sock, handler)
 
         reply = send_command("STATUS", timeout=3.0)
