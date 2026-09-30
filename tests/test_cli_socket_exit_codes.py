@@ -13,6 +13,7 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -119,5 +120,10 @@ def test_help_epilog_documents_exit_codes() -> None:
     epilog = build_parser().format_help()
 
     assert "Exit codes:" in epilog
-    assert "0" in epilog and "1" in epilog and "2" in epilog
-    assert "ERR" in epilog, "must mention that ERR replies map to exit 1"
+    section = epilog.split("Exit codes:", 1)[1]
+    # One row per code under the heading; a bare digit anywhere in the
+    # help text would not prove the contract is documented.
+    rows = {m.group(1): m.group(2) for m in re.finditer(r"^\s+([0-9])\s+(\S.*)$", section, re.M)}
+    assert {"0", "1", "2"} <= rows.keys(), f"exit-code rows missing: {rows!r}"
+    assert "ERR" in rows["1"], "must mention that ERR replies map to exit 1"
+    assert "usage" in rows["2"]
