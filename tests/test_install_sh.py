@@ -1,9 +1,10 @@
 """review: structural guard rails for install.sh.
 
-install.sh can't be exercised in CI (it builds a venv, downloads ~1 GiB of
-weights, touches systemd) — but its *ordering* is load-bearing and easy to
-regress. These tests read the script as text and pin the orderings the
-audit fixed, the same way `test_engine_config_drift.py` AST-pins cli.py.
+The real install builds a venv, downloads ~1 GiB of weights and touches
+systemd, so it can't run in CI. Two kinds of tests cover it instead: text
+checks that pin the orderings the audit fixed, and `_run_install` runs the
+real script in a sandbox HOME with stub uv / pactl / nvidia-smi /
+systemctl / gcc / make on a PATH that holds nothing else.
 
 Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
@@ -11,11 +12,151 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 INSTALL_SH = (REPO / "install.sh").read_text()
+
+# Real tools install.sh needs besides the stubbed ones.
+_SYSTEM_TOOLS = [
+    "awk",
+    "basename",
+    "cat",
+    "chmod",
+    "cp",
+    "dirname",
+    "env",
+    "find",
+    "grep",
+    "head",
+    "id",
+    "install",
+    "ln",
+    "ls",
+    "mkdir",
+    "mv",
+    "readlink",
+    "rm",
+    "sed",
+    "sh",
+    "sort",
+    "stat",
+    "tail",
+    "touch",
+    "tr",
+    "wc",
+    "xargs",
+]
+
+
+def _write_stub(path: Path, body: str) -> None:
+    path.write_text("#!/bin/sh\n" + body + "\n")
+    path.chmod(0o755)
+
+
+@dataclass
+class InstallRun:
+    rc: int
+    out: str
+    home: Path
+    calls: str  # one line per stub call, "<tool> <args>"
+
+
+def _run_install(
+    tmp_path: Path,
+    *args: str,
+    stubs: dict[str, str | None] | None = None,
+    setup_home: object = None,
+) -> InstallRun:
+    """Run install.sh from a throwaway copy of the repo layout.
+
+    `stubs` overrides (body) or removes (None) a default stub. The venv
+    python that the stub `uv venv` lays down forwards to this interpreter,
+    except `-m pip`, which fails like it does in a real uv venv."""
+    home = tmp_path / "home dir"  # a space, to catch unquoted paths
+    home.mkdir()
+    if callable(setup_home):
+        setup_home(home)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    shutil.copy(REPO / "install.sh", repo / "install.sh")
+    (repo / "scripts").symlink_to(REPO / "scripts")
+    (repo / "pkg").symlink_to(REPO / "pkg")
+    (repo / "bin").mkdir()
+    log = tmp_path / "calls.log"
+    log.touch()
+
+    sysbin = tmp_path / "sysbin"
+    sysbin.mkdir()
+    for tool in _SYSTEM_TOOLS:
+        found = shutil.which(tool)
+        assert found, f"test host lacks {tool}"
+        (sysbin / tool).symlink_to(found)
+
+    tmpl = tmp_path / "venv-template"
+    tmpl.mkdir()
+    _write_stub(
+        tmpl / "python",
+        'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then\n'
+        '    echo "No module named pip" >&2; exit 1\nfi\n'
+        f'exec "{sys.executable}" "$@"',
+    )
+    _write_stub(
+        tmpl / "woys",
+        f'echo "woys $*" >> "{log}"\n[ "$1" = "--version" ] && echo "woys 0.0.0-test"\nexit 0',
+    )
+
+    stub_dir = tmp_path / "stubs"
+    stub_dir.mkdir()
+    default_stubs: dict[str, str | None] = {
+        "pactl": (
+            'case "$1" in info) echo "Server Name: PulseAudio (on PipeWire 1.0.0)";; esac\nexit 0'
+        ),
+        "nvidia-smi": "exit 0",
+        "uv": (
+            f'echo "uv $*" >> "{log}"\n'
+            'if [ "$1" = "venv" ]; then\n'
+            '    for a; do v="$a"; done\n'
+            '    mkdir -p "$v/bin"\n'
+            f'    cp "{tmpl}/python" "{tmpl}/woys" "$v/bin/"\n'
+            "fi\nexit 0"
+        ),
+        "gcc": "exit 0",
+        "pkg-config": "exit 0",
+        "make": (f'echo "make $*" >> "{log}"\n[ "$1" = "-C" ] && touch "$2/woys-pw-out"\nexit 0'),
+        "systemctl": f'echo "systemctl $*" >> "{log}"\nexit 0',
+    }
+    default_stubs.update(stubs or {})
+    for name, body in default_stubs.items():
+        if body is not None:
+            _write_stub(stub_dir / name, body)
+
+    env = {"HOME": str(home), "PATH": f"{stub_dir}:{sysbin}"}
+    proc = subprocess.run(
+        [shutil.which("bash") or "/bin/bash", str(repo / "install.sh"), *args],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    return InstallRun(
+        rc=proc.returncode,
+        out=proc.stdout + proc.stderr,
+        home=home,
+        calls=log.read_text(),
+    )
+
+
+def test_sandbox_install_succeeds(tmp_path: Path) -> None:
+    """The harness itself: a host with every prerequisite installs cleanly."""
+    run = _run_install(tmp_path, "--skip-models")
+    assert run.rc == 0, run.out
+    assert "[install] done." in run.out
+    assert (run.home / ".local" / "bin" / "woys-pw-out").is_file()
 
 
 def test_prereqs_and_venv_build_run_before_destructive_migration() -> None:
@@ -102,6 +243,9 @@ def _run_install_until_uv(tmp_path: Path, uv_dir: Path | None, env_uv_bin: str |
     for name, body in (
         ("pactl", 'echo "Server Name: PulseAudio (on PipeWire 1.0.0)"'),
         ("nvidia-smi", "exit 0"),
+        ("gcc", "exit 0"),
+        ("make", "exit 0"),
+        ("pkg-config", "exit 0"),
     ):
         (stubs / name).write_text(f"#!/bin/sh\n{body}\n")
         (stubs / name).chmod(0o755)
@@ -144,3 +288,34 @@ def test_install_honors_uv_bin_override(tmp_path: Path) -> None:
 def test_install_without_uv_fails_with_hint(tmp_path: Path) -> None:
     out = _run_install_until_uv(tmp_path, None, None)
     assert "rc=1" in out and "uv (Astral) is required" in out, out
+
+
+def test_install_fails_without_gcc(tmp_path: Path) -> None:
+    """woys-pw-out is the default playback backend (prefer_native_pw=True)
+    and the engine refuses to start without it. Pre-fix a missing gcc was a
+    warning and install.sh still printed "done" and exited 0."""
+    run = _run_install(tmp_path, "--skip-models", "--no-systemd", stubs={"gcc": None})
+    assert run.rc == 1, run.out
+    assert "gcc" in run.out and "[install] done." not in run.out
+    # Fails before the multi-GB venv build, not after it.
+    assert "uv pip install" not in run.calls
+
+
+def test_install_fails_without_pipewire_headers(tmp_path: Path) -> None:
+    run = _run_install(tmp_path, "--skip-models", "--no-systemd", stubs={"pkg-config": "exit 1"})
+    assert run.rc == 1, run.out
+    assert "libpipewire-0.3" in run.out and "[install] done." not in run.out
+
+
+def test_install_fails_when_the_helper_build_fails(tmp_path: Path) -> None:
+    run = _run_install(tmp_path, "--skip-models", "--no-systemd", stubs={"make": "exit 2"})
+    assert run.rc == 1, run.out
+    assert "woys-pw-out" in run.out and "[install] done." not in run.out
+
+
+def test_install_help_prints_the_whole_header() -> None:
+    out = subprocess.run(
+        ["bash", str(REPO / "install.sh"), "--help"], capture_output=True, text=True, check=True
+    ).stdout
+    assert "libpipewire-0.3" in out and "--no-systemd" in out
+    assert "set -euo" not in out

@@ -20,6 +20,7 @@
 #   - NVIDIA driver + CUDA-capable GPU
 #   - Python 3.11 (uv installs one if missing)
 #   - uv (on PATH, at ~/.local/bin/uv, or wherever UV_BIN points)
+#   - gcc, make, pkg-config + libpipewire-0.3 headers (builds woys-pw-out)
 #
 # Usage:
 #   ./install.sh              # full install
@@ -75,7 +76,7 @@ for arg in "$@"; do
     --skip-models) SKIP_MODELS=1 ;;
     --no-systemd)  NO_SYSTEMD=1 ;;
     -h|--help)
-        sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
+        sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
         exit 0
         ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -123,6 +124,23 @@ if [ ! -x "$UV_BIN" ]; then
        Then re-run ./install.sh."
 fi
 
+# The native PipeWire helper (bin/woys-pw-out) is the default playback
+# backend (prefer_native_pw = true) and the engine refuses to start
+# without it, so its build tools are hard prerequisites. Checked here so a
+# missing compiler fails before the multi-GB venv build, not after it.
+for tool in gcc make; do
+    command -v "$tool" >/dev/null 2>&1 || fail "$tool not found — needed to build bin/woys-pw-out, the default playback backend.
+       Install the build tools, then re-run ./install.sh:
+         pacman -S base-devel pkgconf          # CachyOS / Arch
+         apt install build-essential pkg-config libpipewire-0.3-dev   # Debian / Ubuntu"
+done
+if ! pkg-config --exists libpipewire-0.3 2>/dev/null; then
+    fail "libpipewire-0.3 development files not found (pkg-config libpipewire-0.3) — needed to build bin/woys-pw-out.
+       Install them, then re-run ./install.sh:
+         pacman -S pipewire pkgconf            # CachyOS / Arch (pipewire ships the headers)
+         apt install libpipewire-0.3-dev pkg-config   # Debian / Ubuntu"
+fi
+
 # ---- venv ---------------------------------------------------------------------
 
 mkdir -p "$APP_HOME" "$BIN_DIR" "$SYSTEMD_USER_DIR"
@@ -165,24 +183,15 @@ fi
 # ---- v0.9.0 native PipeWire helper --------------------------------------------
 
 # v0.9.0 ships a small native PipeWire client (~250 LOC C) that replaces
-# the pw-cat / pacat subprocess on the playback path. Build it now so
-# users can opt in via prefer_native_pw=true. Hard-fail if the build
-# tools are missing — the helper is the headline v0.9.0 fix.
+# the pw-cat / pacat subprocess on the playback path. It is the default
+# backend (prefer_native_pw = true), so a failed build fails the install;
+# the build tools were already checked with the other prerequisites.
 say "building native PipeWire helper (bin/woys-pw-out)…"
-if ! command -v gcc >/dev/null 2>&1; then
-    say "warning: gcc not found; skipping native helper build"
-    say "         (install gcc + pipewire-dev to enable prefer_native_pw)"
-elif ! pkg-config --exists libpipewire-0.3 2>/dev/null; then
-    say "warning: libpipewire-0.3 dev headers missing; skipping native helper"
-    say "         (pacman -S pipewire to install)"
-else
-    if ! make -C "$REPO_DIR/bin" >/dev/null; then
-        say "warning: native helper build failed; prefer_native_pw will hard-fail"
-    else
-        install -Dm755 "$REPO_DIR/bin/woys-pw-out" "$BIN_DIR/woys-pw-out"
-        say "installed native helper: $BIN_DIR/woys-pw-out"
-    fi
+if ! make -C "$REPO_DIR/bin" >/dev/null; then
+    fail "building bin/woys-pw-out failed (make -C bin/ output above). woys needs this helper to play audio."
 fi
+install -Dm755 "$REPO_DIR/bin/woys-pw-out" "$BIN_DIR/woys-pw-out"
+say "installed native helper: $BIN_DIR/woys-pw-out"
 
 # ---- launcher symlink ---------------------------------------------------------
 

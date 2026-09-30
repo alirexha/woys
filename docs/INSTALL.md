@@ -10,6 +10,7 @@ Every command is copy-paste-able; every step says **what** it does and **why**.
 | CachyOS / Arch      | The fork is Linux-native; non-systemd distros work too if you know what you're doing |
 | PipeWire            | The audio routing layer (already on CachyOS) |
 | NVIDIA GPU + driver | RVC inference runs on CUDA; tested on RTX 2070 |
+| gcc, make, pkg-config + PipeWire headers | Builds `woys-pw-out`, the native PipeWire playback helper woys uses by default (`sudo pacman -S base-devel pkgconf`; the Arch `pipewire` package ships the headers; Debian/Ubuntu: `build-essential pkg-config libpipewire-0.3-dev`) |
 | ~5 GB free disk     | Models (~1 GB) + venv with torch+ORT (~3.5 GB) |
 | ~5 minutes          | Most of it is downloading torch and ORT      |
 
@@ -54,8 +55,12 @@ What this does, in order:
 3. Creates an isolated Python 3.11 environment under `~/.local/share/woys/venv/`.
 4. Installs `woys` and all its dependencies into that environment.
    This is the slow step — it pulls ~3.5 GB of Python wheels (torch, onnxruntime-gpu, etc.).
-5. Symlinks `~/.local/bin/woys` to the venv's binary so you can run it from anywhere.
-6. Downloads the foundation ONNX weights into `~/.local/share/woys/models/`:
+5. Builds the native PipeWire helper (`make -C bin/`) and installs it as
+   `~/.local/bin/woys-pw-out`. woys plays audio through it by default, so
+   the install fails if gcc, make or the PipeWire headers are missing
+   (checked up front, before the slow step) or the build fails.
+6. Symlinks `~/.local/bin/woys` to the venv's binary so you can run it from anywhere.
+7. Downloads the foundation ONNX weights into `~/.local/share/woys/models/`:
    - `contentvec-f.onnx` (~360 MB — content encoder)
    - `rmvpe_wrapped.onnx` (~345 MB — pitch detector)
    - `amitaro_v2_16k.onnx` (~64 MB — sample voice for testing)
@@ -64,7 +69,7 @@ What this does, in order:
    fairseq embedder fallback. Since v0.8.0 the embedder is always ONNX
    contentvec; `hubert_base.pt` is no longer needed and is no longer
    downloaded.
-7. Registers `woys-mic.service` as a systemd user unit, then enables and starts it.
+8. Registers `woys-mic.service` as a systemd user unit, then enables and starts it.
 
 If `~/.local/bin` isn't on your `$PATH`, the installer prints how to add it.
 On fish (CachyOS default):
