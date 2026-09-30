@@ -242,9 +242,10 @@ the supported install path.
 
 This fork is built on the work of **[w-okada](https://github.com/w-okada)**
 and the original [voice-changer](https://github.com/w-okada/voice-changer)
-project. The portions of this repository under `upstream/` and any code
-within `src/server/` that descends from upstream remain under the original
-MIT license (full text in `src/server/LICENSE`). All original work in `src/woys/`,
+project. Any code within `src/server/` that descends from upstream remains
+under the original MIT license (full text in `src/server/LICENSE`), as
+does the local `upstream/` reference clone some development checkouts
+keep (it is not tracked in this repository). All original work in `src/woys/`,
 `src/audio/`, `src/tui/`, `tests/`, `scripts/`, `pkg/`, and `docs/` is the
 proprietary work of Alireza Hamayeli.
 
@@ -254,7 +255,7 @@ This repository contains code under **two distinct licenses**:
 
 | Path                                          | License                  | Source            |
 |-----------------------------------------------|--------------------------|-------------------|
-| `upstream/`                                   | MIT                      | w-okada/voice-changer |
+| `upstream/` (local reference clone, untracked; absent from a fresh clone) | MIT | w-okada/voice-changer |
 | `src/server/` (vendored, trimmed)             | MIT (derivative)         | w-okada/voice-changer |
 | `src/{woys,audio,tui}/`             | **All Rights Reserved**  | Alireza Hamayeli  |
 | `tests/`, `scripts/`, `pkg/`, `docs/`, `*.sh` | **All Rights Reserved**  | Alireza Hamayeli  |
