@@ -41,6 +41,25 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="woys-test-state-")
 atexit.register(shutil.rmtree, os.environ["XDG_STATE_HOME"], ignore_errors=True)
 
 
+def _import_vendored_const_outside_repo() -> None:
+    """The vendored `const` module runs `os.makedirs("tmp_dir")` against the
+    CWD at import, so any test that reaches the exporter left `./tmp_dir` in
+    the checkout. Import it once from a throwaway dir and make `TMP_DIR`
+    absolute before anything binds it with `from const import TMP_DIR`."""
+    scratch = tempfile.mkdtemp(prefix="woys-test-vendored-")
+    atexit.register(shutil.rmtree, scratch, ignore_errors=True)
+    prev = os.getcwd()
+    os.chdir(scratch)
+    try:
+        import const  # type: ignore[import-not-found]
+    finally:
+        os.chdir(prev)
+    const.TMP_DIR = os.path.join(scratch, const.TMP_DIR)
+
+
+_import_vendored_const_outside_repo()
+
+
 @pytest.fixture(scope="session")
 def project_root() -> Path:
     return PROJECT_ROOT
