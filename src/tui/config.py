@@ -411,7 +411,18 @@ def load_config(path: Path | None = None) -> AppConfig:
             file=sys.stderr,
         )
         schema = 0
-    user_overrides_raw = extras.pop("_user_overrides", []) or []
+    user_overrides_raw = extras.pop("_user_overrides", [])
+    if isinstance(user_overrides_raw, str):
+        # `_user_overrides = "output_latency_ms"` is a natural hand-edit;
+        # iterating the string would pin its characters instead.
+        user_overrides_raw = [user_overrides_raw]
+    elif not isinstance(user_overrides_raw, list):
+        print(
+            f"[woys] {path}: invalid _user_overrides {user_overrides_raw!r} "
+            f"(expected a list of field names); ignoring it.",
+            file=sys.stderr,
+        )
+        user_overrides_raw = []
     user_overrides: set[str] = {str(k) for k in user_overrides_raw if isinstance(k, str)}
     migrated = False
 
