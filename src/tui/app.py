@@ -290,17 +290,19 @@ class LatencyPanel(Static):
         queue_full: int = 0,
         restarts: int = 0,
         jitter_ms: float = 0.0,
+        underruns: int = 0,
     ) -> str:
         # v0.5.2: highlight any non-zero xrun count in red - the user
         # listens to the audio in another window, this is their visual
-        # check that the session is clean.
-        xrun_color = "red" if xruns or queue_full else "green"
+        # check that the session is clean. `xruns` only moves on the pacat
+        # backend; the default native-pw helper reports `underruns`.
+        xrun_color = "red" if xruns or underruns or queue_full else "green"
         return (
             f"avg total e2e : [bold]{total_ms:6.1f} ms[/]\n"
             f"avg inference : {inf_ms:6.1f} ms\n"
             f"chunks done   : {chunks}\n"
             f"audio health  : "
-            f"[{xrun_color}]xruns={xruns}[/] "
+            f"[{xrun_color}]xruns={xruns} underruns={underruns}[/] "
             f"qfull={queue_full} "
             f"restarts={restarts} "
             f"jitter={jitter_ms:.1f}ms"
@@ -1093,6 +1095,7 @@ class WoysApp(App[int]):
                     queue_full=s.queue_full_events,
                     restarts=s.pacat_restarts,
                     jitter_ms=s.writer_jitter_ms,
+                    underruns=s.player_underruns,
                 )
             )
             meter = self.query_one("#meter", ProgressBar)
