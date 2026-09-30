@@ -1,11 +1,14 @@
 # 23 — RNNoise chain after woys-mic (v0.13.x)
 
-> **v0.13.3 update.** Apps now see `woys-clean` (cleaned, daily
-> driver) and `woys-no-cleanup` (raw fallback) directly in their
-> input device dropdown. Internal plumbing nodes are tagged
-> `_internal-...` in their descriptions so users know not to pick
-> them. No audio path or measurement changes — this is naming polish
-> on top of the v0.13.2 architecture.
+> **v0.14.1 update.** With the chain active, apps see `woys-clean`
+> (cleaned, daily driver) as the only non-internal source in their
+> input device dropdown. The raw engine output (node `woys-mic`) is
+> relabelled `_internal-raw-bypass`; v0.13.3 still showed it as
+> `woys-no-cleanup`, which is its label again once the chain is torn
+> down. Internal plumbing nodes are tagged `_internal-...` in their
+> descriptions so users know not to pick them. No audio path or
+> measurement changes — this is naming polish on top of the v0.13.2
+> architecture.
 
 The v0.12.x sweep series eliminated the chunk-period periodic
 mechanism on this stack at the spectral level (LESSONS §42:
@@ -103,15 +106,16 @@ In Discord / Telegram / CS2's input-device picker, choose
 new source (rare; some apps cache device lists), restart the app
 after `setup`.
 
-There's also a fallback option called **`woys-no-cleanup`** (the
-raw v0.12.4 engine output, no RNNoise, ~40 ms lower latency). Pick
-that one if the cleaned voice sounds over-suppressed for your
-content.
+The raw v0.12.4 engine output (no RNNoise, ~40 ms lower latency) is
+still available while the chain is on: it is the `woys-mic` node,
+shown as **`_internal-raw-bypass`** (v0.13.3 showed it as
+`woys-no-cleanup`). Pick that one if the cleaned voice sounds
+over-suppressed for your content, or run `woys chain teardown` to get
+the plain `woys-no-cleanup` source back.
 
-The other monitor sources you'll see in the dropdown
-(`Monitor of _internal-...`) are internal plumbing — don't pick
-them. Their `_internal-` description prefix sorts them visually
-distinct from the two daily-use options.
+The other `_internal-...` sources you'll see in the dropdown
+(including `Monitor of _internal-...`) are internal plumbing — don't
+pick them. The prefix sorts them visually apart from `woys-clean`.
 
 ### v0.13.2 → v0.13.3 migration
 

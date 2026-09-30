@@ -119,14 +119,16 @@ source_present: True  (module 536870917)
 
 `pactl list short sources` should now include a line containing `woys-mic`.
 
-Since v0.13.3, when the optional RNNoise chain is enabled (`woys chain
-setup`), apps will additionally see two friendlier-named sources in their
-input device dropdown:
+When the optional RNNoise chain is enabled (`woys chain setup`), apps
+show one friendly-named source in their input device dropdown:
 
 - **`woys-clean`** — RNNoise-cleaned source (the recommended daily
   driver; ~13 % cuts/min reduction at the cost of ~+40 ms latency).
-- **`woys-no-cleanup`** — raw v0.12.4 engine output, no RNNoise (the
-  low-latency fallback). This is the same node `woys-mic` points at.
+
+Since v0.14.1 the raw engine output (node `woys-mic`) is relabelled
+`_internal-raw-bypass` while the chain is on, so it sorts with the other
+internal nodes. Pick it only if you want the raw path; its usual
+`woys-no-cleanup` label comes back after `woys chain teardown`.
 
 ## Step 4 — run the TUI
 
