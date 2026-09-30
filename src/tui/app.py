@@ -46,7 +46,13 @@ from tui.config import (
 )
 from tui.control import ControlServer, JobRegistry
 from woys.instance_lock import InstanceLockBusy, acquire_instance_lock
-from woys.profiles import apply_profile, cycle_profile, list_profiles
+from woys.profiles import (
+    apply_profile,
+    config_lock,
+    cycle_profile,
+    list_profiles,
+    read_disk_profiles,
+)
 
 # `_refresh_stats` ticks at 0.25 s; the
 # widget tree isn't realized for the first couple of seconds. Within this
@@ -718,6 +724,7 @@ class WoysApp(App[int]):
         the TUI never freezes; each swap completes in order, and the
         StatusPanel shows `loading X…` while one is in flight.
         """
+        self._reload_profiles()
         names = list_profiles(self.cfg)
         if not names:
             self.notify(
@@ -783,6 +790,9 @@ class WoysApp(App[int]):
         swap actually completes, and reads `req.error` so a failed
         swap routes to `engine.record_error()`. /
         F-23-17."""
+        if name not in list_profiles(self.cfg):
+            # Saved by the CLI after this TUI loaded its config.
+            self._reload_profiles()
         if not apply_profile(self.cfg, name):
             self.notify(f"failed to apply profile {name!r}", severity="error", timeout=4)
             return None
@@ -833,13 +843,32 @@ class WoysApp(App[int]):
         self._save_cfg()
         return swap_req
 
+    def _reload_profiles(self) -> None:
+        """Take the `[profiles]` table from disk. The CLI owns it
+        (`profile save/delete/import` run while the TUI is up), so the
+        copy loaded at startup goes stale."""
+        bag = read_disk_profiles(self.cfg._extras.get("config_schema_version"))
+        if bag is None:
+            return
+        if bag:
+            self.cfg._extras["profiles"] = bag
+        else:
+            self.cfg._extras.pop("profiles", None)
+
+    def _write_cfg(self) -> None:
+        """Save under the shared config lock, with the profiles table
+        refreshed first so the save never undoes a CLI profile edit."""
+        with config_lock():
+            self._reload_profiles()
+            save_config(self.cfg)
+
     def _save_cfg(self) -> bool:
-        """save_config on the event-loop thread; a failed write (read-only
+        """_write_cfg on the event-loop thread; a failed write (read-only
         home, or a config.toml that failed to load and must not be
         overwritten) becomes an error toast instead of an unhandled
         exception that kills the TUI."""
         try:
-            save_config(self.cfg)
+            self._write_cfg()
         except OSError as e:
             logging.getLogger("woys.tui").error("config not saved: %s", e)
             self.notify(f"config not saved: {e}", severity="error", timeout=8)
@@ -875,7 +904,7 @@ class WoysApp(App[int]):
         await asyncio.to_thread(self.engine.stop)
         await asyncio.to_thread(self._control.stop)
         try:
-            await asyncio.to_thread(save_config, self.cfg)
+            await asyncio.to_thread(self._write_cfg)
         except OSError as e:
             # The screen is going away; hand the reason to Textual so it
             # is printed on the restored terminal after exit.

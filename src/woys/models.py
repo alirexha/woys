@@ -394,26 +394,12 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
         B35 / corr-024: flock the config across the read+modify+write
         window. Two concurrent `woys models use X` calls (e.g. from a
         script) both read the same baseline config and one's save can
-        clobber the other. flock(LOCK_EX) serializes them.
+        clobber the other. flock(LOCK_EX) serializes them (the TUI's
+        saves take the same lock).
         """
-        import fcntl
-        from collections.abc import Iterator
-        from contextlib import contextmanager
+        from woys.profiles import config_lock
 
-        from tui.config import CONFIG_FILE
-
-        @contextmanager
-        def _config_lock() -> Iterator[None]:
-            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            lock_path = CONFIG_FILE.with_suffix(CONFIG_FILE.suffix + ".lock")
-            with open(lock_path, "w") as lf:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
-
-        with _config_lock():
+        with config_lock():
             cfg = load_config()
             cfg.rvc_model = str(path.resolve())
             save_config(cfg)
@@ -424,9 +410,7 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
         # Hot-swap succeeded. The TUI's MODEL handler (`tui/app.py`
         # lines 306-328) already persisted the new rvc_model under its
         # own save_config, so we do NOT re-write here -- double-writing
-        # creates a TOCTOU window with the TUI for unrelated fields
-        # (the flock only covers our write; the TUI's save is
-        # unsynchronized today).
+        # creates a TOCTOU window with the TUI for unrelated fields.
         ms = "?"
         for tok in reply.split():
             if tok.startswith("elapsed_ms="):

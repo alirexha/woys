@@ -18,7 +18,11 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 
 from __future__ import annotations
 
+import fcntl
 import sys
+import tomllib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -56,6 +60,55 @@ def _profiles_bag(cfg: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(bag, dict):
         return {}
     return bag
+
+
+def _config_file() -> Path:
+    # Resolved at call time so a redirected tui.config.CONFIG_FILE (tests,
+    # WOYS_CONFIG_DIR) is honoured.
+    _ensure_tui_path()
+    import tui.config
+
+    return tui.config.CONFIG_FILE
+
+
+@contextmanager
+def config_lock() -> Iterator[None]:
+    """Cross-process flock around a config.toml read-modify-write.
+
+    The CLI and a running TUI both rewrite the whole file. Holding this
+    lock across load/modify/save keeps one writer from saving over an
+    edit the other made in between.
+    """
+    config_file = _config_file()
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = config_file.with_suffix(config_file.suffix + ".lock")
+    with open(lock_path, "w") as lf:
+        fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+
+
+def read_disk_profiles(schema_version: object) -> dict[str, Any] | None:
+    """The `[profiles]` table as config.toml holds it right now.
+
+    The CLI owns this table (`profile save/delete/import`), so a running
+    TUI takes it from disk before every save instead of writing back the
+    copy it loaded at startup. Returns None when the file is missing,
+    unreadable, malformed or written under a different schema version
+    (its profiles may still need load_config's migration); the caller
+    then keeps what it has in memory.
+    """
+    try:
+        with open(_config_file(), "rb") as f:
+            raw = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    if raw.get("config_schema_version") != schema_version:
+        return None
+    bag = raw.get("profiles", {})
+    return bag if isinstance(bag, dict) else {}
 
 
 def list_profiles(cfg: Any) -> list[str]:
@@ -115,9 +168,10 @@ def cli_profile_save(name: str) -> int:
     _ensure_tui_path()
     from tui.config import load_config, save_config
 
-    cfg = load_config()
-    save_profile(cfg, name)
-    save_config(cfg)
+    with config_lock():
+        cfg = load_config()
+        save_profile(cfg, name)
+        save_config(cfg)
     print(f"[profile] saved snapshot: {name!r}")
     return 0
 
@@ -154,6 +208,14 @@ def cli_profile_use(name: str) -> int:
         print("  available: " + ", ".join(list_profiles(cfg)))
         return 1
 
+    def _persist() -> None:
+        # Reload under the lock: the socket round trip below can take
+        # seconds and a running TUI may save in between.
+        with config_lock():
+            fresh = load_config()
+            apply_profile(fresh, name)
+            save_config(fresh)
+
     reply = submit_and_wait(f"PROFILE {name}", overall_timeout=10.0)
     if reply.startswith("OK") and " state=done" in reply:
         # TUI applied live + saved config. We don't write -- the TUI's
@@ -161,7 +223,7 @@ def cli_profile_use(name: str) -> int:
         print(f"[profile] active profile -> {name}  (applied live)")
         return 0
     if reply.startswith("OK") and "state=error" in reply:
-        save_config(cfg)
+        _persist()
         print(
             f"[profile] live-apply failed (config still updated): {reply}",
             file=sys.stderr,
@@ -169,20 +231,20 @@ def cli_profile_use(name: str) -> int:
         return 1
     if reply.startswith("OK") and "job=" not in reply:
         # Legacy synchronous handler path.
-        save_config(cfg)
+        _persist()
         print(f"[profile] active profile -> {name}  (applied via legacy sync path)")
         return 0
     if reply.startswith("ERR control socket"):
         # Matches all three transport-failure strings (not found / stale
         # / refused). Engine not running -- persist config so next run
         # picks it up.
-        save_config(cfg)
+        _persist()
         print(f"[profile] active profile -> {name}")
         print("  (engine not running; the next `woys run` will load it)")
         return 0
     # Unknown reply class. Preserve pre-fix behavior: persist config so
     # we don't silently drop the user's intent.
-    save_config(cfg)
+    _persist()
     print(f"[profile] active profile -> {name}  (unrecognized reply: {reply})", file=sys.stderr)
     return 0
 
@@ -245,9 +307,13 @@ def cli_profile_delete(name: str, *, assume_yes: bool = False) -> int:
         if ans not in {"y", "yes"}:
             print("[profile] cancelled", file=sys.stderr)
             return 1
-    if not delete_profile(cfg, name):
-        print(f"[profile] no such profile: {name!r}", file=sys.stderr)
-        return 1
-    save_config(cfg)
+    # Re-read under the lock: the prompt above can sit for a while and a
+    # running TUI may have saved in the meantime.
+    with config_lock():
+        cfg = load_config()
+        if not delete_profile(cfg, name):
+            print(f"[profile] no such profile: {name!r}", file=sys.stderr)
+            return 1
+        save_config(cfg)
     print(f"[profile] deleted {name!r}")
     return 0
