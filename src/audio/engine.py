@@ -2386,7 +2386,9 @@ class RealtimeEngine:
         """
         req = _SwapRequest(target=Path(path))
         with self._swap_lock:
-            if self._stopped:
+            # `_stop_event` covers an engine that stopped itself (or is
+            # mid-stop): its loop is gone and nothing drains the queue.
+            if self._stopped or self._stop_event.is_set():
                 # F-13-12: a STOPPED engine cannot drain the queue --
                 # resolve the event immediately so callers don't park
                 # for the full 10 s JobRegistry timeout. A never-
@@ -2558,14 +2560,13 @@ class RealtimeEngine:
                 # _rvc isn't loaded in subprocess mode, so the legacy path
                 # would fail every chunk. Better to stop and surface the
                 # error than serve silence indefinitely.
-                self.record_error(
+                req.error = e
+                self._resolve_swap(req)
+                self._self_abort(
                     f"subprocess swap failed: {e}. Stopping engine - "
                     f"flip `inference_subprocess=false` to fall back to "
                     f"in-process inference."
                 )
-                req.error = e
-                self._resolve_swap(req)
-                self._stop_event.set()
                 return
 
         # Legacy in-process path. Existing _cv (contentvec) and _rmvpe
@@ -2632,6 +2633,32 @@ class RealtimeEngine:
         with self._swap_lock, contextlib.suppress(ValueError):
             # already removed (double-resolve) -> ValueError is fine.
             self._outstanding_swaps.remove(req)
+
+    def _fail_pending_swaps(self, msg: str) -> None:
+        """Resolve every outstanding or still-queued swap with an error
+        so no caller parks on a request that will never be applied."""
+        with self._swap_lock:
+            pending = list(self._outstanding_swaps)
+            self._outstanding_swaps.clear()
+            while True:
+                try:
+                    pending.append(self._swap_queue.get_nowait())
+                except queue.Empty:
+                    break
+        for req in pending:
+            if not req.completion.is_set():
+                req.error = RuntimeError(msg)
+                req.completion.set()
+
+    def _self_abort(self, msg: str) -> None:
+        """The engine stopping itself (circuit breaker, respawn cap,
+        failed subprocess swap). Marked as a crash, not a clean stop, so
+        the TUI stops showing RUNNING and `woys engine` exits non-zero
+        instead of printing frozen stats; the loop exit clears
+        `stats.running`."""
+        self.record_error(msg)
+        self.stats.crashed = True
+        self._stop_event.set()
 
     # ---- inference ----------------------------------------------------------
 
@@ -2919,11 +2946,10 @@ class RealtimeEngine:
             # transient cuDNN tune but short enough to surface a genuine
             # broken state.
             if self._consecutive_drops >= 50 and not self._stop_event.is_set():
-                self.record_error(
+                self._self_abort(
                     f"engine stopping: {n} consecutive inference failures. "
                     f"Last: {type(e).__name__}: {e}"
                 )
-                self._stop_event.set()
             return None
 
     def _process_streaming_16k(self, new_chunk_16k: NDArrayF32) -> NDArrayF32:
@@ -3315,21 +3341,9 @@ class RealtimeEngine:
             # daemon thread parked the full 10 s timeout on the
             # "queue a swap, toggle off" sequence. With per-call
             # events, we walk the outstanding list and resolve each
-            # with an "engine stopped" error.
-            with self._swap_lock:
-                pending = list(self._outstanding_swaps)
-                self._outstanding_swaps.clear()
-                # Also drain any queued requests that the worker
-                # never got to.
-                while True:
-                    try:
-                        pending.append(self._swap_queue.get_nowait())
-                    except queue.Empty:
-                        break
-            for req in pending:
-                if not req.completion.is_set():
-                    req.error = RuntimeError("engine stopped before swap completed")
-                    req.completion.set()
+            # with an "engine stopped" error (queued requests the worker
+            # never got to included).
+            self._fail_pending_swaps("engine stopped before swap completed")
             if self._thread:
                 self._thread.join(timeout=timeout)
             self.stats.running = False
@@ -4441,12 +4455,11 @@ class RealtimeEngine:
             # alive must not loop forever.
             consecutive_respawns += 1
             if consecutive_respawns > _PLAYER_RESPAWN_CAP:
-                self.record_error(
+                self._self_abort(
                     f"engine stopping: playback helper died and was respawned "
                     f"{consecutive_respawns - 1}x without staying alive. "
                     f"Last cause: {self.stats.last_error or 'unknown'}"
                 )
-                self._stop_event.set()
                 return
             # Respawn.
             try:
@@ -5005,3 +5018,9 @@ class RealtimeEngine:
             self._keepalive_input = None
             self._torch_keepalive_thread = None
             self._writer_queue = None
+            # The loop is gone, so nothing will apply a queued swap. After
+            # a crash or self-stop no stop() has run yet: resolve them here
+            # and stop reporting the engine as running.
+            self._fail_pending_swaps("engine stopped before swap completed")
+            if self.stats.crashed:
+                self.stats.running = False

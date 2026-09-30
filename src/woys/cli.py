@@ -831,8 +831,8 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
     # also leaves running False.
     if crashed_during_run:
         print(
-            "engine CRASHED mid-run -- the realtime worker thread threw an "
-            "unhandled exception (see last_error above). Exiting non-zero.",
+            "engine CRASHED mid-run -- the realtime worker died on an error or "
+            "stopped itself on a fatal one (see last_error above). Exiting non-zero.",
             file=sys.stderr,
         )
         return 1
