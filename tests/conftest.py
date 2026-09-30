@@ -34,6 +34,13 @@ for _root in (SRC_ROOT, SERVER_ROOT):
 os.environ["WOYS_CONFIG_DIR"] = tempfile.mkdtemp(prefix="woys-test-config-")
 atexit.register(shutil.rmtree, os.environ["WOYS_CONFIG_DIR"], ignore_errors=True)
 
+# Same for the log: cli.main() calls setup_logging(), which resolves
+# $XDG_STATE_HOME and keeps its file handler for the rest of the process, so
+# without this every CLI test appended fake startup lines and fake errors to
+# the developer's real ~/.local/state/woys/woys.log.
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="woys-test-state-")
+atexit.register(shutil.rmtree, os.environ["XDG_STATE_HOME"], ignore_errors=True)
+
 
 @pytest.fixture(scope="session")
 def project_root() -> Path:
@@ -54,7 +61,7 @@ def fixtures_dir() -> Path:
 
 @pytest.fixture(autouse=True)
 def _isolate_woys_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Hard-isolate the on-disk config for EVERY test.
+    """Hard-isolate the on-disk config and log for EVERY test.
 
     Pre-fix, any test that called load_config()/save_config()/cli_profile_*
     with no explicit path wrote the user's REAL ~/.config/woys/config.toml --
@@ -69,6 +76,7 @@ def _isolate_woys_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     cfg_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(_cfg, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(_cfg, "CONFIG_FILE", cfg_dir / "config.toml")
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
 
 
 def _has_gpu() -> bool:
