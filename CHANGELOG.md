@@ -11,6 +11,30 @@ All notable changes to this project. Format: [Keep a Changelog](https://keepacha
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-09-30 — engine split
+
+`src/audio/engine.py` (5,100 lines) is split along its real seams. No
+behaviour changes: code moved verbatim, and `tests/test_engine_golden.py`
+(the CPU run of the real engine loop against recorded output bytes) was
+bit-exact after every step, with the fast suite green.
+
+- `audio.engine_config` — `EngineConfig`, `MODELS_DIR` and the model
+  defaults, `USER_VISIBLE_ENGINE_FIELDS`. It imports no numpy or
+  onnxruntime, so `tui.config`, `woys.profiles` and `woys models` no longer
+  load the engine and its CUDA libraries to read defaults.
+- `audio.engine_stats` (`EngineStats`), `audio.sessions` (CUDA/TRT preload,
+  `_make_session`, `RvcSessionPool`), `audio.pitch`, `audio.resample`.
+- `RealtimeEngine` keeps its constructor, lifecycle and `_run_loop`
+  (~1,300 lines) and inherits the rest from four mixins:
+  `audio.inference`, `audio.model_swap`, `audio.playback` and
+  `audio.gpu_tuning`.
+- `audio.engine` still re-exports every name woys and the tests import
+  from it.
+- Removed dead code: the duplicate `MODELS_DIR` definitions in
+  `woys.models` and `woys.fp16_convert`, the underscore aliases of the
+  pitch helpers, `RvcSessionPool.warmup_all`, the
+  `has_inference_subprocess` property.
+
 ## [0.16.0] — 2026-09-30 — audit fixes
 
 A full audit (ten review lenses, then a refute round that tried to break
