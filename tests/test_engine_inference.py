@@ -225,24 +225,55 @@ def test_pitch_coarse_all_negative_returns_zeros() -> None:
     np.testing.assert_array_equal(pitch, np.zeros(8, dtype=np.float32))
 
 
-def test_pitch_shift_modifies_pitchf_and_pitch_coarse_consistently() -> None:
+class _StubRmvpe:
+    def __init__(self, pitchf: np.ndarray) -> None:
+        self._pitchf = pitchf
+
+    def run(self, _names: object, _feeds: object) -> list[np.ndarray]:
+        return [self._pitchf.reshape(1, -1)]
+
+
+class _CaptureRvc:
+    def __init__(self) -> None:
+        self.inputs: dict[str, np.ndarray] = {}
+
+    def run(self, _names: object, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
+        self.inputs = feeds
+        return [np.zeros((1, 1, 160), dtype=np.float32)]
+
+
+def test_pitch_shift_modifies_pitchf_and_pitch_coarse_consistently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """v0.14.0 (area 4 / area 7 / C001): pitch shift in semitones must be
     applied to the f0 vector BEFORE deriving pitch_coarse. Otherwise
     pitch_coarse points at the unshifted f0 bin while pitchf is the
     shifted Hz vector -> RVC sees mismatched harmonic-source vs pitch-
     class-embedding pairs.
 
-    This test mimics the engine's _infer pitch path: take a sine-tone
-    pitchf, apply f0_up_key=+12 (octave up), and verify the resulting
-    coarse bin moves up by ~17 mel bins (one octave on the
-    1127*log(1+f/700) curve at 220 Hz -> 440 Hz).
+    Drives the engine's real in-process `_infer` with stub sessions: a flat
+    220 Hz RMVPE contour and f0_up_key=+12 must reach the RVC session as
+    pitchf=440 Hz AND the coarse bins of 440 Hz. The pre-v0.14.0 order
+    (coarse from the unshifted f0, shift applied to pitchf afterwards)
+    feeds the 220 Hz bins and fails the `pitch` assertion.
     """
-    pitchf = np.full(20, 220.0, dtype=np.float32)
-    coarse_unshifted, _ = to_pitch_coarse(pitchf, target_len=20)
-    # Apply pitch shift the way the engine does in v0.14.0.
-    pitchf_shifted = pitchf * (2.0 ** (12 / 12.0))  # +12 semitones = octave
-    coarse_shifted, pitch_shifted = to_pitch_coarse(pitchf_shifted, target_len=20)
-    # The coarse bin must move (mismatch was the bug).
-    assert int(coarse_shifted[-1]) > int(coarse_unshifted[-1])
-    # The pitch vector must reflect the shift.
-    assert pitch_shifted[-1] > pitchf[-1] * 1.5  # at least ~1.5x shift visible
+    from audio.engine import EngineConfig, RealtimeEngine
+
+    frames = 10  # contentvec frames; RVC sees 2x after the repeat
+    eng = RealtimeEngine(EngineConfig(f0_up_key=12))
+    rvc = _CaptureRvc()
+    eng._cv = object()  # type: ignore[assignment]
+    eng._rmvpe = _StubRmvpe(np.full(2 * frames, 220.0, dtype=np.float32))  # type: ignore[assignment]
+    eng._rvc = rvc  # type: ignore[assignment]
+    monkeypatch.setattr(
+        eng, "_extract_feats", lambda _a: np.zeros((1, frames, 768), dtype=np.float32)
+    )
+
+    eng._infer(np.zeros(3200, dtype=np.float32))
+
+    shifted_coarse, _ = to_pitch_coarse(np.full(2 * frames, 440.0, dtype=np.float32), 2 * frames)
+    unshifted_coarse, _ = to_pitch_coarse(np.full(2 * frames, 220.0, dtype=np.float32), 2 * frames)
+    assert int(shifted_coarse[-1]) > int(unshifted_coarse[-1])
+
+    np.testing.assert_allclose(rvc.inputs["pitchf"], np.full((1, 2 * frames), 440.0), rtol=1e-5)
+    np.testing.assert_array_equal(rvc.inputs["pitch"], shifted_coarse.reshape(1, -1))
