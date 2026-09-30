@@ -830,15 +830,34 @@ WantedBy=default.target
 
 def disable() -> int:
     unit_path = _systemd_unit_path()
+    rc = 0
     if unit_path.is_file():
-        _systemctl("disable", "--now", SYSTEMD_UNIT_NAME)
-        unit_path.unlink(missing_ok=True)
-        _systemctl("daemon-reload")
-        print(f"[woys chain] systemd user unit disabled + removed: {unit_path}")
+        r1 = _systemctl("disable", "--now", SYSTEMD_UNIT_NAME)
+        if r1.returncode != 0:
+            # Keep the unit file: deleting it now would leave the service
+            # running and its default.target.wants link pointing at nothing.
+            print(
+                f"[woys chain] systemctl disable --now failed, unit left in place "
+                f"at {unit_path}:\n{r1.stderr.strip()}",
+                file=sys.stderr,
+            )
+            rc = 2
+        else:
+            unit_path.unlink(missing_ok=True)
+            r2 = _systemctl("daemon-reload")
+            if r2.returncode != 0:
+                print(
+                    f"[woys chain] unit removed but systemctl daemon-reload failed: "
+                    f"{r2.stderr.strip()}",
+                    file=sys.stderr,
+                )
+                rc = 2
+            else:
+                print(f"[woys chain] systemd user unit disabled + removed: {unit_path}")
     else:
         print("[woys chain] no systemd user unit installed")
     n = _clear_chain("disable")
     if n is None:
         return 2
     print(f"[woys chain] unloaded {n} module(s)")
-    return 0
+    return rc
