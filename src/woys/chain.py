@@ -102,6 +102,10 @@ USER_REMAP_MARKER = f"master={SINK_FINAL}.monitor source_name={SOURCE_USER_FACIN
 SYSTEMD_UNIT_NAME = "woys-chain.service"
 
 
+class ChainError(RuntimeError):
+    """A pactl query the chain depends on failed (daemon down, denied...)."""
+
+
 def _systemd_unit_path() -> Path:
     base = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
     return base / "systemd" / "user" / SYSTEMD_UNIT_NAME
@@ -183,9 +187,15 @@ def _list_modules() -> list[tuple[str, str, str]]:
     downstream callers use the value as a CLI argument verbatim;
     the validation is the load-bearing part.
     """
-    out = _pactl("list", "short", "modules").stdout
+    res = _pactl("list", "short", "modules")
+    if res.returncode != 0:
+        # An empty listing would read as "no chain loaded": teardown would
+        # report nothing to do and setup would skip its stale clear.
+        raise ChainError(
+            f"pactl list short modules failed: {res.stderr.strip() or f'exit {res.returncode}'}"
+        )
     rows: list[tuple[str, str, str]] = []
-    for line in out.splitlines():
+    for line in res.stdout.splitlines():
         parts = line.split("\t", 2)
         if len(parts) < 2:
             continue
@@ -209,8 +219,12 @@ def _source_present(name: str) -> bool:
     return False
 
 
-def _unload_chain_modules() -> int:
-    """Unload chain modules in reverse load order. Idempotent. Returns count unloaded."""
+def _unload_chain_modules() -> tuple[int, list[str]]:
+    """Unload chain modules in reverse load order. Idempotent.
+
+    Returns (count unloaded, ["<id> (<pactl error>)", ...] for the modules
+    that are still loaded). Raises ChainError if the module list fails.
+    """
     mods = _list_modules()
     targets: list[str] = []
     # Order matters: leaves first, root last. Reverse of load order so
@@ -231,9 +245,32 @@ def _unload_chain_modules() -> int:
     for mod_id, mod_type, mod_args in mods:
         if mod_type == "module-null-sink" and f"sink_name={SINK_FINAL}" in mod_args:
             targets.append(mod_id)
+    failed: list[str] = []
     for mod_id in targets:
-        _pactl("unload-module", mod_id)
-    return len(targets)
+        res = _pactl("unload-module", mod_id)
+        # "No such entity" = the module went away between the list and the
+        # unload, which is the state we want.
+        if res.returncode != 0 and "No such entity" not in res.stderr:
+            failed.append(f"{mod_id} ({res.stderr.strip() or f'exit {res.returncode}'})")
+    return len(targets) - len(failed), failed
+
+
+def _clear_chain(action: str) -> int | None:
+    """Unload the chain for `action`, printing why it failed. Returns the
+    number unloaded, or None if any chain module could not be unloaded."""
+    try:
+        n, failed = _unload_chain_modules()
+    except ChainError as exc:
+        print(f"[woys chain] {action} failed: {exc}", file=sys.stderr)
+        return None
+    if failed:
+        print(
+            f"[woys chain] {action} failed: could not unload module(s) "
+            f"{', '.join(failed)}; they are still loaded.",
+            file=sys.stderr,
+        )
+        return None
+    return n
 
 
 def _is_user_facing_description(description: str) -> bool:
@@ -327,7 +364,10 @@ def setup() -> int:
         )
         return 2
 
-    _unload_chain_modules()  # clear stale chain so setup is idempotent
+    # Clear a stale chain so setup is idempotent. If that fails, loading
+    # on top would stack a second copy of every module.
+    if _clear_chain("clearing the stale chain") is None:
+        return 2
 
     # 1. Terminal null-sink. Audio/Sink class (NOT Audio/Source/Virtual)
     #    so wireplumber accepts it as a playback target for the LADSPA
@@ -373,7 +413,7 @@ def setup() -> int:
         "channels=1",
     )
     if r2.returncode != 0:
-        _unload_chain_modules()
+        _clear_chain("rollback")
         print(f"[woys chain] failed to load ladspa-sink: {r2.stderr.strip()}", file=sys.stderr)
         return 2
 
@@ -388,7 +428,7 @@ def setup() -> int:
         "latency_msec=30",
     )
     if r3.returncode != 0:
-        _unload_chain_modules()
+        _clear_chain("rollback")
         print(f"[woys chain] failed to load loopback: {r3.stderr.strip()}", file=sys.stderr)
         return 2
 
@@ -409,7 +449,7 @@ def setup() -> int:
         "channels=1",
     )
     if r4.returncode != 0:
-        _unload_chain_modules()
+        _clear_chain("rollback")
         print(
             f"[woys chain] failed to load user-facing remap-source: {r4.stderr.strip()}",
             file=sys.stderr,
@@ -467,7 +507,12 @@ def setup() -> int:
 
 
 def teardown() -> int:
-    n = _unload_chain_modules()
+    n = _clear_chain("teardown")
+    if n is None:
+        # The chain is (partly) still loaded, so woys-mic keeps its
+        # chain-active description; restoring it would advertise a raw
+        # woys-mic next to a live chain.
+        return 2
 
     # v0.14.1 - restore woys-mic's daily-driver description so users
     # without the chain (or after teardown) see a sensible label.
@@ -579,7 +624,13 @@ def status(check: bool = False) -> int:
         return _health_check()
     print("[woys chain] modules:")
     matched = False
-    for mod_id, mod_type, mod_args in _list_modules():
+    try:
+        modules = _list_modules()
+    except ChainError as exc:
+        print(f"  ({exc})", file=sys.stderr)
+        modules = []
+        matched = True  # don't claim "chain not loaded" when we can't tell
+    for mod_id, mod_type, mod_args in modules:
         if (
             (mod_type == "module-null-sink" and f"sink_name={SINK_FINAL}" in mod_args)
             or (mod_type == "module-ladspa-sink" and f"sink_name={SINK_BRIDGE}" in mod_args)
@@ -764,6 +815,8 @@ def disable() -> int:
         print(f"[woys chain] systemd user unit disabled + removed: {unit_path}")
     else:
         print("[woys chain] no systemd user unit installed")
-    n = _unload_chain_modules()
+    n = _clear_chain("disable")
+    if n is None:
+        return 2
     print(f"[woys chain] unloaded {n} module(s)")
     return 0
