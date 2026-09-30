@@ -3761,6 +3761,8 @@ class RealtimeEngine:
           * Catches per-write exceptions via `record_error` and
             keeps the stream open (a single bad write doesn't tear
             the stream; the engine's main thread is never blocked).
+            Only the first three failures and every 100th after that
+            are recorded, so a dead device can't flood the error ring.
         """
         import sounddevice as sd
 
@@ -3768,6 +3770,7 @@ class RealtimeEngine:
         # so the .start/.stop/.write/.close calls don't need per-line
         # ignores.
         stream: Any = None
+        write_failures = 0
         while not self._stop_event.is_set():
             want_monitor = bool(self.cfg.monitor)
             if want_monitor and stream is None:
@@ -3794,8 +3797,14 @@ class RealtimeEngine:
                 continue
             if stream is None:
                 continue  # drain the queue but discard if monitor is off
-            with contextlib.suppress(Exception):
+            try:
                 stream.write(chunk.reshape(-1, 1))
+            except Exception as e:
+                write_failures += 1
+                if write_failures <= 3 or write_failures % 100 == 0:
+                    self.record_error(
+                        f"monitor write failed (#{write_failures}): {type(e).__name__}: {e}"
+                    )
         # Stop event set -- tear down.
         if stream is not None:
             with contextlib.suppress(Exception):
