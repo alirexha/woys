@@ -168,3 +168,21 @@ def test_diag_no_engine_still_reports_sink_state(
     monkeypatch.setattr(pw, "get_state", lambda: pw.VirtualMicState(True, False, 1, None))
     assert cli.cmd_diag(0.0, no_engine=True) == 0
     assert "sink=True source=False" in capsys.readouterr().out
+
+
+def test_diag_prints_each_warning_once(
+    diag: Callable[..., int],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The self-test polls every 0.5 s; a standing error used to be
+    re-printed on every poll."""
+
+    def sticky_error(e: _FakeEngine) -> None:
+        _healthy(e)
+        e.stats.last_error = "unknown gpu_anti_jitter_mode 'x'. Falling back to off"
+
+    monkeypatch.setattr(_FakeEngine, "on_start", staticmethod(sticky_error))
+    cli.cmd_diag(1.6, no_engine=False)
+    out = capsys.readouterr().out
+    assert out.count("[warn] unknown gpu_anti_jitter_mode") == 1

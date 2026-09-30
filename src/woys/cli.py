@@ -453,12 +453,16 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
             try:
                 # Sample stats every 0.5 s so the user sees progress on long runs.
                 deadline = time.perf_counter() + seconds
+                warned: str | None = None
                 while time.perf_counter() < deadline:
                     time.sleep(0.5)
                     s = engine.stats
                     if s.last_error and "respawned" not in s.last_error:
-                        # Surface non-recovery errors immediately.
-                        print(f"  [warn] {s.last_error}")
+                        # Surface non-recovery errors immediately, once each
+                        # (a standing error would repeat on every poll).
+                        if s.last_error != warned:
+                            print(f"  [warn] {s.last_error}")
+                        warned = s.last_error
             finally:
                 child_pid = engine.stats.child_pid
                 warmup_stage = engine.stats.warmup_stage
