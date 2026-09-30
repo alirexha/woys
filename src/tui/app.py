@@ -23,8 +23,9 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -339,9 +340,20 @@ class WoysApp(App[int]):
         cfg: AppConfig | None = None,
         engine: RealtimeEngine | None = None,
         no_pw_setup: bool = False,
+        autostart: bool = False,
+        monitor: bool | None = None,
     ) -> None:
         super().__init__()
         self.cfg = cfg or load_config()
+        # `woys run --autostart / --[no-]monitor` apply to this session
+        # only. `_session_overrides` keeps the on-disk value of each field
+        # a flag overrode so saves write that value back, until the user
+        # changes the field in the TUI (`m`, a profile).
+        self._autostart = autostart
+        self._session_overrides: dict[str, Any] = {}
+        if monitor is not None and monitor != self.cfg.monitor:
+            self._session_overrides["monitor"] = self.cfg.monitor
+            self.cfg.monitor = monitor
         # v0.4.1: honor cfg.rvc_model on startup. Empty string ⇒ use the
         # engine's hardcoded default (Amitaro). Any path that doesn't exist
         # also falls back so a stale config.toml doesn't brick the engine.
@@ -417,7 +429,7 @@ class WoysApp(App[int]):
                 )
                 self.engine.record_error(msg)
                 self.notify(msg, severity="error", timeout=12, markup=False)
-        if pw_ok and self.cfg.autostart_engine:
+        if pw_ok and (self._autostart or self.cfg.autostart_engine):
             self._start_engine()
         self._control.start()
         self.set_interval(0.25, self._refresh_stats)
@@ -719,6 +731,7 @@ class WoysApp(App[int]):
         the next chunk_seconds wall-clock window with no engine restart."""
         new_state = not self.cfg.monitor
         self.cfg.monitor = new_state
+        self._session_overrides.pop("monitor", None)
         self.engine.cfg.monitor = new_state
         mark_override(self.cfg, "monitor")
         self.notify(f"monitor {'on' if new_state else 'off'}", timeout=2.0)
@@ -823,6 +836,11 @@ class WoysApp(App[int]):
             # so a PROFILE job ends in state=error.
             raise LookupError(f"no such profile: {name!r}")
         self._active_profile = name
+        # The profile's values are the user's choice now, not a CLI flag's.
+        applied = self.cfg._extras.get("profiles", {}).get(name, {})
+        for key in list(self._session_overrides):
+            if key in applied:
+                del self._session_overrides[key]
         # route the multi-field
         # cfg update through `request_cfg_update`. Pre-fix the four
         # `self.engine.cfg.X = ...` assignments below were issued one
@@ -888,7 +906,7 @@ class WoysApp(App[int]):
         refreshed first so the save never undoes a CLI profile edit."""
         with config_lock():
             self._reload_profiles()
-            save_config(self.cfg)
+            save_config(replace(self.cfg, **self._session_overrides))
 
     def _save_cfg(self) -> bool:
         """_write_cfg on the event-loop thread; a failed write (read-only
@@ -1061,10 +1079,6 @@ def run_tui(
     monitor: bool | None = None,
 ) -> int:
     cfg = load_config()
-    if autostart:
-        cfg.autostart_engine = True
-    if monitor is not None:
-        cfg.monitor = monitor
     # the single-instance lock used to be
     # wired only into `woys engine`. `woys run` -- the primary entry point,
     # the one instance_lock.py's own docstring names *first* -- never
@@ -1074,7 +1088,7 @@ def run_tui(
     # VirtualMic().ensure().
     try:
         with acquire_instance_lock():
-            app = WoysApp(cfg=cfg, no_pw_setup=no_pw_setup)
+            app = WoysApp(cfg=cfg, no_pw_setup=no_pw_setup, autostart=autostart, monitor=monitor)
             return app.run() or 0
     except InstanceLockBusy as e:
         print(f"error: {e}", file=sys.stderr)
