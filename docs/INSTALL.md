@@ -175,6 +175,8 @@ cd ~/woys
 ./uninstall.sh
 ```
 
-Or `./uninstall.sh --keep-models` to keep the ~1 GB ONNX cache around.
+This removes the venv, the launcher and the systemd units. It keeps
+`~/.local/share/woys/models/` (the ~1 GB foundation weights plus any voice
+models you added); `./uninstall.sh --purge-models` deletes that too.
 Your config at `~/.config/woys/config.toml` is always preserved;
 delete it manually if you want a fully clean slate.

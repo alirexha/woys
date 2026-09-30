@@ -280,6 +280,6 @@ cd ~/woys
 ./install.sh
 ```
 
-This nukes the venv and re-creates it. Models cache is in
-`~/.local/share/woys/models/` and is preserved unless you also
-remove that.
+This nukes the venv and re-creates it. Models are in
+`~/.local/share/woys/models/` and are preserved; add `--purge-models`
+to the uninstall only if you want them (and your own voices) gone too.

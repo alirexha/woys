@@ -2,8 +2,8 @@
 # woys uninstaller — reverses what install.sh did.
 #
 # Removes:
-#   $HOME/.local/share/woys/                   (venv, models — opt-out with --keep-models)
-#   $HOME/.local/share/vcclient-cachy/         (legacy path, if still present from pre-v0.6.0)
+#   $HOME/.local/share/woys/                   (venv etc.; models/ only with --purge-models)
+#   $HOME/.local/share/vcclient-cachy/         (legacy path, same rule, if still present)
 #   $HOME/.local/bin/woys                      (launcher symlink)
 #   $HOME/.local/bin/vcclient-cachy            (deprecated shim from v0.6.x)
 #   $HOME/.config/systemd/user/woys-mic.service
@@ -11,12 +11,14 @@
 #   $HOME/.config/systemd/user/vcclient-cachy-mic.service  (legacy)
 #
 # Leaves alone:
+#   $HOME/.local/share/woys/models/           (foundation weights + your voice models)
 #   $HOME/.config/woys/config.toml            (your settings)
 #   $HOME/.config/vcclient-cachy/config.toml  (legacy settings, if still present)
 #
 # Usage:
-#   ./uninstall.sh               # remove everything except your config
-#   ./uninstall.sh --keep-models # keep the ~1 GiB ONNX cache
+#   ./uninstall.sh                # remove everything except models and config
+#   ./uninstall.sh --purge-models # also delete models/, including your own voices
+#   (--keep-models is still accepted; keeping models is the default now)
 
 set -euo pipefail
 
@@ -50,12 +52,15 @@ LEGACY_APP_HOME="$HOME/.local/share/vcclient-cachy"
 BIN_DIR="$HOME/.local/bin"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 
-KEEP_MODELS=0
+# models/ holds user voices as well as re-downloadable weights, so
+# deleting it takes an explicit flag.
+KEEP_MODELS=1
 for arg in "$@"; do
     case "$arg" in
     --keep-models) KEEP_MODELS=1 ;;
+    --purge-models) KEEP_MODELS=0 ;;
     -h|--help)
-        sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
+        sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# //;s/^#//'
         exit 0
         ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -102,8 +107,8 @@ rm -f "$BIN_DIR/woys" "$BIN_DIR/vcclient-cachy"
 for HOME_DIR in "$APP_HOME" "$LEGACY_APP_HOME"; do
     [ -d "$HOME_DIR" ] || continue
     if [ "$KEEP_MODELS" -eq 1 ] && [ -d "$HOME_DIR/models" ]; then
-        say "preserving models at $HOME_DIR/models/"
-        rm -rf "$HOME_DIR/venv"
+        say "preserving models at $HOME_DIR/models/ (--purge-models deletes them)"
+        find "$HOME_DIR" -mindepth 1 -maxdepth 1 ! -name models -exec rm -rf {} +
     else
         say "removing $HOME_DIR/"
         rm -rf "$HOME_DIR"
