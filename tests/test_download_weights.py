@@ -220,3 +220,27 @@ def test_fetch_keeps_a_cached_file_that_passes_the_hash(
     download_weights.fetch("http://example/x", dest, force=False)
 
     assert dest.read_bytes() == good
+
+
+class _BrokenResponse(_FakeResponse):
+    def read(self, n: int = -1) -> bytes:
+        if self._pos:
+            raise OSError("connection reset")
+        return super().read(4)
+
+
+def test_fetch_removes_the_partial_file_when_the_download_fails(
+    download_weights, tmp_path, monkeypatch
+) -> None:
+    """Pre-fix a network error mid-download left <name>.part behind."""
+    monkeypatch.setattr(
+        download_weights.urllib.request,
+        "urlopen",
+        lambda _url, timeout=0: _BrokenResponse(b"partial bytes"),
+    )
+    dest = tmp_path / "models" / "rmvpe_wrapped.onnx"
+
+    with pytest.raises(OSError, match="connection reset"):
+        download_weights.fetch("http://example/x", dest, force=True)
+
+    assert list(dest.parent.iterdir()) == []

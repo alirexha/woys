@@ -91,13 +91,18 @@ def fetch(url: str, dest: Path, force: bool, *, skip_verify: bool = False) -> No
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     print(f"  [get ] {dest.name}  ← {url}")
-    with urllib.request.urlopen(url, timeout=60) as r, open(tmp, "wb") as f:
-        chunk = 1 << 16
-        while True:
-            data = r.read(chunk)
-            if not data:
-                break
-            f.write(data)
+    try:
+        with urllib.request.urlopen(url, timeout=60) as r, open(tmp, "wb") as f:
+            chunk = 1 << 16
+            while True:
+                data = r.read(chunk)
+                if not data:
+                    break
+                f.write(data)
+    except BaseException:
+        # Network error, full disk or Ctrl-C: don't leave a partial file.
+        tmp.unlink(missing_ok=True)
+        raise
     # fail-closed. A known foundation weight
     # with no SHA256 entry is a hard error -- never a silent unverified pass
     # (the pre-fix `if expected and ...` skipped verification whenever the
