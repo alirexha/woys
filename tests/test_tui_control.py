@@ -89,3 +89,21 @@ def test_send_command_when_no_server(tmp_path, monkeypatch) -> None:  # type: ig
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     out = send_command("STATUS", timeout=0.2)
     assert "ERR" in out or "not found" in out
+
+
+def test_socket_file_is_private(tmp_path: Path) -> None:
+    """The socket accepts QUIT / MODEL / PITCH; only the owner may connect."""
+    import os
+    import stat
+
+    sock_path = tmp_path / "test.sock"
+    prior = os.umask(0o022)
+    try:
+        srv = ControlServer(lambda cmd: "OK", path=sock_path)
+        srv.start()
+    finally:
+        os.umask(prior)
+    try:
+        assert stat.S_IMODE(sock_path.stat().st_mode) == 0o600
+    finally:
+        srv.stop()
