@@ -397,7 +397,20 @@ def load_config(path: Path | None = None) -> AppConfig:
     # the user has marked explicit. Legacy configs (pre-v0.14.x) ship
     # without the list, so the empty-default behavior is identical to
     # the pre-fix migration -- back-compat is intact.
-    schema = int(extras.pop("config_schema_version", 0) or 0)
+    schema_raw = extras.pop("config_schema_version", 0)
+    if isinstance(schema_raw, int) and not isinstance(schema_raw, bool):
+        schema = schema_raw
+    else:
+        # A hand-edited string / table / float must not crash every
+        # command, and truncating 9.9 to 9 would guess an era. Treat the
+        # file as legacy: every leg only rewrites values that still equal
+        # an old default, so running them all is the safe choice.
+        print(
+            f"[woys] {path}: invalid config_schema_version {schema_raw!r} "
+            f"(expected an integer); treating the file as schema 0.",
+            file=sys.stderr,
+        )
+        schema = 0
     user_overrides_raw = extras.pop("_user_overrides", []) or []
     user_overrides: set[str] = {str(k) for k in user_overrides_raw if isinstance(k, str)}
     migrated = False
