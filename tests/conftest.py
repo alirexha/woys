@@ -15,7 +15,6 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SRC_ROOT = PROJECT_ROOT / "src"
 SERVER_ROOT = PROJECT_ROOT / "src" / "server"
-MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
 FIXTURES_DIR = PROJECT_ROOT / "tests" / "fixtures"
 
 # upstream uses unprefixed imports (from voice_changer.X import Y); inject the
@@ -45,12 +44,6 @@ atexit.register(shutil.rmtree, os.environ["XDG_STATE_HOME"], ignore_errors=True)
 @pytest.fixture(scope="session")
 def project_root() -> Path:
     return PROJECT_ROOT
-
-
-@pytest.fixture(scope="session")
-def models_dir() -> Path:
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    return MODELS_DIR
 
 
 @pytest.fixture(scope="session")
