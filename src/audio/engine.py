@@ -48,9 +48,29 @@ The engine runs across 5-6 threads:
 state. `stats.<counter> += 1` is LOAD/BINARY_OP/STORE_ATTR (the GIL
 guarantees each bytecode, not the triple -- textbook lost-update);
 `helper_exit_reasons.append() + len(...) > 10: pop(0)` from two
-threads (engine.py:3084-3086 and :3608-3610) violates the `len <= 10`
+threads (the watchdog and the stderr reader) violates the `len <= 10`
 invariant on race. `self._stats_lock` (`threading.RLock`) serializes
 every `+=` and every `append+len-check+pop` block.
+
+Module layout
+-------------
+`RealtimeEngine` lives here with its constructor, lifecycle (start / stop /
+worker / warmup preamble), error ring, monitor writer and the chunk loop
+`_run_loop`. The rest of the engine is split by concern; every name the
+rest of woys imports from `audio.engine` is still re-exported here:
+
+- `audio.engine_config` - `EngineConfig`, model defaults, user-visible
+  fields (no numpy / onnxruntime import).
+- `audio.engine_stats` - `EngineStats`.
+- `audio.sessions` - CUDA/TRT preload, `_make_session`, `RvcSessionPool`.
+- `audio.pitch` / `audio.resample` - pitch-track and soxr helpers.
+- `audio.inference` - `_InferenceMixin`: `_infer`, the streaming/SOLA
+  wrapper, the realtime-shape warmup.
+- `audio.model_swap` - `_ModelSwapMixin`: session loading and hot-swap.
+- `audio.playback` - `_PlaybackMixin`: the player process, writer,
+  stderr reader and watchdog.
+- `audio.gpu_tuning` - `_GpuTuningMixin`: GPU clock lock, its signal
+  handlers, the keep-alive loops.
 """
 
 from __future__ import annotations
