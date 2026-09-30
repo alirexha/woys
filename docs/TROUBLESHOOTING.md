@@ -10,6 +10,11 @@ If something's broken, the order to check things in:
 
 If those five are all green, the rest is probably model or anti-cheat related.
 
+woys writes a rotating log to `~/.local/state/woys/woys.log`
+(`$XDG_STATE_HOME/woys/woys.log` if you set `XDG_STATE_HOME`; up to
+three older files as `woys.log.1` … `.3`). Engine errors land there too,
+so attach it to bug reports.
+
 ---
 
 ## "pactl info" says PulseAudio, not PipeWire
