@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,22 @@ if _SERVER_ROOT.is_dir() and str(_SERVER_ROOT) not in sys.path:
 _SRC_ROOT = Path(__file__).resolve().parent.parent
 if _SRC_ROOT.is_dir() and str(_SRC_ROOT) not in sys.path:
     sys.path.append(str(_SRC_ROOT))
+
+
+def _int_in(lo: int, hi: int) -> Callable[[str], int]:
+    """argparse `type=` for an int in [lo, hi], so a nonsense value is a
+    usage error here instead of a confusing pactl failure later."""
+
+    def parse(text: str) -> int:
+        try:
+            value = int(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"not an integer: {text!r}") from None
+        if not lo <= value <= hi:
+            raise argparse.ArgumentTypeError(f"must be between {lo} and {hi} (got {value})")
+        return value
+
+    return parse
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -62,8 +79,18 @@ def build_parser() -> argparse.ArgumentParser:
     pw_sub = pw.add_subparsers(dest="pw_cmd", required=True, metavar="ACTION")
 
     pw_setup = pw_sub.add_parser("setup", help="create woys-mic (idempotent)")
-    pw_setup.add_argument("--rate", type=int, default=48_000, help="sample rate (Hz)")
-    pw_setup.add_argument("--channels", type=int, default=2, help="channel count")
+    pw_setup.add_argument(
+        "--rate",
+        type=_int_in(8_000, 192_000),
+        default=None,
+        help="sample rate in Hz (default 48000; applies only when woys-mic is created)",
+    )
+    pw_setup.add_argument(
+        "--channels",
+        type=_int_in(1, 8),
+        default=None,
+        help="channel count (default 2; applies only when woys-mic is created)",
+    )
 
     pw_sub.add_parser("teardown", help="remove woys-mic and the sink")
     pw_sub.add_parser("status", help="report whether the mic is currently loaded")
@@ -339,11 +366,24 @@ def cmd_info() -> int:
     return 0
 
 
-def cmd_pw_setup(rate: int, channels: int) -> int:
-    from audio.pipewire import PipeWireError, VirtualMic
+def cmd_pw_setup(rate: int | None, channels: int | None) -> int:
+    from audio.pipewire import PipeWireError, VirtualMic, get_state
 
+    # Unset flags keep VirtualMic's own defaults.
+    vm = VirtualMic()
+    if rate is not None:
+        vm.rate = rate
+    if channels is not None:
+        vm.channels = channels
     try:
-        vm = VirtualMic(rate=rate, channels=channels)
+        # ensure() leaves an already-loaded woys-mic as it is, so an explicit
+        # --rate/--channels would be dropped without a word.
+        if (rate is not None or channels is not None) and get_state().fully_present:
+            print(
+                "warning: woys-mic is already loaded; --rate/--channels were not "
+                "applied. Run `woys pw teardown` first to recreate it with them.",
+                file=sys.stderr,
+            )
         state = vm.ensure()
     except PipeWireError as e:
         print(f"error: {e}", file=sys.stderr)
