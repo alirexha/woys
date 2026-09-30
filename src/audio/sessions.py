@@ -393,12 +393,6 @@ class RvcSessionPool:
             sess.run(["audio"], feed)
         return sess
 
-    def warmup_all(self, paths: list[Path]) -> None:
-        """Warm a batch of models. Costs ~600 ms per model. Useful at engine
-        startup when `eager_warmup` is enabled."""
-        for p in paths:
-            self.warmup(p)
-
     def evict_all(self) -> None:
         with self._lock:
             self._cache.clear()

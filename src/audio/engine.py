@@ -104,14 +104,6 @@ from audio.sessions import _session_is_cpu_only as _session_is_cpu_only
 from audio.sessions import _trt_cache_dir_for as _trt_cache_dir_for
 
 NDArrayF32 = npt.NDArray[np.float32]
-NDArrayI64 = npt.NDArray[np.int64]
-
-
-# B60 / audio-012: `_resample_linear` (the known-bad reference baseline)
-# was deleted in v0.8.0. Production path used `_resample` (soxr); the linear
-# variant existed only to fail v0.5.1 quality tests. No callers in src/ or
-# tests/. If you need it back as a benchmark, see `scripts/bench_*.py` or
-# git history.
 
 
 class RealtimeEngine(_ModelSwapMixin, _InferenceMixin, _PlaybackMixin, _GpuTuningMixin):
@@ -375,11 +367,6 @@ class RealtimeEngine(_ModelSwapMixin, _InferenceMixin, _PlaybackMixin, _GpuTunin
     def player_backend(self) -> str:
         """The active playback backend ('pacat' / 'pw-cat'), or '' before start."""
         return self._player_backend
-
-    @property
-    def has_inference_subprocess(self) -> bool:
-        """True iff the inference subprocess is currently spawned + alive."""
-        return self._inf_client is not None and self._inf_client.is_alive
 
     @property
     def inference_subprocess_pid(self) -> int | None:
