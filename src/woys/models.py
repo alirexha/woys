@@ -405,7 +405,10 @@ def cli_models_use(name: str, models_dir: Path = MODELS_DIR) -> int:
             save_config(cfg)
 
     # Try the running engine first. submit_and_wait handles the JOB poll.
-    reply = submit_and_wait(f"MODEL {path.stem}", overall_timeout=30.0)
+    # Send the resolved path, not the stem: the TUI resolves a stem
+    # against its library, which would miss an external model or pick a
+    # library file that happens to share its name.
+    reply = submit_and_wait(f"MODEL {path.resolve()}", overall_timeout=30.0)
     if reply.startswith("OK") and " state=done" in reply:
         # Hot-swap succeeded. The TUI's MODEL handler (`tui/app.py`
         # lines 306-328) already persisted the new rvc_model under its

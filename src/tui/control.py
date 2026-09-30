@@ -14,7 +14,8 @@ short status line and closes. Commands:
   PITCH +N      - pitch shift +N semitones (relative)
   PITCH -N      - pitch shift -N semitones (relative)
   PITCH 0       - reset to 0
-  MODEL <slug>  - hot-swap the active RVC model (returns job id; v0.5.0 async)
+  MODEL <m>     - hot-swap the active RVC model; <m> is a library name or a
+                  path to a .onnx (returns job id; v0.5.0 async)
   PROFILE <n>   - apply a saved profile by name (returns job id; v0.5.0 async)
   JOB <id>      - poll a previously-issued async job: pending/running/done/error
   STATUS        - print one-line status (instant, never blocks)
