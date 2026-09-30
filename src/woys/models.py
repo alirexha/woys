@@ -184,6 +184,17 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
     entries = [s.rfilename for s in siblings if s.rfilename.endswith(".onnx")]
     if not entries:
         raise RuntimeError(f"no .onnx files found in {repo}")
+    # Files land by basename next to the SHA-pinned foundation weights,
+    # which the engine loads without re-hashing. A repo file with one of
+    # their names would replace them, so those are never installed.
+    for rfn in [e for e in entries if Path(e).name in FOUNDATION_NAMES]:
+        print(
+            f"  [refuse] {rfn}: would replace the foundation weight {Path(rfn).name}",
+            file=sys.stderr,
+        )
+    entries = [e for e in entries if Path(e).name not in FOUNDATION_NAMES]
+    if not entries:
+        raise RuntimeError(f"no installable .onnx files in {repo}")
 
     models_dir.mkdir(parents=True, exist_ok=True)
     landed: list[Path] = []
