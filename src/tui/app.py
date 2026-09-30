@@ -390,9 +390,12 @@ class WoysApp(App[int]):
         self._jobs = JobRegistry()
         # v0.3.0: track active profile so the status panel + cycle key know.
         self._active_profile: str | None = None
-        # v0.5.0: track the latest swap target so the TUI can show "loading X..."
-        # while the swap is in flight (~10 ms cached, ~600 ms cold).
-        self._swap_in_flight: str | None = None
+        # v0.5.0: track swap targets so the TUI can show "loading X..."
+        # while a swap is in flight (~10 ms cached, ~600 ms cold). A list,
+        # not one slot: jobs overlap, and the first to finish must not hide
+        # one still loading. Job threads write it, the refresh tick reads.
+        self._swaps_in_flight: list[str] = []
+        self._swaps_lock = threading.Lock()
         # `_refresh_stats` tick + error
         # counters. The first few ticks run before the widget tree is
         # realized (expected, silent); after that a render failure is
@@ -568,7 +571,7 @@ class WoysApp(App[int]):
             # Async path: submit + return job id. The job body queues the
             # swap and waits for the worker to apply it.
             def do_swap() -> None:
-                self._swap_in_flight = new_path.name
+                self._swap_begin(new_path.name)
                 # capture the PER-CALL
                 # `_SwapRequest`. Pre-F-03-02 the waiter watched a
                 # shared `engine._swap_done` which released ALL pending
@@ -597,7 +600,7 @@ class WoysApp(App[int]):
                         f"model swap to {new_path.name}",
                     )
                 finally:
-                    self._swap_in_flight = None
+                    self._swap_end(new_path.name)
 
             jid = self._jobs.submit(do_swap)
             return f"OK job={jid} model={new_path.name}"
@@ -605,7 +608,7 @@ class WoysApp(App[int]):
             target = cmd[len("PROFILE ") :].strip()
 
             def do_profile() -> None:
-                self._swap_in_flight = target
+                self._swap_begin(target)
                 req_holder: list[_SwapRequest | None] = []
 
                 def apply_main() -> None:
@@ -621,7 +624,7 @@ class WoysApp(App[int]):
                         f"profile {target!r} swap",
                     )
                 finally:
-                    self._swap_in_flight = None
+                    self._swap_end(target)
 
             jid = self._jobs.submit(do_profile)
             return f"OK job={jid} profile={target}"
@@ -801,7 +804,7 @@ class WoysApp(App[int]):
             return
 
         def _runner() -> None:
-            self._swap_in_flight = next_name
+            self._swap_begin(next_name)
             req_holder: list[_SwapRequest | None] = []
 
             def apply_main() -> None:
@@ -817,9 +820,23 @@ class WoysApp(App[int]):
                     f"profile cycle to {next_name!r} swap",
                 )
             finally:
-                self._swap_in_flight = None
+                self._swap_end(next_name)
 
         self._jobs.submit(_runner)
+
+    @property
+    def _swap_in_flight(self) -> str | None:
+        """The most recently started swap still running, if any."""
+        with self._swaps_lock:
+            return self._swaps_in_flight[-1] if self._swaps_in_flight else None
+
+    def _swap_begin(self, target: str) -> None:
+        with self._swaps_lock:
+            self._swaps_in_flight.append(target)
+
+    def _swap_end(self, target: str) -> None:
+        with self._swaps_lock:
+            self._swaps_in_flight.remove(target)
 
     def _await_swap(self, req: _SwapRequest | None, what: str) -> None:
         """Wait for a queued model swap; raise if it was not applied.
