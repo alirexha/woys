@@ -29,12 +29,34 @@ Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 from __future__ import annotations
 
 import contextlib
+import os
 import sys
+import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 CACHE_DIR = Path.home() / ".local" / "share" / "woys" / "converted"
+
+
+@contextlib.contextmanager
+def _scratch_cwd() -> Iterator[None]:
+    """Run the vendored upstream imports from a throwaway CWD.
+
+    `src/server/const.py` does `os.makedirs("tmp_dir")` relative to the
+    CWD at import time, which left an empty `tmp_dir/` wherever `woys
+    convert` ran. The conversion itself never uses that dir (it passes
+    explicit output paths), so importing from a temp dir is enough.
+    Callers must resolve their own paths before entering.
+    """
+    prev = os.getcwd()
+    with tempfile.TemporaryDirectory(prefix="woys-convert-") as scratch:
+        os.chdir(scratch)
+        try:
+            yield
+        finally:
+            os.chdir(prev)
 
 
 def _user_trusts_pickle(flag: bool) -> bool:
@@ -141,7 +163,8 @@ def _probe_pth_metadata(pth_path: Path, *, trust_pickle: bool = False) -> _RVCMe
 
     # Late import upstream's enum so we feed _export2onnx the right strings.
     sys.path.append(str(Path(__file__).resolve().parent.parent / "server"))
-    from const import EnumInferenceTypes  # type: ignore[import-not-found]
+    with _scratch_cwd():
+        from const import EnumInferenceTypes  # type: ignore[import-not-found]
 
     if config_len == 18:
         # Standard / official RVC checkpoint.
@@ -380,9 +403,11 @@ def convert_pth_to_onnx(
     sys.path.append(str(Path(__file__).resolve().parent.parent / "server"))
     try:
         import torch
-        from voice_changer.RVC.onnxExporter.export2onnx import (  # type: ignore[import-not-found]
-            _export2onnx,
-        )
+
+        with _scratch_cwd():
+            from voice_changer.RVC.onnxExporter.export2onnx import (  # type: ignore[import-not-found]
+                _export2onnx,
+            )
     except ImportError as e:
         raise RuntimeError(
             f"woys convert could not import {e.name or 'a module'} "
