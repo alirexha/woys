@@ -31,6 +31,19 @@ from woys.xdg import config_dir as _config_dir
 CONFIG_DIR = _config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
+
+class ConfigNotSavedError(OSError):
+    """save_config refused to write: the file on disk failed to load.
+
+    load_config falls back to in-memory defaults when config.toml is
+    malformed or unreadable. Saving those defaults would replace the
+    user's file -- every profile, pinned value and model path -- so the
+    save is refused until the file is fixed. An OSError so the CLI's
+    top-level guard and the TUI's save sites report it like any other
+    write failure.
+    """
+
+
 # Single shared instance - evaluated at module import. AppConfig's
 # field defaults reference attributes of this instance so a future
 # default-bump in `EngineConfig` propagates here automatically.
@@ -92,6 +105,9 @@ class AppConfig:
 
     # Pass-through bag for unknown keys; kept on save so user-added fields survive.
     _extras: dict[str, Any] = field(default_factory=dict, repr=False)
+    # Set by load_config when the file on disk could not be loaded; while
+    # set, save_config refuses to overwrite that file (ConfigNotSavedError).
+    _load_error: str = field(default="", repr=False, compare=False)
 
     def __post_init__(self) -> None:
         # Stamp the schema version on every fresh AppConfig so round-trips
@@ -344,18 +360,22 @@ def load_config(path: Path | None = None) -> AppConfig:
         print(
             f"[woys] {path} is malformed TOML - using in-memory defaults instead.\n"
             f"       parse error: {e}\n"
-            f"       (the file was NOT touched; fix the syntax and re-launch)",
+            f"       (the file was NOT touched and woys will not save over it;\n"
+            f"       fix the syntax and re-launch)",
             file=sys.stderr,
         )
-        return AppConfig()
+        return AppConfig(_load_error=f"{path} is malformed TOML ({e})")
     except OSError as e:
         print(
             f"[woys] cannot read {path} ({type(e).__name__}: {e}) - "
-            f"using in-memory defaults instead.",
+            f"using in-memory defaults instead; woys will not save over it.",
             file=sys.stderr,
         )
-        return AppConfig()
-    known = {f.name for f in AppConfig.__dataclass_fields__.values()} - {"_extras"}
+        return AppConfig(_load_error=f"cannot read {path} ({type(e).__name__}: {e})")
+    known = {f.name for f in AppConfig.__dataclass_fields__.values()} - {
+        "_extras",
+        "_load_error",
+    }
     fields_in: dict[str, Any] = {k: raw[k] for k in known if k in raw}
     extras = {k: v for k, v in raw.items() if k not in known}
     # v0.7.0 - bump stale v0.6.x defaults so existing users get the latency
@@ -573,6 +593,12 @@ def save_config(cfg: AppConfig, path: Path | None = None) -> None:
     # real config from inside the test suite and wipe saved profiles.
     if path is None:
         path = CONFIG_FILE
+    if cfg._load_error:
+        # The in-memory config is a defaults fallback for a file that did
+        # not load. Writing it would silently delete the user's profiles.
+        raise ConfigNotSavedError(
+            f"not saving config: {cfg._load_error}. Fix or move that file, then retry."
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {k: v for k, v in asdict(cfg).items() if not k.startswith("_")}
     data.update(cfg._extras)

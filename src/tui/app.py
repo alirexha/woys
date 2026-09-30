@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from typing import ClassVar
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
@@ -521,7 +522,7 @@ class WoysApp(App[int]):
                     matched = self._profile_for_model_path(new_path)
                     if matched is not None:
                         self._active_profile = matched
-                    save_config(self.cfg)
+                    self._save_cfg()
 
                 self.call_from_thread(apply_main)
                 if req_holder:
@@ -579,7 +580,7 @@ class WoysApp(App[int]):
             def _quit_shim() -> None:
                 self.engine.stop()
                 self._control.stop()
-                save_config(self.cfg)
+                self._save_cfg()
                 self.exit(0)
 
             self.call_from_thread(_quit_shim)
@@ -832,12 +833,25 @@ class WoysApp(App[int]):
                 severity="information",
                 timeout=2,
             )
-        save_config(self.cfg)
+        self._save_cfg()
         return swap_req
 
+    def _save_cfg(self) -> bool:
+        """save_config on the event-loop thread; a failed write (read-only
+        home, or a config.toml that failed to load and must not be
+        overwritten) becomes an error toast instead of an unhandled
+        exception that kills the TUI."""
+        try:
+            save_config(self.cfg)
+        except OSError as e:
+            logging.getLogger("woys.tui").error("config not saved: %s", e)
+            self.notify(f"config not saved: {e}", severity="error", timeout=8)
+            return False
+        return True
+
     def action_save_cfg(self) -> None:
-        save_config(self.cfg)
-        self.notify("config saved", severity="information")
+        if self._save_cfg():
+            self.notify("config saved", severity="information")
 
     async def action_quit(self) -> None:
         """offload
@@ -863,7 +877,14 @@ class WoysApp(App[int]):
         self.push_screen(ShutdownScreen())
         await asyncio.to_thread(self.engine.stop)
         await asyncio.to_thread(self._control.stop)
-        await asyncio.to_thread(save_config, self.cfg)
+        try:
+            await asyncio.to_thread(save_config, self.cfg)
+        except OSError as e:
+            # The screen is going away; hand the reason to Textual so it
+            # is printed on the restored terminal after exit.
+            logging.getLogger("woys.tui").error("config not saved: %s", e)
+            self.exit(0, message=Text(f"[woys] config not saved: {e}"))
+            return
         self.exit(0)
 
     # ---- live refresh -------------------------------------------------------
