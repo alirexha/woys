@@ -103,16 +103,20 @@ def test_run_tui_acquires_instance_lock(
     assert constructed == [], "run_tui must reject the busy lock before building WoysApp"
 
 
-def test_xdg_unset_falls_back_to_tmp(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No XDG_RUNTIME_DIR -> /tmp/woys-{uid}/instance.lock. The lock
-    is still acquirable; cleans up after the test."""
+def test_xdg_unset_falls_back_to_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No XDG_RUNTIME_DIR -> the lock goes in the `/tmp/woys-{uid}`
+    fallback dir. The fallback is redirected into tmp_path: the real
+    /tmp/woys-{uid}/instance.lock may be held by a running woys, and
+    unlinking it would let a second instance take a fresh lock. The
+    fallback path itself is covered by test_xdg_runtime_dir.py."""
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    expected = Path(f"/tmp/woys-{os.getuid()}/instance.lock")
-    try:
-        with acquire_instance_lock() as lock_path:
-            assert lock_path == expected
-            assert lock_path.exists()
-    finally:
-        # Best-effort cleanup so subsequent test runs see clean state.
-        if expected.exists():
-            expected.unlink()
+    fallback = tmp_path / "woys-fallback"
+
+    def fake_fallback() -> Path:
+        fallback.mkdir(mode=0o700, exist_ok=True)
+        return fallback
+
+    monkeypatch.setattr("woys.xdg._safe_tmp_fallback", fake_fallback)
+    with acquire_instance_lock() as lock_path:
+        assert lock_path == fallback / "instance.lock"
+        assert lock_path.exists()
