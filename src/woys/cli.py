@@ -336,6 +336,18 @@ def cmd_pw_teardown() -> int:
     return 0
 
 
+def _print_recent_errors(errors: list[tuple[float, str, str]]) -> None:
+    """Print the engine's error ring (oldest first). `last_error` clears
+    itself one chunk after it is written, so a run that hit errors and then
+    recovered would otherwise end with no trace of them."""
+    if not errors:
+        return
+    t0 = errors[0][0]
+    print(f"  recent errors ({len(errors)}, oldest first):")
+    for ts, thread, msg in errors:
+        print(f"    +{ts - t0:6.2f}s [{thread}] {msg}")
+
+
 def cmd_diag(seconds: float, no_engine: bool) -> int:
     """v0.5.2 - engine + audio-pipeline self-test.
 
@@ -632,6 +644,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
 
     if s.last_error:
         print(f"  last_error       : {s.last_error}")
+    _print_recent_errors(engine.recent_errors(20))
 
     # v0.11.0 - helper death causes (preserved across watchdog respawns).
     # Empty list = no helper exits. Capped at 10; shows the most recent.
@@ -827,6 +840,7 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
             print(f"last_error (during run): {running_last_error}")
         elif s.last_error:
             print(f"last_error (post-stop): {s.last_error}")
+        _print_recent_errors(eng.recent_errors(20))
         print(
             f"final: chunks={s.chunks_processed} "
             f"avg_inf={s.avg_inference_ms:.1f}ms "
