@@ -331,3 +331,42 @@ def test_migrate_merge_never_overwrites_existing_files(tmp_path: Path) -> None:
     assert (new_models / "donald_trump.onnx").is_file()
     old_copy = tmp_path / ".local" / "share" / "vcclient-cachy" / "models" / "amitaro_v2_16k.onnx"
     assert old_copy.read_bytes() == b"\x00" * 16
+
+
+def test_migrate_rerun_leaves_the_current_woys_config_alone(tmp_path: Path) -> None:
+    """A later install.sh run that still sees a legacy dir must not rewrite
+    a config.toml the migrator did not move in this run. Pre-fix every rerun
+    bumped the user's output_latency_ms (top level and profiles) to 300."""
+    from migrate_to_woys import migrate
+
+    # Only a leftover legacy share dir remains; the config is already woys'.
+    (tmp_path / ".local" / "share" / "vcclient-cachy" / "models").mkdir(parents=True)
+    cfg = tmp_path / ".config" / "woys" / "config.toml"
+    cfg.parent.mkdir(parents=True)
+    text = (
+        "output_latency_ms = 150\n"
+        "config_schema_version = 10\n"
+        '_user_overrides = ["output_latency_ms"]\n'
+        "\n[profiles.q]\noutput_latency_ms = 120\n"
+    )
+    cfg.write_text(text)
+
+    migrate(home=tmp_path)
+
+    assert cfg.read_text() == text
+
+
+def test_migrate_does_not_rewrite_an_existing_config_it_did_not_move(tmp_path: Path) -> None:
+    """When both config dirs hold a config.toml, the woys one wins and is
+    left untouched; the legacy one stays where it was."""
+    from migrate_to_woys import migrate
+
+    _build_old_install(tmp_path)
+    cfg = tmp_path / ".config" / "woys" / "config.toml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("output_latency_ms = 150\n")
+
+    migrate(home=tmp_path)
+
+    assert cfg.read_text() == "output_latency_ms = 150\n"
+    assert (tmp_path / ".config" / "vcclient-cachy" / "config.toml").is_file()

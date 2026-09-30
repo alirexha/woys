@@ -291,6 +291,13 @@ def migrate(home: Path | None = None, *, dry_run: bool = False) -> tuple[bool, l
         log.append("  no old install detected - fresh install path, nothing to do")
         return False, log
 
+    # Only the legacy config.toml gets the rewrite below. A config.toml that
+    # already lives in the woys dir is woys' own, and rewriting it on every
+    # rerun would force its output_latency_ms back up to 300.
+    legacy_config_moves = (old_config / "config.toml").is_file() and not (
+        new_config / "config.toml"
+    ).exists()
+
     # 1) Stop the old systemd unit BEFORE moving anything (so the running
     #    service can't race a half-renamed dir).
     _stop_old_systemd_unit(h, dry_run=dry_run, log=log)
@@ -309,7 +316,12 @@ def migrate(home: Path | None = None, *, dry_run: bool = False) -> tuple[bool, l
 
     # 3) Rewrite model paths in the (now relocated) config.toml so they
     #    point at .../woys/models/ instead of .../vcclient-cachy/models/.
-    _rewrite_config_toml(new_config / "config.toml", dry_run=dry_run, log=log)
+    if legacy_config_moves:
+        _rewrite_config_toml(
+            (old_config if dry_run else new_config) / "config.toml", dry_run=dry_run, log=log
+        )
+    else:
+        log.append("  config.toml: none moved in this run, left as is")
 
     log.append("[migrate] complete")
     return True, log
