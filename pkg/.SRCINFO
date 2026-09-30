@@ -6,7 +6,6 @@ pkgbase = woys
 	arch = x86_64
 	license = custom
 	license = MIT
-	makedepends = python-pip
 	makedepends = python-build
 	makedepends = python-installer
 	makedepends = python-wheel
@@ -16,7 +15,6 @@ pkgbase = woys
 	depends = pipewire-pulse
 	depends = pipewire-alsa
 	depends = nvidia-utils
-	optdepends = evdev: opt-in global hotkey for engine toggle
 	optdepends = pavucontrol: GUI to wire the mic into Discord/CS2 manually
 	optdepends = qpwgraph: live PipeWire graph visualizer
 	source = woys-0.15.0::git+https://github.com/alirexha/woys.git#tag=v0.15.0

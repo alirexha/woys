@@ -23,14 +23,12 @@ depends=(
     'nvidia-utils'  # provides libcuda.so for ORT CUDA EP
 )
 makedepends=(
-    'python-pip'
     'python-build'
     'python-installer'
     'python-wheel'
     'python-hatchling'
 )
 optdepends=(
-    'evdev: opt-in global hotkey for engine toggle'
     'pavucontrol: GUI to wire the mic into Discord/CS2 manually'
     'qpwgraph: live PipeWire graph visualizer'
 )
