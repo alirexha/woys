@@ -20,12 +20,40 @@ from __future__ import annotations
 
 import logging
 import os
+from io import TextIOWrapper
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import cast
 
 _LOGGER_NAME = "woys"
 _MAX_BYTES = 2 * 1024 * 1024  # 2 MiB per file
 _BACKUP_COUNT = 3
+
+
+def _private_opener(path: str, flags: int) -> int:
+    # The log holds model paths and control commands -- the same data
+    # config.toml keeps 0600. Create the file 0600 and tighten one an
+    # older release left world-readable.
+    fd = os.open(path, flags, 0o600)
+    os.fchmod(fd, 0o600)
+    return fd
+
+
+class _PrivateRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler whose files (the first one and every one it
+    rotates to) are opened 0600 instead of inheriting the umask."""
+
+    def _open(self) -> TextIOWrapper:
+        # Text mode ("a"), so this is a TextIOWrapper; `self.mode` is a
+        # plain str, which is why typeshed can only say IO[Any].
+        stream = open(  # noqa: SIM115 - the handler owns and closes the stream
+            self.baseFilename,
+            self.mode,
+            encoding=self.encoding,
+            errors=self.errors,
+            opener=_private_opener,
+        )
+        return cast(TextIOWrapper, stream)
 
 
 def log_dir() -> Path:
@@ -56,8 +84,15 @@ def setup_logging(*, level: int = logging.INFO) -> Path:
     path = log_path()
     logger = logging.getLogger(_LOGGER_NAME)
     if not any(isinstance(h, RotatingFileHandler) for h in logger.handlers):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        handler = RotatingFileHandler(
+        # 0700 like the config dir when woys creates it; chmod too since
+        # mkdir's mode is masked by the umask.
+        try:
+            path.parent.mkdir(mode=0o700, parents=True)
+        except FileExistsError:
+            pass
+        else:
+            os.chmod(path.parent, 0o700)
+        handler = _PrivateRotatingFileHandler(
             path, maxBytes=_MAX_BYTES, backupCount=_BACKUP_COUNT, encoding="utf-8"
         )
         handler.setFormatter(

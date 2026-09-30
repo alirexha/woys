@@ -84,3 +84,56 @@ def test_setup_logging_is_idempotent(
 
     file_handlers = [h for h in clean_woys_logger.handlers if isinstance(h, RotatingFileHandler)]
     assert len(file_handlers) == 1, "repeated setup_logging() must not stack handlers"
+
+
+@pytest.fixture
+def umask_022() -> Any:
+    import os
+
+    old = os.umask(0o022)
+    try:
+        yield
+    finally:
+        os.umask(old)
+
+
+def test_log_dir_and_file_are_private(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_woys_logger: Any,
+    umask_022: Any,
+) -> None:
+    """The log records model paths and control commands, the same data
+    config.toml keeps 0600 in a 0700 dir. Pre-fix the log dir and file came
+    out 0755 / 0644 under umask 022, and so did every rotated file."""
+    import stat
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    from woys import logsetup
+
+    path = logsetup.setup_logging()
+    logging.getLogger("woys.test").error("x")
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    handler = next(h for h in clean_woys_logger.handlers if isinstance(h, RotatingFileHandler))
+    handler.doRollover()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_existing_world_readable_log_is_tightened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clean_woys_logger: Any
+) -> None:
+    """A woys.log left 0644 by an older release is made 0600 on open."""
+    import stat
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    from woys import logsetup
+
+    old = logsetup.log_path()
+    old.parent.mkdir(parents=True)
+    old.write_text("earlier run\n")
+    old.chmod(0o644)
+    logsetup.setup_logging()
+    assert stat.S_IMODE(old.stat().st_mode) == 0o600
+    assert old.read_text().startswith("earlier run\n")
