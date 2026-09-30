@@ -72,13 +72,26 @@ def test_make_session_allows_cpu_when_explicitly_opted_in(
     assert engine._session_is_cpu_only(sess)
 
 
-def test_make_session_cpu_only_build_is_not_a_silent_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No CUDA EP in the ORT build at all -> CPU is the environment, not a
-    silent *fallback*; `_make_session` must not raise. (The no-GPU condition
-    is surfaced elsewhere by `woys info` -- F-merged-013.)"""
+def test_make_session_cpu_only_build_hard_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No CUDA EP in the ORT build at all (a CPU `onnxruntime` wheel
+    shadowing onnxruntime-gpu) -> the session would run CPU-only just the
+    same, so it must hard-fail too, with a reinstall hint. Pre-fix this case
+    returned the CPU session silently."""
     _patch(monkeypatch, ["CPUExecutionProvider"])
 
-    sess = engine._make_session(Path("/nonexistent/model.onnx"), use_tensorrt=False)
+    with pytest.raises(engine.CpuFallbackError, match="no CUDA execution provider") as exc:
+        engine._make_session(Path("/nonexistent/model.onnx"), use_tensorrt=False)
+    assert "onnxruntime-gpu" in str(exc.value)
+
+
+def test_make_session_cpu_only_build_allowed_by_test_seam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """allow_cpu_fallback (test-only) still lets a CPU-only build through,
+    which is what the CPU test harnesses rely on."""
+    _patch(monkeypatch, ["CPUExecutionProvider"])
+
+    sess = engine._make_session(
+        Path("/nonexistent/model.onnx"), use_tensorrt=False, allow_cpu_fallback=True
+    )
     assert engine._session_is_cpu_only(sess)

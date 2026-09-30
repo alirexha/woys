@@ -576,9 +576,10 @@ class EngineConfig:
     # ~10-50x over the chunk-period latency budget -- it is a non-functional
     # state, not a degraded one -- and the pre-fix silent fallback produced
     # a working-looking but unusable engine with no error surfaced anywhere.
-    # Set True only to deliberately run CPU-only (e.g. debugging on a
-    # GPU-less box); EngineStats.cpu_fallback_active then reports it.
-    # (Not yet plumbed to config.toml -- that is F-merged-008's job.)
+    # Test-only seam: True lets the CPU test harnesses build real sessions
+    # on a GPU-less box. woys is GPU-only, so this must never be plumbed to
+    # config.toml, a profile or a CLI flag; EngineStats.cpu_fallback_active
+    # (shown by `woys diag`) reports it if it is ever on.
     allow_cpu_fallback: bool = False
 
     # v0.10.0-rc3 - GPU keep-alive thread to mitigate dynamic-boost
@@ -941,9 +942,9 @@ class EngineStats:
     trt_init_errors: dict[str, str] = field(default_factory=dict)
 
     # True if any model session bound
-    # CPU-only. Only reachable when cfg.allow_cpu_fallback is set -- with
-    # the default config `_make_session` raises CpuFallbackError instead.
-    # Surfaced by `woys diag` so a deliberate CPU-only run is visible.
+    # CPU-only. Only reachable through the test-only cfg.allow_cpu_fallback --
+    # otherwise `_make_session` raises CpuFallbackError instead.
+    # Printed by `woys diag`.
     cpu_fallback_active: bool = False
 
     # B28 / corr-009: thread priority + affinity warnings. Each entry
@@ -1240,8 +1241,8 @@ class _SwapRequest:
 
 
 class CpuFallbackError(RuntimeError):
-    """ONNX Runtime bound a session CPU-only
-    while a CUDA execution provider was available.
+    """ONNX Runtime bound a session CPU-only: either the CUDA execution
+    provider failed to bind, or this onnxruntime build has none at all.
 
     Realtime RVC on CPU runs ~10-50x over the chunk-period latency budget,
     so a CPU-bound session is a non-functional state, not a degraded one.
@@ -1265,31 +1266,34 @@ def _assert_session_gpu_bound(
     available: list[str],
     allow_cpu_fallback: bool,
 ) -> None:
-    """Hard-fail the silent CUDA->CPU fallback (F-merged-001).
+    """Hard-fail a CPU-bound session (F-merged-001).
 
-    If a CUDA EP is installed in this ORT build but the session bound
-    CPU-only, raise `CpuFallbackError` -- unless `allow_cpu_fallback` is
-    set, in which case the CPU binding is left in place (the engine records
-    it in `EngineStats.cpu_fallback_active` for `woys diag`).
+    Raise `CpuFallbackError` when the session bound CPU-only, unless the
+    test-only `allow_cpu_fallback` is set (the engine then records it in
+    `EngineStats.cpu_fallback_active`, printed by `woys diag`).
 
-    When no CUDA EP is present in the build at all, CPU is simply the only
-    option -- that is the environment, not a silent *fallback*, so it is
-    left alone here; the no-GPU condition is surfaced separately by
-    `woys info` (F-merged-013).
+    A build with no CUDA EP at all -- typically a CPU `onnxruntime` wheel
+    shadowing onnxruntime-gpu -- fails too: the session runs on CPU just
+    the same, and woys is GPU-only.
     """
-    if not _session_is_cpu_only(sess):
+    if not _session_is_cpu_only(sess) or allow_cpu_fallback:
         return
     if "CUDAExecutionProvider" not in available:
-        return
-    if not allow_cpu_fallback:
         raise CpuFallbackError(
-            f"{path.name}: a CUDA execution provider is installed but ONNX "
-            f"Runtime bound this session CPU-only (providers="
-            f"{sess.get_providers()}). Realtime RVC is unusable on CPU. "
-            f"Check the onnxruntime-gpu wheel, the NVIDIA driver, and that "
-            f"ort.preload_dlls() ran. To deliberately run CPU-only, set "
-            f"EngineConfig.allow_cpu_fallback = True."
+            f"{path.name}: this onnxruntime build has no CUDA execution "
+            f"provider (available={available}), so the session would run "
+            f"CPU-only and realtime RVC is unusable on CPU. woys needs "
+            f"onnxruntime-gpu: a CPU `onnxruntime` wheel is probably "
+            f"shadowing it. Uninstall onnxruntime and reinstall "
+            f"onnxruntime-gpu (or re-run install.sh), then check `woys info`."
         )
+    raise CpuFallbackError(
+        f"{path.name}: a CUDA execution provider is installed but ONNX "
+        f"Runtime bound this session CPU-only (providers="
+        f"{sess.get_providers()}). Realtime RVC is unusable on CPU. "
+        f"Check the onnxruntime-gpu wheel, the NVIDIA driver, and that "
+        f"ort.preload_dlls() ran."
+    )
 
 
 def _make_session(
@@ -1306,8 +1310,9 @@ def _make_session(
 
     the CUDA->CPU fallback is *not* silent.
     After the session is built, `_assert_session_gpu_bound` raises
-    `CpuFallbackError` if a CUDA EP was available but ORT bound CPU-only,
-    unless `allow_cpu_fallback` is set.
+    `CpuFallbackError` if ORT bound it CPU-only -- including on a build
+    with no CUDA EP at all -- unless the test-only `allow_cpu_fallback`
+    is set.
     """
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -2155,9 +2160,9 @@ class RealtimeEngine:
         self.stats.trt_active_for = dict(_TRT_ACTIVE_PER_SESSION)
         self.stats.trt_init_errors = dict(_TRT_INIT_ERRORS)
         # record whether any model session
-        # bound CPU-only. Only reachable when cfg.allow_cpu_fallback is set --
-        # otherwise `_make_session` raises CpuFallbackError above. Surfaced
-        # by `woys diag` so a deliberate CPU-only run is visible.
+        # bound CPU-only. Only reachable through the test-only
+        # cfg.allow_cpu_fallback -- otherwise `_make_session` raises
+        # CpuFallbackError above. Printed by `woys diag`.
         self.stats.cpu_fallback_active = any(
             _session_is_cpu_only(s) for s in (self._cv, self._rmvpe, self._rvc) if s is not None
         )

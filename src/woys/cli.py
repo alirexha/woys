@@ -426,6 +426,12 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
             print("  tensorrt         : enabled but no sessions loaded yet")
     else:
         print("  tensorrt         : disabled by config")
+    # Only a test build can get here with CPU-bound sessions (the engine
+    # hard-fails them otherwise), but say so loudly if it ever happens.
+    if s.cpu_fallback_active:
+        print("  cpu fallback     : YES - model sessions bound CPU-only (not realtime-capable)")
+    else:
+        print("  cpu fallback     : no")
     print(f"  player backend   : {engine.player_backend or 'unknown'}")
     print(f"  chunks_processed : {s.chunks_processed}")
     print(f"  avg total e2e    : {s.avg_total_ms:.1f} ms")
