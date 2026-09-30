@@ -167,6 +167,11 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
         # huggingface_hub versions), defer to the repo's main branch
         # but warn that the SHA verify is the only line of defense.
         pinned_revision = "main"
+        print(
+            f"  [warn] {repo}: commit not pinned (huggingface_hub reported no sha); "
+            f"downloading from 'main', only the per-file sha256 check applies",
+            file=sys.stderr,
+        )
     # B25 / sec-009: build a name -> expected SHA map from the HF API. lfs files
     # have a `lfs` blob with `sha256`; small (non-lfs) files surface their git
     # blob_id in `blob_id` (which is *not* SHA256 but *is* a stable content
@@ -219,7 +224,9 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
         # de-conflict with prefix if needed).
         base = Path(rfn).name
         local = models_dir / base
-        if local.exists() and local.stat().st_size == Path(cached).stat().st_size:
+        # Same content, not same size: an equal-length stale or corrupt
+        # file used to be kept and reported as present.
+        if local.exists() and _same_content(local, Path(cached), expected):
             print(f"  [skip] {local.name} already present")
             landed.append(local)
             continue
@@ -236,6 +243,12 @@ def download_repo(repo: str, models_dir: Path = MODELS_DIR) -> list[Path]:
         print(f"  [get ] {local.name}  ({size_mib:.1f} MiB){verified}")
         landed.append(local)
     return landed
+
+
+def _same_content(local: Path, cached: Path, expected: str | None) -> bool:
+    if local.samefile(cached):  # our own earlier hardlink
+        return True
+    return _sha256_of(local) == (expected or _sha256_of(cached))
 
 
 def _sha256_of(path: Path) -> str:

@@ -79,3 +79,34 @@ def test_download_refuses_foundation_weight_names(
     assert fake_hub["requested"] == ["voice.onnx"]
     err = capsys.readouterr().err
     assert "contentvec-f.onnx" in err and "rmvpe_wrapped.onnx" in err
+
+
+def test_download_replaces_a_same_size_local_file_with_other_bytes(
+    fake_hub: dict[str, Any], tmp_path: Path
+) -> None:
+    from woys.models import download_repo
+
+    models = tmp_path / "models"
+    models.mkdir()
+    stale = models / "voice.onnx"
+    stale.write_bytes(b"A STALE")  # same length as b"a voice"
+
+    download_repo("someone/voices", models)
+
+    assert stale.read_bytes() == b"a voice"
+
+
+def test_download_warns_when_the_revision_cannot_be_pinned(
+    fake_hub: dict[str, Any], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import huggingface_hub
+
+    from woys.models import download_repo
+
+    info = huggingface_hub.HfApi().repo_info("x")
+    info.sha = None
+    models = tmp_path / "models"
+
+    download_repo("someone/voices", models)
+
+    assert "not pinned" in capsys.readouterr().err
