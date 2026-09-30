@@ -418,6 +418,10 @@ class WoysApp(App[int]):
         # clears its `last_error` so a *new* error matching an earlier
         # string still surfaces.
         self._last_notified_error: str | None = None
+        # Set when quit starts. The control socket keeps answering while
+        # engine.stop() runs off the loop; nothing may start or swap the
+        # engine in that window, or quit exits with it still running.
+        self._quitting = False
 
     def on_mount(self) -> None:
         # a PipeWire-setup failure is BLOCKING.
@@ -462,6 +466,8 @@ class WoysApp(App[int]):
 
     def _handle_control(self, cmd: str) -> str:
         cmd = cmd.strip()
+        if self._quitting and (cmd == "TOGGLE" or cmd.startswith(("MODEL ", "PROFILE "))):
+            return "ERR quitting"
         if cmd == "TOGGLE":
             outcome = self.call_from_thread(self._toggle_engine)
             if outcome is None:
@@ -660,6 +666,8 @@ class WoysApp(App[int]):
     def _toggle_engine(self) -> str | None:
         """Toggle and say which way: "stopping", "starting", or None when
         the start failed (already recorded and toasted)."""
+        if self._quitting:
+            return None
         if self.engine.stats.running:
             self.notify("stopping engine…", severity="information", timeout=10)
 
@@ -777,6 +785,8 @@ class WoysApp(App[int]):
         the TUI never freezes; each swap completes in order, and the
         StatusPanel shows `loading X…` while one is in flight.
         """
+        if self._quitting:
+            return
         self._reload_profiles()
         names = list_profiles(self.cfg)
         if not names:
@@ -987,6 +997,9 @@ class WoysApp(App[int]):
         the event loop alive for set_interval ticks (which now render
         UNDER the modal) until the teardown trio finishes.
         """
+        if self._quitting:
+            return
+        self._quitting = True
         self.push_screen(ShutdownScreen())
         await asyncio.to_thread(self.engine.stop)
         await asyncio.to_thread(self._control.stop)
