@@ -233,8 +233,8 @@ if [ "$NO_SYSTEMD" -eq 0 ]; then
     # systemd's user manager does not read shell rc files, so ~/.local/bin
     # is usually not on its PATH and `/usr/bin/env woys` exits 127 at login.
     # The installed copy gets the absolute launcher path instead, quoted and
-    # %-escaped for systemd. The repo template keeps /usr/bin/env for the
-    # PKGBUILD, which installs /usr/bin/woys.
+    # %-escaped for systemd. The repo template keeps `/usr/bin/env woys` as
+    # the placeholder this awk replaces.
     unit_bin="$VENV/bin/woys"
     unit_bin="${unit_bin//\\/\\\\}"
     unit_bin="${unit_bin//\"/\\\"}"

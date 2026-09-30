@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CI gate that catches version-drift between the
 # single source (src/woys/__init__.py::__version__) and the documentation
-# surfaces that historically drifted (README.md, pkg/PKGBUILD, pkg/.SRCINFO).
+# surface that historically drifted (the README.md status header).
 #
 # Historical references inside CHANGELOG.md, docs/, LESSONS.md, and inline
 # code comments are *journal entries* (e.g. "v0.9.0: feature X was
@@ -31,21 +31,6 @@ if [[ "$status_headers" != "1" ]]; then
 elif ! grep -qE "^## Status \(v${VERSION}\)$" README.md; then
     actual=$(grep -oE '^## Status \(v[0-9]+\.[0-9]+\.[0-9]+\)' README.md | head -n1)
     echo "FAIL: README.md '$actual' does not match __init__.py (v$VERSION)" >&2
-    fail=1
-fi
-
-# pkg/PKGBUILD pkgver= must match
-if ! grep -qE "^pkgver=${VERSION}$" pkg/PKGBUILD; then
-    actual=$(grep -oE '^pkgver=[0-9]+\.[0-9]+\.[0-9]+' pkg/PKGBUILD || echo "(none)")
-    echo "FAIL: pkg/PKGBUILD $actual does not match __init__.py (v$VERSION)" >&2
-    fail=1
-fi
-
-# pkg/.SRCINFO carries the version twice: pkgver and the source tag
-if ! grep -qE "^[[:space:]]+pkgver = ${VERSION}$" pkg/.SRCINFO \
-    || ! grep -qE "^[[:space:]]+source = woys-${VERSION}::.*#tag=v${VERSION}$" pkg/.SRCINFO; then
-    actual=$(grep -oE 'pkgver = [0-9]+\.[0-9]+\.[0-9]+' pkg/.SRCINFO || echo "(none)")
-    echo "FAIL: pkg/.SRCINFO $actual (or its source tag) does not match __init__.py (v$VERSION)" >&2
     fail=1
 fi
 

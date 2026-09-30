@@ -68,7 +68,6 @@ Source code (Python) — all *.py under src/{woys,audio,tui}/:
   src/tui/app.py
   src/tui/config.py
   src/tui/control.py
-  src/tui/hotkey.py
 
 Tests — all tests/test_*.py and tests/conftest.py:
   tests/conftest.py
@@ -146,7 +145,6 @@ Tests — all tests/test_*.py and tests/conftest.py:
   tests/test_engine_warmup_stage.py
   tests/test_engine_worker_errors.py
   tests/test_environment.py
-  tests/test_evdev_hotkey_leaks.py
   tests/test_fp16_convert_atomic.py
   tests/test_gpu_anti_jitter.py
   tests/test_index_free.py
@@ -165,7 +163,6 @@ Tests — all tests/test_*.py and tests/conftest.py:
   tests/test_pacat_health.py
   tests/test_package_lazy_imports.py
   tests/test_pickle_consent_env_var_removed.py
-  tests/test_pkg_metadata.py
   tests/test_probe_rvc_sr.py
   tests/test_profiles.py
   tests/test_profiles_config_lock_mode.py
@@ -234,9 +231,6 @@ Native helpers (C):
 Packaging:
   install.sh
   uninstall.sh
-  pkg/PKGBUILD
-  pkg/.SRCINFO
-  pkg/README-AUR.md
   pkg/woys-mic.service
 
 Configuration & metadata:

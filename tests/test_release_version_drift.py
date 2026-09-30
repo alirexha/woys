@@ -1,6 +1,6 @@
-"""pkg/.SRCINFO carries the version twice (pkgver and the source tag). It
-drifted to 0.13.3 while PKGBUILD moved on, because neither the drift gate
-nor release.py looked at it.
+"""The README "## Status (vX.Y.Z)" header is the one documentation surface
+that still carries the version. The drift gate must catch a stale header,
+and release.py must bring it back in step.
 
 Both scripts run here against a throwaway copy of the files they touch.
 
@@ -19,8 +19,6 @@ _FILES = (
     "src/woys/__init__.py",
     "README.md",
     "pyproject.toml",
-    "pkg/PKGBUILD",
-    "pkg/.SRCINFO",
     "scripts/check_version_drift.sh",
     "scripts/release.py",
 )
@@ -49,28 +47,31 @@ def _drift_check(root: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_srcinfo_matches_the_single_source() -> None:
-    srcinfo = (REPO / "pkg" / ".SRCINFO").read_text()
-    v = _version()
-    assert f"\tpkgver = {v}\n" in srcinfo
-    assert f"source = woys-{v}::" in srcinfo and f"#tag=v{v}\n" in srcinfo
+def _make_readme_stale(root: Path) -> Path:
+    readme = root / "README.md"
+    header = f"## Status (v{_version()})"
+    assert header in readme.read_text()
+    readme.write_text(readme.read_text().replace(header, "## Status (v0.0.1)"))
+    return readme
 
 
-def test_drift_check_catches_a_stale_srcinfo(tmp_path: Path) -> None:
+def test_readme_matches_the_single_source() -> None:
+    assert f"\n## Status (v{_version()})\n" in (REPO / "README.md").read_text()
+
+
+def test_drift_check_catches_a_stale_readme(tmp_path: Path) -> None:
     root = _copy_repo(tmp_path)
     assert _drift_check(root).returncode == 0
-    srcinfo = root / "pkg" / ".SRCINFO"
-    srcinfo.write_text(srcinfo.read_text().replace(_version(), "0.0.1"))
+    _make_readme_stale(root)
     proc = _drift_check(root)
-    assert proc.returncode == 1 and ".SRCINFO" in proc.stderr, proc.stdout + proc.stderr
+    assert proc.returncode == 1 and "README.md" in proc.stderr, proc.stdout + proc.stderr
 
 
-def test_release_updates_srcinfo(tmp_path: Path) -> None:
+def test_release_updates_readme(tmp_path: Path) -> None:
     root = _copy_repo(tmp_path)
-    srcinfo = root / "pkg" / ".SRCINFO"
-    srcinfo.write_text(srcinfo.read_text().replace(_version(), "0.0.1"))
+    readme = _make_readme_stale(root)
     subprocess.run(
         [sys.executable, str(root / "scripts" / "release.py")], check=True, capture_output=True
     )
-    assert srcinfo.read_text() == (REPO / "pkg" / ".SRCINFO").read_text()
+    assert readme.read_text() == (REPO / "README.md").read_text()
     assert _drift_check(root).returncode == 0

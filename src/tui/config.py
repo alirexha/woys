@@ -100,9 +100,10 @@ class AppConfig:
     # rejected in favor of the Unix-domain control socket (see
     # the project notes "D-Bus is replaced by Unix-domain sockets"). A
     # dead config field carries the implication that the feature
-    # might land -- it won't.
-    enable_evdev_hotkey: bool = False
-    evdev_hotkey: str = "ctrl+alt+v"  # only meaningful when enable_evdev_hotkey=True
+    # might land -- it won't. The `enable_evdev_hotkey` / `evdev_hotkey`
+    # fields went the same way in 0.16.2: nothing ever started the evdev
+    # listener, and a desktop shortcut on `woys toggle` does the job without
+    # raw input access. Old config files keep the keys through `_extras`.
 
     # Pass-through bag for unknown keys; kept on save so user-added fields survive.
     _extras: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -157,7 +158,6 @@ _FIELD_VALIDATORS: dict[str, _FieldSpec] = {
     "rvc_model": _FieldSpec(str),
     "sink_name": _FieldSpec(str),
     "embedder": _FieldSpec(str, choices=("onnx",)),
-    "evdev_hotkey": _FieldSpec(str),
     "gpu_anti_jitter_mode": _FieldSpec(str, choices=("off", "keepalive", "clock_lock", "both")),
     # Numeric -- pitch / speaker / rates.
     "f0_up_key": _FieldSpec(int, minimum=-24, maximum=24),
@@ -195,7 +195,6 @@ _FIELD_VALIDATORS: dict[str, _FieldSpec] = {
     "prefer_pw_cat": _FieldSpec(bool),
     "prefer_native_pw": _FieldSpec(bool),
     "autostart_engine": _FieldSpec(bool),
-    "enable_evdev_hotkey": _FieldSpec(bool),
     "gpu_keepalive_enabled": _FieldSpec(bool),
     "gpu_clock_lock_enabled": _FieldSpec(bool),
     "gpu_keepalive_torch_stream": _FieldSpec(bool),

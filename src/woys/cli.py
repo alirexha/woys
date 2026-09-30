@@ -1048,7 +1048,7 @@ def main(argv: list[str] | None = None) -> int:
     # MUST run before any Textual import. See `_prewarm_mp_resource_tracker`.
     _prewarm_mp_resource_tracker()
     # configure the rotating file log before
-    # anything else, so every `getLogger("woys.*")` call (hotkey, control,
+    # anything else, so every `getLogger("woys.*")` call (control,
     # the guard below, ...) lands in $XDG_STATE_HOME/woys/woys.log instead
     # of Python's lastResort stderr, which Textual hijacks.
     from woys.logsetup import setup_logging

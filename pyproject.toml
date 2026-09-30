@@ -79,8 +79,6 @@ dev = [
     "soundfile>=0.12",
     "scipy>=1.13",
 ]
-# evdev is opt-in for the global hotkey (CS2/VAC users should stay off).
-evdev = ["evdev>=1.7"]
 # Optional system-tray icon (KDE Plasma 6 / GNOME via libappindicator).
 # pystray pulls in Pillow + xlib/dbus runtime libs.
 tray = ["pystray>=0.19", "pillow>=10"]
@@ -141,7 +139,7 @@ disallow_any_unimported = false
 exclude = ["upstream/", ".venv/", "build/", "src/server/"]
 
 [[tool.mypy.overrides]]
-module = ["soundfile", "sounddevice", "evdev", "textual.*", "rich.*", "onnxruntime", "onnxruntime.*", "numpy.*", "scipy.*", "torch.*", "huggingface_hub.*", "onnxconverter_common", "onnxconverter_common.*", "onnx", "onnx.*", "pystray", "pystray.*", "PIL", "PIL.*", "tensorrt_libs"]
+module = ["soundfile", "sounddevice", "textual.*", "rich.*", "onnxruntime", "onnxruntime.*", "numpy.*", "scipy.*", "torch.*", "huggingface_hub.*", "onnxconverter_common", "onnxconverter_common.*", "onnx", "onnx.*", "pystray", "pystray.*", "PIL", "PIL.*", "tensorrt_libs"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

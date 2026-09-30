@@ -229,15 +229,6 @@ woys chain teardown
 See `docs/23-rnnoise-chain.md` for the measured impact and the
 v0.13.0 → v0.13.3 history.
 
-### AUR
-
-`pkg/PKGBUILD` is a draft and does **not** produce a working package
-yet: it declares none of the Python dependencies, does not build or
-ship the `woys-pw-out` helper that woys plays audio through, and the
-pinned torch / onnxruntime-gpu need Python < 3.13 while Arch ships a
-newer one. `pkg/README-AUR.md` lists what is missing. `./install.sh` is
-the supported install path.
-
 ## Credits
 
 This fork is built on the work of **[w-okada](https://github.com/w-okada)**

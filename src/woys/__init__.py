@@ -4,7 +4,7 @@ Single source of truth for the project version. Hatchling reads `__version__`
 out of this file at build time (`[tool.hatch.version]` in pyproject.toml);
 everything else that needs the version (CLI banner, `--version`, `woys info`)
 imports it from here. Bump the literal below, then run
-`python scripts/release.py` to propagate it to README/PROGRESS/PKGBUILD.
+`python scripts/release.py` to propagate it to the README status header.
 """
 
 __version__ = "0.16.1"

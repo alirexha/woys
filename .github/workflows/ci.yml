@@ -91,7 +91,7 @@ jobs:
       - uses: actions/checkout@v4
       # F-merged-029: keep src/woys/__init__.py::__version__ in sync with
       # the documentation surfaces that historically drifted (README.md
-      # "## Status (vX.Y.Z)" header, pkg/PKGBUILD pkgver=). Run
+      # "## Status (vX.Y.Z)" header). Run
       # `python scripts/release.py` after bumping __init__.py to make this
       # green; the gate fails the build otherwise.
       - name: version drift across user-facing surfaces
