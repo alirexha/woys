@@ -666,7 +666,16 @@ def save_config(cfg: AppConfig, path: Path | None = None) -> None:
         raise ConfigNotSavedError(
             f"not saving config: {cfg._load_error}. Fix or move that file, then retry."
         )
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # The header below promises a 0700 directory. mkdir's default mode
+    # under the usual umask 022 is 0755, so ask for 0700 when woys creates
+    # it (chmod too: mkdir's mode is still masked by the umask); a
+    # directory the user made (e.g. a WOYS_CONFIG_DIR) keeps its mode.
+    try:
+        path.parent.mkdir(mode=0o700, parents=True)
+    except FileExistsError:
+        pass
+    else:
+        os.chmod(path.parent, 0o700)
     data = {k: v for k, v in asdict(cfg).items() if not k.startswith("_")}
     data.update(cfg._extras)
     # Write atomically via .tmp + rename so a crash mid-write can't corrupt
