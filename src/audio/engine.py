@@ -3033,10 +3033,13 @@ class RealtimeEngine:
                     return
                 self._worker_preamble()
             self.stats.warmup_stage = "ready"
-        except (FileNotFoundError, RuntimeError, OSError) as e:
-            # PipeWireError is RuntimeError so it falls into this
-            # bucket. We name it in the docstring above for the
-            # benefit of grep / IDE.
+        except Exception as e:
+            # Broad on purpose: onnxruntime's InvalidProtobuf / Fail /
+            # NoSuchFile derive straight from Exception, so a corrupt
+            # model would otherwise kill this thread silently and leave
+            # the engine "running" at "loading sessions" forever.
+            # PipeWireError and CpuFallbackError are RuntimeErrors and
+            # land here too.
             self.stats.warmup_stage = f"crashed: {type(e).__name__}"
             self.stats.crashed = True
             self.record_error(f"engine warmup: {type(e).__name__}: {e}")
