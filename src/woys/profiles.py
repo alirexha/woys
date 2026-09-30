@@ -195,6 +195,8 @@ def cli_profile_use(name: str) -> int:
     - TUI not running (any of the three `ERR control socket ...`
       strings, see control.py:264, :287, :288) -> persist config +
       return 0 (next `woys run` picks it up).
+    - Any other `ERR ...` reply (job timeout, internal error) ->
+      persist config + return 1.
     - Unknown reply class -> persist + return 0 (back-compat -- the
       pre-fix unconditional write).
     """
@@ -242,6 +244,16 @@ def cli_profile_use(name: str) -> int:
         print(f"[profile] active profile -> {name}")
         print("  (engine not running; the next `woys run` will load it)")
         return 0
+    if reply.startswith("ERR"):
+        # The TUI answered but did not apply the profile (job timed out,
+        # unknown job, internal error, ...). Keep the user's intent on
+        # disk but don't report success.
+        _persist()
+        print(
+            f"[profile] live-apply failed (config still updated): {reply}",
+            file=sys.stderr,
+        )
+        return 1
     # Unknown reply class. Preserve pre-fix behavior: persist config so
     # we don't silently drop the user's intent.
     _persist()
