@@ -80,6 +80,14 @@ woys chain teardown # unloads
 `woys chain status` shows currently-loaded chain modules, sources
 visible to apps, and runs an automatic ALSA-hardware-leak check (so
 a future regression of the v0.13.0 bug shows up loud, not silent).
+`woys chain status --check` (what `woys-mic.service` runs after
+setup) exits non-zero when that check fails, and also when `pactl` or
+`pw-link` cannot answer, instead of passing on missing data.
+
+`woys chain teardown` and `woys chain disable` exit with status 2 when
+a chain module is still loaded afterwards or a `systemctl` step
+failed; `pactl list short modules | grep woys` shows what is left.
+`woys pw teardown` does the same for the woys-mic modules.
 
 v0.14.0: the parallel shell-script implementation
 (`scripts/v013_2_rnnoise_chain.sh`) was retired -- it duplicated the
