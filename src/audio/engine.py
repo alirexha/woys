@@ -67,7 +67,7 @@ import subprocess
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -1187,6 +1187,22 @@ _TRT_INIT_ERRORS: dict[str, str] = {}
 # broken binary/config, not a transient PipeWire hiccup (a one-off death
 # respawns once and the counter resets on the next healthy tick).
 _PLAYER_RESPAWN_CAP = 8
+
+# EngineStats fields that describe more than one run, so start() keeps them
+# when it resets the per-session counters: the error ring, and the GPU
+# clock-lock state (`_apply_gpu_clock_lock` recovers a lock whose revert
+# failed on the previous stop).
+_STATS_KEPT_ACROSS_RUNS = frozenset(
+    {
+        "error_history",
+        "gpu_clock_lock_active",
+        "gpu_clock_lock_floor_mhz",
+        "gpu_clock_lock_ceiling_mhz",
+        "gpu_clock_lock_last_message",
+        "gpu_clock_lock_revert_failed",
+        "_internal_lock",
+    }
+)
 
 # parent-death signal for playback-helper
 # children. Loaded once at import; None off non-glibc-Linux (then the
@@ -3062,6 +3078,7 @@ class RealtimeEngine:
                 # as the "prior" to restore and leaks the old child.
                 self._teardown_locked(timeout=2.0)
             self._stop_event.clear()
+            self._reset_session_stats()
             self.stats.crashed = False
             self._stopped = False
             # Reset the signal-handler re-entrancy guard so a restarted engine
@@ -3088,6 +3105,18 @@ class RealtimeEngine:
                 target=self._worker_main, name="woys-engine", daemon=True
             )
             self._thread.start()
+
+    def _reset_session_stats(self) -> None:
+        """Zero the per-session counters for a new run. In place: the TUI,
+        the CLI and `_stats_lock` all hold this object. Without it the
+        second run inherited chunks_processed >= 10 (the TUI's warmup
+        indicator never showed again) and mixed late/max/avg/drop counts
+        across sessions."""
+        fresh = EngineStats()
+        with self._stats_lock:
+            for f in fields(EngineStats):
+                if f.name not in _STATS_KEPT_ACROSS_RUNS:
+                    setattr(self.stats, f.name, getattr(fresh, f.name))
 
     def _worker_main(self) -> None:
         """Worker-thread entry: cold-start preamble + chunk loop.
