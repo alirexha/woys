@@ -7,8 +7,8 @@
 #   $HOME/.config/systemd/user/woys-mic.service
 #
 # v0.6.0: detects an existing vcclient-cachy install and migrates it
-# losslessly before installing the new code (config + models + systemd
-# unit all move).
+# (config + models + systemd unit all move) once the new venv and its
+# dependencies have been built.
 # v0.6.5: PipeWire mic name renamed `vcclient-mic` → `woys-mic`. Apps
 # (Discord / CS2 / Telegram) need to re-select their input device once.
 # v0.8.0: the deprecated `vcclient-cachy` shim was removed entirely (kept
