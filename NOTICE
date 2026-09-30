@@ -36,18 +36,6 @@ covered by ./LICENSE (All Rights Reserved). The explicit enumeration is
 maintained for legal-audit purposes.
 
 Source code (Python) — all *.py under src/{woys,audio,tui}/:
-  src/audio/__init__.py
-  src/audio/engine.py
-  src/audio/inference_client.py
-  src/audio/inference_worker.py
-  src/audio/pipewire.py
-  src/audio/priority.py
-  src/audio/sola.py
-  src/tui/__init__.py
-  src/tui/app.py
-  src/tui/config.py
-  src/tui/control.py
-  src/tui/hotkey.py
   src/woys/__init__.py
   src/woys/chain.py
   src/woys/cli.py
@@ -60,6 +48,27 @@ Source code (Python) — all *.py under src/{woys,audio,tui}/:
   src/woys/tray.py
   src/woys/vcprofile.py
   src/woys/xdg.py
+  src/audio/__init__.py
+  src/audio/engine.py
+  src/audio/engine_config.py
+  src/audio/engine_stats.py
+  src/audio/gpu_tuning.py
+  src/audio/inference.py
+  src/audio/inference_client.py
+  src/audio/inference_worker.py
+  src/audio/model_swap.py
+  src/audio/pipewire.py
+  src/audio/pitch.py
+  src/audio/playback.py
+  src/audio/priority.py
+  src/audio/resample.py
+  src/audio/sessions.py
+  src/audio/sola.py
+  src/tui/__init__.py
+  src/tui/app.py
+  src/tui/config.py
+  src/tui/control.py
+  src/tui/hotkey.py
 
 Tests — all tests/test_*.py and tests/conftest.py:
   tests/conftest.py
