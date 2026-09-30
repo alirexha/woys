@@ -18,9 +18,9 @@ update class because the user only learns "audio stopped" via their
 ears).
 
 Post-fix every append and every iteration goes through the shared
-`stats._internal_lock` (= `engine._stats_lock`). These tests pound
-on the bug-class directly: one thread appends; another iterates;
-no `RuntimeError` may surface.
+`stats._internal_lock` (= `engine._stats_lock`). These tests check
+that each snapshot accessor iterates its deque while holding that
+lock, plus a structural pin on the source.
 
 Original work - Copyright (c) 2026 Alireza Hamayeli, All Rights Reserved.
 """
@@ -30,7 +30,12 @@ from __future__ import annotations
 import sys
 import threading
 import time
+from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 if str(REPO / "src") not in sys.path:
@@ -53,83 +58,65 @@ def test_stats_internal_lock_is_aliased_to_engine_stats_lock() -> None:
     )
 
 
-def test_writer_interval_snapshot_under_concurrent_append_does_not_raise() -> None:
-    """Bug-class test for engine.py:3125 (pre-fix `np.array(deque)`).
-    One thread appends to `_writer_intervals_ms` like the writer
-    does; another thread iterates like the TUI poll does. Pre-fix
-    the iterator would eventually see a mid-mutation deque and raise
-    `RuntimeError: deque mutated during iteration`, killing the
-    reader thread. Post-fix both sides serialize under
-    `_internal_lock` so the reader never observes a torn deque."""
+# accessor -> the rolling-window deque it snapshots
+_SNAPSHOT_FIELDS = {
+    "inference_samples": "_recent_inference",
+    "total_samples": "_recent_total",
+    "mic_read_samples_ms": "_recent_mic_read_ms",
+    "enqueue_lag_samples_ms": "_recent_enqueue_lag_ms",
+    "cv_samples_ms": "_recent_cv_ms",
+    "rmvpe_samples_ms": "_recent_rmvpe_ms",
+    "rvc_samples_ms": "_recent_rvc_ms",
+    "writer_interval_samples_ms": "_writer_intervals_ms",
+    "rvc_pre_samples_ms": "_recent_rvc_pre_ms",
+    "rvc_run_samples_ms": "_recent_rvc_run_ms",
+    "rvc_post_samples_ms": "_recent_rvc_post_ms",
+}
+
+
+class _LockCheckingDeque(deque[float]):
+    """Records, on every iteration, whether the stats lock is held by the
+    iterating thread. A thread-race test cannot show this: `list(deque)`
+    copies in one C call under the GIL, so an appender never interleaves
+    with it and a missing lock still passes."""
+
+    def __init__(self, src: deque[float], lock: Any) -> None:
+        super().__init__(src, maxlen=src.maxlen)
+        self._lock = lock
+        self.iterated_unlocked = 0
+        self.iterated_locked = 0
+
+    def __iter__(self) -> Iterator[float]:
+        if self._lock._is_owned():
+            self.iterated_locked += 1
+        else:
+            self.iterated_unlocked += 1
+        return super().__iter__()
+
+
+@pytest.mark.parametrize(("accessor", "field_name"), sorted(_SNAPSHOT_FIELDS.items()))
+def test_snapshot_accessor_iterates_under_internal_lock(accessor: str, field_name: str) -> None:
+    """Each rolling-window accessor must copy its deque while holding
+    `_internal_lock`, the lock every appender takes, so a concurrent
+    append can never raise `deque mutated during iteration` in the
+    reader (TUI poll / `woys diag`)."""
     from audio import engine
 
     eng = engine.RealtimeEngine(engine.EngineConfig())
-    stop = threading.Event()
-    errors: list[BaseException] = []
+    stats = eng.stats
+    spy = _LockCheckingDeque(getattr(stats, field_name), stats._internal_lock)
+    spy.extend([1.0, 2.0, 3.0])
+    setattr(stats, field_name, spy)
 
-    def appender() -> None:
-        while not stop.is_set():
-            with eng._stats_lock:
-                eng.stats._writer_intervals_ms.append(time.monotonic() * 1000.0)
-            # Tight loop -- writer interval can be hundreds of µs.
+    snap = getattr(stats, accessor)()
 
-    def reader() -> None:
-        try:
-            for _ in range(500):
-                snap = eng.stats.writer_interval_samples_ms()
-                # Force iteration (the np.array site at
-                # engine.py:3125 also iterates).
-                _ = list(snap)
-        except BaseException as e:
-            errors.append(e)
-
-    t_app = threading.Thread(target=appender, name="writer-mimic")
-    t_read = threading.Thread(target=reader, name="diag-mimic")
-    t_app.start()
-    t_read.start()
-    t_read.join(timeout=10.0)
-    stop.set()
-    t_app.join(timeout=2.0)
-
-    assert not errors, (
-        f"cross-thread iteration must not raise; got {len(errors)} exception(s): {errors[:3]!r}"
+    assert snap[-3:] == [1.0, 2.0, 3.0]
+    assert spy.iterated_locked + spy.iterated_unlocked > 0, (
+        f"{accessor}() must snapshot {field_name}"
     )
-    # Sanity: a non-trivial number of writes happened.
-    assert len(eng.stats._writer_intervals_ms) > 0
-
-
-def test_recent_inference_snapshot_under_concurrent_append_does_not_raise() -> None:
-    """Same shape as the writer test but on `_recent_inference` --
-    the deque appended-to from the engine worker thread and iterated
-    from TUI for inference percentiles."""
-    from audio import engine
-
-    eng = engine.RealtimeEngine(engine.EngineConfig())
-    stop = threading.Event()
-    errors: list[BaseException] = []
-
-    def appender() -> None:
-        while not stop.is_set():
-            with eng._stats_lock:
-                eng.stats._recent_inference.append(42.0)
-
-    def reader() -> None:
-        try:
-            for _ in range(500):
-                snap = eng.stats.inference_samples()
-                _ = sum(snap)  # forces iteration
-        except BaseException as e:
-            errors.append(e)
-
-    t_app = threading.Thread(target=appender, name="engine-mimic")
-    t_read = threading.Thread(target=reader, name="tui-mimic")
-    t_app.start()
-    t_read.start()
-    t_read.join(timeout=10.0)
-    stop.set()
-    t_app.join(timeout=2.0)
-
-    assert not errors
+    assert spy.iterated_unlocked == 0, (
+        f"{accessor}() iterated {field_name} without holding _internal_lock"
+    )
 
 
 def test_eleven_snapshot_methods_use_internal_lock() -> None:
