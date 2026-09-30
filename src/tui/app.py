@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -517,7 +518,15 @@ class WoysApp(App[int]):
                     f"rvc={r['rvc_ms']:.1f}ms "
                     f"input_rms={r['input_rms']:.4f}"
                 )
-            out_path.write_text("\n".join(lines) + "\n")
+            # O_NOFOLLOW: refuse a symlink planted at the path instead of
+            # writing through it; 0600 like the rest of the runtime dir.
+            try:
+                fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, "w") as f:
+                    os.fchmod(fd, 0o600)
+                    f.write("\n".join(lines) + "\n")
+            except OSError as e:
+                return f"ERR cannot write {out_path}: {e}"
             return f"OK wrote {len(log)} entries to {out_path}"
         if cmd.startswith("MODEL "):
             arg = cmd[len("MODEL ") :].strip()
