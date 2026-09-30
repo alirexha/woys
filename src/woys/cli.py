@@ -163,7 +163,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_imp.add_argument(
         "--name",
         default=None,
-        help="rename the imported profile (default: use the name embedded in the file)",
+        help=(
+            "rename the imported profile (default: use the name embedded in the "
+            "file); an existing profile with that name is refused unless --force"
+        ),
+    )
+    p_imp.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing profile of the same name",
     )
 
     sub.add_parser(
@@ -1038,7 +1046,10 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         if args.profile_cmd == "import":
             from woys.vcprofile import cli_profile_import
 
-            return cli_profile_import(args.path, args.name)
+            # Only pass `overwrite` when asked, so the call is unchanged
+            # for a plain import.
+            extra: dict[str, bool] = {"overwrite": True} if args.force else {}
+            return cli_profile_import(args.path, args.name, **extra)
     if args.cmd == "tray":
         from woys.tray import cli_tray
 
