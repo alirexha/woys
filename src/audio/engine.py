@@ -4182,9 +4182,13 @@ class RealtimeEngine:
             # let us install handlers; that's fine, engine.stop() still
             # cleans up on the normal exit path.
             with contextlib.suppress(OSError, ValueError):
-                self._prior_signal_handlers[sig] = signal.signal(
-                    sig, self._signal_handler_revert_lock
-                )
+                prior = signal.signal(sig, self._signal_handler_revert_lock)
+                # Our own handler is still installed when the last stop()
+                # ran off the main thread and could not restore; saving it
+                # as the "prior" would make SIGTERM re-raise into itself.
+                # Keep the real prior from the earlier run instead.
+                if prior != self._signal_handler_revert_lock:
+                    self._prior_signal_handlers[sig] = prior
 
     def _restore_prior_signal_handlers(self) -> None:
         """Re-install the SIGTERM/SIGINT handlers that were active before
@@ -4194,7 +4198,13 @@ class RealtimeEngine:
         so the signal handler can restore handlers without also triggering
         the `sudo nvidia-smi` fork. Fast and fork-free -- safe to call from
         the signal handler itself.
+
+        Off the main thread (the TUI stops the engine on a worker thread)
+        signal.signal() cannot run, so the saved handlers are kept for the
+        next main-thread restore instead of being dropped.
         """
+        if threading.current_thread() is not threading.main_thread():
+            return
         for sig, prior in self._prior_signal_handlers.items():
             with contextlib.suppress(OSError, ValueError):
                 signal.signal(sig, prior)
@@ -4272,15 +4282,25 @@ class RealtimeEngine:
             # A second signal arrived while we were mid-handler. The prior
             # handler is (being) restored; just re-raise and let it take
             # over -- don't redo _stop_event / handler-restore work.
+            self._drop_own_handler(signum)
             os.kill(os.getpid(), signum)
             return
         self._signal_received = signum
         self._stop_event.set()
         self._restore_prior_signal_handlers()
+        self._drop_own_handler(signum)
         # Re-raise. The prior handler is now installed; the kernel delivers
         # this signal to it. The clock-lock revert runs later, on a normal
         # stack, in stop().
         os.kill(os.getpid(), signum)
+
+    def _drop_own_handler(self, signum: int) -> None:
+        """If no prior handler was restored (none was saved), this handler
+        is still installed and the re-raise would land right back here
+        until RecursionError. Fall back to the default action instead."""
+        with contextlib.suppress(OSError, ValueError):
+            if signal.getsignal(signum) == self._signal_handler_revert_lock:
+                signal.signal(signum, signal.SIG_DFL)
 
     def _torch_keepalive_loop(self) -> None:
         """v0.11.0 - torch.cuda.Stream() based keepalive.
