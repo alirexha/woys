@@ -6,8 +6,12 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from woys import __version__
+
+if TYPE_CHECKING:
+    from tui.config import AppConfig
 
 # Upstream-style imports (from voice_changer.X) require src/server/ on sys.path.
 _SERVER_ROOT = Path(__file__).resolve().parent.parent / "server"
@@ -336,6 +340,22 @@ def cmd_pw_teardown() -> int:
     return 0
 
 
+def _configured_rvc_model(cfg: AppConfig) -> Path | None:
+    """The voice model config.toml asks for: None for "" (the default
+    voice). A configured path that does not exist raises instead of quietly
+    running the default voice in its place -- a stale path or an unmounted
+    drive should say so, not change the user's voice."""
+    if not cfg.rvc_model:
+        return None
+    path = Path(cfg.rvc_model).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"configured rvc_model not found: {path} (set it with `woys models use`, "
+            f'or rvc_model = "" in config.toml for the default voice)'
+        )
+    return path
+
+
 def _print_recent_errors(errors: list[tuple[float, str, str]]) -> None:
     """Print the engine's error ring (oldest first). `last_error` clears
     itself one chunk after it is written, so a run that hit errors and then
@@ -383,7 +403,7 @@ def cmd_diag(seconds: float, no_engine: bool) -> int:
 
     print(f"---- engine self-test ({seconds:.1f} s) ----")
     cfg = load_config()
-    rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
+    rvc_path = _configured_rvc_model(cfg)
     # one forwarding helper, not a
     # hand-written EngineConfig(...) block. The pre-fix block here silently
     # omitted mic_rate / sink_rate, so `woys diag` ran 48 kHz defaults on
@@ -727,7 +747,7 @@ def _cmd_engine_locked(seconds: float, quiet: bool) -> int:
         return 2
 
     cfg = load_config()
-    rvc_path = Path(cfg.rvc_model) if cfg.rvc_model and Path(cfg.rvc_model).exists() else None
+    rvc_path = _configured_rvc_model(cfg)
     # one forwarding helper, not a
     # hand-written EngineConfig(...) block. The pre-fix block here silently
     # omitted mic_rate / sink_rate, so `woys engine` ran 48 kHz defaults on
