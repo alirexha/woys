@@ -424,8 +424,12 @@ class WoysApp(App[int]):
     def _handle_control(self, cmd: str) -> str:
         cmd = cmd.strip()
         if cmd == "TOGGLE":
-            self.call_from_thread(self.action_toggle_engine)
-            return "OK toggled"
+            outcome = self.call_from_thread(self._toggle_engine)
+            if outcome is None:
+                # `woys toggle` exits non-zero only on ERR, so a failed
+                # start must not read as success.
+                return f"ERR {self.engine.stats.last_error or 'engine start failed'}"
+            return f"OK toggled ({outcome})"
         if cmd.startswith("PITCH "):
             arg = cmd[len("PITCH ") :].strip()
             if arg in ("0", "+0", "-0"):
@@ -605,6 +609,11 @@ class WoysApp(App[int]):
         immediately so the user knows the action took. The success
         notification fires when the worker finishes (via
         `call_from_thread` so it lands on the event loop)."""
+        self._toggle_engine()
+
+    def _toggle_engine(self) -> str | None:
+        """Toggle and say which way: "stopping", "starting", or None when
+        the start failed (already recorded and toasted)."""
         if self.engine.stats.running:
             self.notify("stopping engine…", severity="information", timeout=10)
 
@@ -615,8 +624,11 @@ class WoysApp(App[int]):
                 )
 
             threading.Thread(target=_stop_in_background, name="woys-tui-stop", daemon=True).start()
-        elif self._start_engine():
-            self.notify("engine starting (cudnn warmup ~2s)", severity="information", timeout=2)
+            return "stopping"
+        if not self._start_engine():
+            return None
+        self.notify("engine starting (cudnn warmup ~2s)", severity="information", timeout=2)
+        return "starting"
 
     def _start_engine(self) -> bool:
         """Start the engine. Returns True on success, False if start failed
