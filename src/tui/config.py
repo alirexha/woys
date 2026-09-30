@@ -25,8 +25,8 @@ from typing import Any
 
 import tomli_w
 
-from audio.engine import USER_VISIBLE_ENGINE_FIELDS as _USER_VISIBLE_ENGINE_FIELDS
-from audio.engine import EngineConfig as _EngineConfig
+from audio.engine_config import USER_VISIBLE_ENGINE_FIELDS as _USER_VISIBLE_ENGINE_FIELDS
+from audio.engine_config import EngineConfig as _EngineConfig
 from woys.xdg import config_dir as _config_dir
 
 CONFIG_DIR = _config_dir()

@@ -37,12 +37,12 @@ def _ensure_audio_path() -> None:
 
 
 # B9 / arch-005 - derive _PROFILE_FIELDS from the single source of truth
-# in `audio.engine.USER_VISIBLE_ENGINE_FIELDS`. Adding a user-visible
+# in `audio.engine_config.USER_VISIBLE_ENGINE_FIELDS`. Adding a user-visible
 # EngineConfig field there now automatically makes it survive a profile
 # save/use cycle. Pre-v0.8.0, this was a hand-maintained tuple that lost
 # `input_gate_dbfs`, `prefer_pw_cat`, etc. - exactly the rc4 drift class.
 _ensure_audio_path()
-from audio.engine import USER_VISIBLE_ENGINE_FIELDS as _ENGINE_FIELDS  # noqa: E402
+from audio.engine_config import USER_VISIBLE_ENGINE_FIELDS as _ENGINE_FIELDS  # noqa: E402
 
 # `rvc_model` is a profile field too, but it's stored as a string at this
 # layer (Path on EngineConfig). Prepend explicitly.

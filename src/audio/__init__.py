@@ -12,7 +12,8 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from audio.engine import EngineConfig, EngineStats, RealtimeEngine
+    from audio.engine import EngineStats, RealtimeEngine
+    from audio.engine_config import EngineConfig
     from audio.pipewire import (
         PipeWireError,
         VirtualMic,
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
     )
 
 _EXPORTS = {
-    "EngineConfig": "audio.engine",
+    "EngineConfig": "audio.engine_config",
     "EngineStats": "audio.engine",
     "RealtimeEngine": "audio.engine",
     "PipeWireError": "audio.pipewire",

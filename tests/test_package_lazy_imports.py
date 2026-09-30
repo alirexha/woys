@@ -44,3 +44,10 @@ def test_package_exports_still_resolve() -> None:
         "assert VCClientApp is WoysApp"
     )
     assert "audio.engine" in loaded and "tui.app" in loaded
+
+
+def test_config_layer_does_not_import_the_engine() -> None:
+    """`tui.config` and `woys.profiles` only need `EngineConfig` and the
+    field list, which live in the light `audio.engine_config`."""
+    loaded = _loaded_after("import tui.config\nimport woys.profiles")
+    assert not loaded & set(HEAVY), sorted(loaded & set(HEAVY))
