@@ -491,6 +491,7 @@ def send_command(cmd: str, timeout: float = 30.0) -> str:
     clean shutdown (kill -9, crash, etc.), the socket path can exist as a
     file with no listener. We catch ConnectionRefusedError / FileNotFoundError
     and return a clear ERR string instead of letting the exception escape.
+    A timeout or any other socket error is an ERR line too.
     """
     path = control_socket_path()
     if not path.exists():
@@ -520,6 +521,11 @@ def send_command(cmd: str, timeout: float = 30.0) -> str:
         except FileNotFoundError as e:
             last_err = e
             break
+        except (TimeoutError, OSError) as e:
+            # The TUI is there but stalled or the connection broke. Not
+            # "ERR control socket ...": callers read that prefix as "TUI
+            # not running" and fall back to writing config.toml.
+            return f"ERR control request failed: {type(e).__name__}: {e}"
     if isinstance(last_err, FileNotFoundError):
         return "ERR control socket stale - TUI not running?"
     return "ERR control socket refused - TUI not accepting connections?"
