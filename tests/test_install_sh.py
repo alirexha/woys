@@ -355,6 +355,14 @@ def test_installed_woys_mic_unit_runs_without_local_bin_on_path(tmp_path: Path) 
     assert "woys pw setup" in (tmp_path / "calls.log").read_text()
 
 
+def test_install_does_not_claim_enabled_when_enable_fails(tmp_path: Path) -> None:
+    systemctl = 'case "$*" in *enable*) exit 1;; esac\nexit 0'
+    run = _run_install(tmp_path, "--skip-models", stubs={"systemctl": systemctl})
+    assert run.rc == 0, run.out
+    assert "failed to enable woys-mic.service" in run.out
+    assert "woys-mic.service enabled" not in run.out
+
+
 def test_install_help_prints_the_whole_header() -> None:
     out = subprocess.run(
         ["bash", str(REPO / "install.sh"), "--help"], capture_output=True, text=True, check=True

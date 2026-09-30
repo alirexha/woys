@@ -249,10 +249,12 @@ if [ "$NO_SYSTEMD" -eq 0 ]; then
     if ! systemctl --user daemon-reload; then
         say "warning: systemctl daemon-reload failed; continuing"
     fi
-    if ! systemctl --user enable --now woys-mic.service; then
+    if systemctl --user enable --now woys-mic.service; then
+        say "woys-mic.service enabled (Discord/CS2 see woys-mic at boot)."
+    else
         say "warning: failed to enable woys-mic.service; continuing"
+        say "         (woys run still creates woys-mic on first use)"
     fi
-    say "woys-mic.service enabled (Discord/CS2 see woys-mic at boot)."
 
     # v0.6.8 — prune accumulated config backups left by prior in-place
     # patches (.bak-leak, .bak-microcut-*, .bak-pacat-*). Keep the single
