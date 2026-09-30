@@ -3049,6 +3049,13 @@ class RealtimeEngine:
         with self._lifecycle_lock:
             if self._thread and self._thread.is_alive():
                 return
+            if self._thread is not None and not self._stopped:
+                # The previous run ended without stop() (failed warmup,
+                # crash, self-stop). Its GC state, signal handlers, clock
+                # lock and inference child are still in place; tear them
+                # down first or this start() saves the engine's own state
+                # as the "prior" to restore and leaks the old child.
+                self._teardown_locked(timeout=2.0)
             self._stop_event.clear()
             self.stats.crashed = False
             self._stopped = False
@@ -3334,75 +3341,82 @@ class RealtimeEngine:
         with self._lifecycle_lock:
             if self._stopped:
                 return
-            self._stop_event.set()
-            # resolve every outstanding swap
-            # waiter BEFORE we start the slow teardown. Pre-fix
-            # `_swap_done` was never set in `stop()`, so a JobRegistry
-            # daemon thread parked the full 10 s timeout on the
-            # "queue a swap, toggle off" sequence. With per-call
-            # events, we walk the outstanding list and resolve each
-            # with an "engine stopped" error (queued requests the worker
-            # never got to included).
-            self._fail_pending_swaps("engine stopped before swap completed")
-            if self._thread:
-                self._thread.join(timeout=timeout)
-            self.stats.running = False
-            # join the monitor-
-            # writer thread. The thread sees `_stop_event` via its
-            # 50ms get-timeout polling loop and exits after closing
-            # its sd.OutputStream.
-            if self._monitor_thread is not None:
-                self._monitor_thread.join(timeout=1.0)
-                self._monitor_thread = None
-            # join the swap-
-            # preloader thread. Same pattern -- it sees _stop_event
-            # via its 100ms get-timeout polling loop.
-            if self._swap_preload_thread is not None:
-                self._swap_preload_thread.join(timeout=1.0)
-                self._swap_preload_thread = None
-            # clear warmup_stage so the TUI
-            # doesn't show a stale "warming pipeline" indicator after
-            # the engine fully stops.
-            self.stats.warmup_stage = ""
+            self._teardown_locked(timeout)
 
-            # v0.8.0 - tear down the inference subprocess after the engine
-            # thread has stopped sending it work. `InferenceClient.stop()`
-            # sends CMD_STOP, joins the child, closes pipes, unlinks shm.
-            if self._inf_client is not None:
-                with contextlib.suppress(Exception):
-                    self._inf_client.stop(timeout_s=timeout)
-                self._inf_client = None
-                self.stats.child_pid = None
+    def _teardown_locked(self, timeout: float) -> None:
+        """stop()'s teardown body. Caller holds `_lifecycle_lock` (a plain
+        Lock, not re-entrant), so start() can run it for a previous run
+        that ended without stop() -- a failed warmup, a crash or a
+        self-stop -- before building the next one."""
+        self._stop_event.set()
+        # resolve every outstanding swap
+        # waiter BEFORE we start the slow teardown. Pre-fix
+        # `_swap_done` was never set in `stop()`, so a JobRegistry
+        # daemon thread parked the full 10 s timeout on the
+        # "queue a swap, toggle off" sequence. With per-call
+        # events, we walk the outstanding list and resolve each
+        # with an "engine stopped" error (queued requests the worker
+        # never got to included).
+        self._fail_pending_swaps("engine stopped before swap completed")
+        if self._thread:
+            self._thread.join(timeout=timeout)
+        self.stats.running = False
+        # join the monitor-
+        # writer thread. The thread sees `_stop_event` via its
+        # 50ms get-timeout polling loop and exits after closing
+        # its sd.OutputStream.
+        if self._monitor_thread is not None:
+            self._monitor_thread.join(timeout=1.0)
+            self._monitor_thread = None
+        # join the swap-
+        # preloader thread. Same pattern -- it sees _stop_event
+        # via its 100ms get-timeout polling loop.
+        if self._swap_preload_thread is not None:
+            self._swap_preload_thread.join(timeout=1.0)
+            self._swap_preload_thread = None
+        # clear warmup_stage so the TUI
+        # doesn't show a stale "warming pipeline" indicator after
+        # the engine fully stops.
+        self.stats.warmup_stage = ""
 
-            # release the in-process ONNX sessions
-            # before the gc.collect() below. Pre-fix `stop()` tore down the
-            # inference subprocess but never dropped `_cv`/`_rmvpe`/`_rvc` or
-            # evicted the RVC pool (`evict_all()` had no caller), so in-process
-            # mode accumulated VRAM across start/stop cycles -- and any future
-            # VRAM-target measurement was confounded by the leak. This affects
-            # the in-process path (`inference_subprocess=False`); subprocess
-            # mode frees the sessions by killing the child above.
-            self._cv = None
-            self._rmvpe = None
-            self._rvc = None
-            self._rvc_pool.evict_all()
-
-            # v0.7.0-rc7 - restore GC to its prior state and run one
-            # collection to free any cyclic references that accumulated
-            # during the session. If GC was already disabled before this
-            # engine started (nested case), leave it disabled.
-            if self._gc_was_enabled_before_start:
-                gc.enable()
-                gc.collect()
-                self._gc_was_enabled_before_start = False
-
-            # v0.11.0 - release the GPU clock lock if active. Idempotent;
-            # safe to call when no lock was applied. SIGTERM/SIGINT path
-            # may have already reverted, in which case this is a no-op.
+        # v0.8.0 - tear down the inference subprocess after the engine
+        # thread has stopped sending it work. `InferenceClient.stop()`
+        # sends CMD_STOP, joins the child, closes pipes, unlinks shm.
+        if self._inf_client is not None:
             with contextlib.suppress(Exception):
-                self._revert_gpu_clock_lock()
+                self._inf_client.stop(timeout_s=timeout)
+            self._inf_client = None
+            self.stats.child_pid = None
 
-            self._stopped = True
+        # release the in-process ONNX sessions
+        # before the gc.collect() below. Pre-fix `stop()` tore down the
+        # inference subprocess but never dropped `_cv`/`_rmvpe`/`_rvc` or
+        # evicted the RVC pool (`evict_all()` had no caller), so in-process
+        # mode accumulated VRAM across start/stop cycles -- and any future
+        # VRAM-target measurement was confounded by the leak. This affects
+        # the in-process path (`inference_subprocess=False`); subprocess
+        # mode frees the sessions by killing the child above.
+        self._cv = None
+        self._rmvpe = None
+        self._rvc = None
+        self._rvc_pool.evict_all()
+
+        # v0.7.0-rc7 - restore GC to its prior state and run one
+        # collection to free any cyclic references that accumulated
+        # during the session. If GC was already disabled before this
+        # engine started (nested case), leave it disabled.
+        if self._gc_was_enabled_before_start:
+            gc.enable()
+            gc.collect()
+            self._gc_was_enabled_before_start = False
+
+        # v0.11.0 - release the GPU clock lock if active. Idempotent;
+        # safe to call when no lock was applied. SIGTERM/SIGINT path
+        # may have already reverted, in which case this is a no-op.
+        with contextlib.suppress(Exception):
+            self._revert_gpu_clock_lock()
+
+        self._stopped = True
 
     def _warn_if_default_sink_hijacked(self) -> None:
         """one-shot check at engine start.
