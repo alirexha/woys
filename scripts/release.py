@@ -19,8 +19,8 @@ Usage::
     #    (CI's deps-sync gate will reject if you skip it)
     # 4. commit + tag
 
-The CI `docs-version-grep` gate runs `scripts/check_version_drift.sh` and
-fails if any of these surfaces fall out of sync.
+The CI `version-drift` job runs `scripts/check_version_drift.sh` and
+fails if the README header falls out of sync.
 """
 
 from __future__ import annotations

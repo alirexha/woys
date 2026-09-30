@@ -24,9 +24,11 @@ Two leftovers that the 0.16.0 audit reported but did not remove.
   `pkg/README-AUR.md`. It never built a working package. `./install.sh`
   is the only install path. `pkg/woys-mic.service` stays, because
   `install.sh` installs it.
-- The version-drift gate and `scripts/release.py` now cover only the
-  README status header, and `tests/test_release_version_drift.py` tests
-  that header instead of `.SRCINFO`.
+- `scripts/release.py` now updates only the README status header. The
+  version-drift gate checks that header and, as before, that
+  `pyproject.toml` carries no fixed version.
+  `tests/test_release_version_drift.py` tests the header instead of
+  `.SRCINFO`.
 
 ## [0.16.1] — 2026-09-30 — engine split
 
