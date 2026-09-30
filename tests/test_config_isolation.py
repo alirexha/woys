@@ -53,3 +53,14 @@ def test_no_path_save_writes_isolated_file_not_real_config(tmp_path: Path, monke
     cfg_mod.save_config(cfg_mod.AppConfig())  # no path -> must honor the patch
 
     assert target.exists(), "save_config() ignored the patched CONFIG_FILE"
+
+
+def test_runtime_dir_is_isolated_during_tests(tmp_path: Path) -> None:
+    """The control socket and instance lock resolve under XDG_RUNTIME_DIR;
+    each test must get its own so it cannot reach a live woys."""
+    import os
+
+    from woys.xdg import safe_runtime_dir
+
+    assert Path(os.environ["XDG_RUNTIME_DIR"]).is_relative_to(tmp_path)
+    assert safe_runtime_dir().is_relative_to(tmp_path)

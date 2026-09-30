@@ -88,6 +88,12 @@ def _isolate_woys_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     cfg_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(_cfg, "CONFIG_DIR", cfg_dir)
     monkeypatch.setattr(_cfg, "CONFIG_FILE", cfg_dir / "config.toml")
+    # The control socket and the single-instance lock live under
+    # $XDG_RUNTIME_DIR/woys. Give every test its own so none can talk to --
+    # or unlink the lock of -- a woys the developer has running.
+    run_dir = tmp_path / "xdg-runtime"
+    run_dir.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(run_dir))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg-state"))
 
 
