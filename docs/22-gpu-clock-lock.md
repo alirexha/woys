@@ -76,12 +76,14 @@ The clock_lock feature calls `sudo -n nvidia-smi -lgc/-rgc`. For
 the engine to invoke this without prompting on every start, add a
 passwordless entry for those two specific subcommands.
 
-Create `/etc/sudoers.d/woys-gpu-clock` with the following contents
-(replace `<your-username>` with your username):
+This needs sudo 1.9.10 or newer (check with `sudo -V`), which added
+regular expressions to sudoers command arguments. Create
+`/etc/sudoers.d/woys-gpu-clock` with the following contents (replace
+`<your-username>` with your username):
 
 ```
-# woys v0.11.0 — passwordless nvidia-smi for GPU clock lock anti-jitter.
-<your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -lgc *
+# woys — passwordless nvidia-smi for the GPU clock lock. Needs sudo >= 1.9.10.
+<your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi ^-lgc [0-9]{1,5},[0-9]{1,5}$
 <your-username> ALL=(root) NOPASSWD: /usr/bin/nvidia-smi -rgc
 ```
 
@@ -92,9 +94,18 @@ sudo chmod 0440 /etc/sudoers.d/woys-gpu-clock
 sudo visudo -c -f /etc/sudoers.d/woys-gpu-clock
 ```
 
-The wildcard `*` after `-lgc` accepts any clock-pair argument; the
-engine validates the clock values before invoking, so no over-stock
-value can be passed even if the sudoers wildcard were exploited.
+The sudoers rules themselves are what limit the arguments: the first
+allows exactly `-lgc <number>,<number>` and nothing else, and the second
+allows exactly `-rgc` with no further arguments. The engine's own range
+check does not protect this entry, because any program running as your
+user can call `sudo -n nvidia-smi` directly without going through woys.
+
+Do **not** use a `-lgc *` wildcard rule. In sudoers `*` also matches
+spaces, so it lets anything running as your user pass extra options
+(`-lgc 1,1 -f <file>`, `-r`, `-pl ...`) to nvidia-smi as root without a
+password. On sudo older than 1.9.10 there is no single-line rule that is
+safe; use `gpu_anti_jitter_mode = "off"` or `"keepalive"` there, since
+both clock-lock modes need the passwordless entry.
 
 ## Troubleshooting
 
