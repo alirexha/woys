@@ -25,12 +25,19 @@ UNINSTALL_SH = (REPO / "uninstall.sh").read_text()
 _SYSTEM_TOOLS = ["cat", "find", "grep", "id", "rm", "rmdir", "sed", "sh", "stat"]
 
 
-def _run_uninstall(tmp_path: Path, *args: str) -> tuple[int, str, Path]:
+def _run_uninstall(
+    tmp_path: Path, *args: str, pactl: str = "exit 1", venv_woys: str = "exit 0"
+) -> tuple[int, str, Path]:
     """Run uninstall.sh against a sandbox HOME laid out like a real install
-    (venv, foundation weights, one user voice, launcher, helper, units)."""
+    (venv, foundation weights, one user voice, launcher, helper, units).
+
+    `pactl` and `venv_woys` are the bodies of the stub pactl and of the
+    venv's woys; the default pactl makes the script skip the teardown."""
     home = tmp_path / "home dir"  # a space, to catch unquoted paths
     app = home / ".local" / "share" / "woys"
     (app / "venv" / "bin").mkdir(parents=True)
+    (app / "venv" / "bin" / "woys").write_text(f"#!/bin/sh\n{venv_woys}\n")
+    (app / "venv" / "bin" / "woys").chmod(0o755)
     (app / "models").mkdir()
     (app / "models" / "rmvpe_wrapped.onnx").write_bytes(b"w")
     (app / "models" / "my_voice.onnx").write_bytes(b"v")
@@ -50,8 +57,8 @@ def _run_uninstall(tmp_path: Path, *args: str) -> tuple[int, str, Path]:
         found = shutil.which(tool)
         assert found, f"test host lacks {tool}"
         (sysbin / tool).symlink_to(found)
-    for name in ("systemctl", "pactl"):
-        (sysbin / name).write_text("#!/bin/sh\nexit 1\n")
+    for name, body in (("systemctl", "exit 1"), ("pactl", pactl)):
+        (sysbin / name).write_text(f"#!/bin/sh\n{body}\n")
         (sysbin / name).chmod(0o755)
 
     proc = subprocess.run(
@@ -106,6 +113,31 @@ def test_uninstall_wipe_hint_is_safe_to_paste(tmp_path: Path) -> None:
         f"{home}/.config/woys/",
         f"{home}/.config/vcclient-cachy/",
     ]
+
+
+_PIPEWIRE_PACTL = 'case "$1" in info) echo "Server Name: PulseAudio (on PipeWire 1.0.0)";; esac'
+
+
+def test_uninstall_warns_when_the_chain_teardown_fails(tmp_path: Path) -> None:
+    """`woys chain disable` exits non-zero when a chain module stays loaded
+    or systemctl fails. The uninstall carries on, but must say so."""
+    woys = 'case "$1 $2" in "chain disable") exit 2;; esac\nexit 0'
+    rc, out, _home = _run_uninstall(tmp_path, pactl=_PIPEWIRE_PACTL, venv_woys=woys)
+    assert rc == 0, out
+    assert "warning" in out and "chain" in out, out
+
+
+def test_uninstall_warns_when_the_mic_teardown_fails(tmp_path: Path) -> None:
+    woys = 'case "$1 $2" in "pw teardown") exit 2;; esac\nexit 0'
+    rc, out, _home = _run_uninstall(tmp_path, pactl=_PIPEWIRE_PACTL, venv_woys=woys)
+    assert rc == 0, out
+    assert "warning" in out and "woys-mic" in out, out
+
+
+def test_uninstall_teardown_success_prints_no_warning(tmp_path: Path) -> None:
+    rc, out, _home = _run_uninstall(tmp_path, pactl=_PIPEWIRE_PACTL)
+    assert rc == 0, out
+    assert "tearing down" in out and "warning" not in out, out
 
 
 def test_uninstall_still_accepts_keep_models(tmp_path: Path) -> None:

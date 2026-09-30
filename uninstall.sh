@@ -81,8 +81,16 @@ say() { printf '\n[uninstall] %s\n' "$*"; }
 if command -v pactl >/dev/null && pactl info 2>/dev/null | grep -q PipeWire; then
     if [ -x "$APP_HOME/venv/bin/woys" ]; then
         say "tearing down the RNNoise chain (if loaded)…"
-        "$APP_HOME/venv/bin/woys" chain disable 2>/dev/null || true
-        "$APP_HOME/venv/bin/woys" pw teardown 2>/dev/null || true
+        # Non-fatal: the uninstall carries on, but a module left loaded
+        # stays in PipeWire until logout, so say so.
+        if ! "$APP_HOME/venv/bin/woys" chain disable 2>/dev/null; then
+            say "warning: 'woys chain disable' failed; the RNNoise chain may still be loaded"
+            say "         (check: pactl list short modules | grep woys; logging out clears it)"
+        fi
+        if ! "$APP_HOME/venv/bin/woys" pw teardown 2>/dev/null; then
+            say "warning: 'woys pw teardown' failed; woys-mic may still be loaded"
+            say "         (check: pactl list short modules | grep woys; logging out clears it)"
+        fi
     elif [ -x "$LEGACY_APP_HOME/venv/bin/vcclient-cachy" ]; then
         "$LEGACY_APP_HOME/venv/bin/vcclient-cachy" pw teardown 2>/dev/null || true
     fi
