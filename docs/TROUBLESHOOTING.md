@@ -62,17 +62,22 @@ cd ~/woys
 uv pip install --python ~/.local/share/woys/venv/bin/python -r requirements.txt
 ```
 
-## "No GPU found, falling back to CPU"
+## `CpuFallbackError`: "ONNX Runtime bound this session CPU-only"
 
-Inference on CPU is real-time-impossible for this pipeline. Verify the GPU is
-detectable:
+woys is GPU-only: when ONNX Runtime has a CUDA execution provider but a
+model session ends up on the CPU anyway, the engine refuses to start with
+`CpuFallbackError` instead of running far too slowly. There is no setting
+that allows a CPU run; the error text's mention of
+`EngineConfig.allow_cpu_fallback` is not reachable from `config.toml` or
+the CLI. Fix the GPU setup instead. `woys info` shows the GPU and ONNX
+Runtime state. Verify the GPU is detectable:
 
 ```
 nvidia-smi
 ```
 
-If `nvidia-smi` works but the engine claims no GPU, the venv's `onnxruntime-gpu`
-isn't seeing CUDA. Check ORT version is **≥ 1.20**:
+If `nvidia-smi` works but the session still binds to the CPU, the venv's
+`onnxruntime-gpu` isn't seeing CUDA. Check ORT version is **≥ 1.20**:
 
 ```
 ~/.local/share/woys/venv/bin/python -c "import onnxruntime; print(onnxruntime.__version__)"
