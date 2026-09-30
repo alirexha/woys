@@ -361,7 +361,14 @@ class WoysApp(App[int]):
             self.cfg.monitor = monitor
         # v0.4.1: honor cfg.rvc_model on startup. Empty string ⇒ use the
         # engine's hardcoded default (Amitaro). Any path that doesn't exist
-        # also falls back so a stale config.toml doesn't brick the engine.
+        # also falls back so a stale config.toml doesn't brick the engine;
+        # on_mount reports that fallback, since a different voice going out
+        # unannounced is worse than an error.
+        self._missing_model = (
+            self.cfg.rvc_model
+            if self.cfg.rvc_model and not Path(self.cfg.rvc_model).exists()
+            else None
+        )
         rvc_path = (
             Path(self.cfg.rvc_model)
             if self.cfg.rvc_model and Path(self.cfg.rvc_model).exists()
@@ -418,6 +425,16 @@ class WoysApp(App[int]):
         # all is fine, on the product's core function, on the *default*
         # `woys` invocation). Now: no autostart, and a persistent error on
         # the status panel (rendered every refresh tick) with the remedy.
+        if self._missing_model is not None:
+            msg = (
+                f"configured model not found: {self._missing_model} -- using the "
+                f"default voice {DEFAULT_RVC_MODEL.name} instead. Pick one with "
+                f"`woys models use <name>`."
+            )
+            # record_error: status banner, `woys diag` history, file log.
+            self.engine.record_error(msg)
+            self.notify(msg, severity="error", timeout=12, markup=False)
+            self._last_notified_error = msg
         pw_ok = True
         if not self.no_pw_setup:
             try:
@@ -885,6 +902,14 @@ class WoysApp(App[int]):
             else None
         )
         swap_req: _SwapRequest | None = None
+        if self.cfg.rvc_model and new_model is None:
+            self.notify(
+                f"profile {name}: model not found: {self.cfg.rvc_model} -- keeping "
+                f"{Path(self.engine.cfg.rvc_model).name}",
+                severity="warning",
+                timeout=8,
+                markup=False,
+            )
         if new_model is not None and new_model != self.engine.cfg.rvc_model:
             swap_req = self.engine.request_model_swap(new_model)
             self.notify(
