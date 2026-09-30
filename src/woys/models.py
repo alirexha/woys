@@ -30,7 +30,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
+from audio.engine_config import MODELS_DIR as MODELS_DIR
 
 # Foundation files - these are infrastructure, not user voices. Hide from `list`
 # and skip when picking a default `use` target.

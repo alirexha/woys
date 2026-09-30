@@ -26,7 +26,7 @@ import sys
 from collections.abc import Iterable
 from pathlib import Path
 
-MODELS_DIR = Path.home() / ".local" / "share" / "woys" / "models"
+from audio.engine_config import MODELS_DIR as MODELS_DIR
 
 
 def _convert_one(src: Path, dst: Path, *, op_block_list: list[str] | None = None) -> int:
