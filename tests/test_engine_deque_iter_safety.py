@@ -124,8 +124,13 @@ def test_eleven_snapshot_methods_use_internal_lock() -> None:
     rolling-window accessor must hold `_internal_lock`. A future
     refactor that adds a new accessor without the lock would
     silently reintroduce the bug-class for that field."""
-    src = Path(__file__).resolve().parent.parent / "src" / "audio" / "engine.py"
-    text = src.read_text()
+    import inspect
+
+    from audio.engine import EngineStats
+
+    # The class source wherever it lives (audio.engine_stats since the
+    # engine split); `audio.engine` re-exports it.
+    text = inspect.getsource(EngineStats)
 
     expected_methods = [
         "inference_samples",
