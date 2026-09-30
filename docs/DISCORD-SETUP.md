@@ -32,7 +32,10 @@ woys run --autostart
 ## Step 2 — point Discord at woys-mic
 
 1. Open Discord → **User Settings** (cog icon next to your name) → **Voice & Video**.
-2. **Input Device** dropdown → pick **`woys-mic`**.
+2. **Input Device** dropdown → pick **`woys-no-cleanup`**. That is how
+   Discord labels the `woys-mic` source (it shows the device
+   description, not the node name). With the RNNoise chain enabled,
+   pick **`woys-clean`** instead.
 3. **Output Device** can stay on your headphones — woys doesn't
    touch playback, only input.
 
@@ -75,7 +78,7 @@ with low latency.
 
 If Discord auto-detects "another device" each call and switches off
 woys-mic, lock the input device in Discord's settings (the dropdown shows
-"woys-mic" with a lock icon when remembered).
+"woys-no-cleanup" with a lock icon when remembered).
 
 ## Pro tip — KDE/GNOME shortcut for toggle
 

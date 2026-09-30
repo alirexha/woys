@@ -163,7 +163,8 @@ These talk to the running TUI over a Unix socket at
 ## Step 5 — wire it into Discord / CS2
 
 See `docs/DISCORD-SETUP.md` and `docs/CS2-SETUP.md`. The short version: in those
-apps' input-device selector, pick `woys-mic`. That's it.
+apps' input-device selector, pick `woys-no-cleanup` (the description of
+the `woys-mic` source; apps that list node names show `woys-mic`). That's it.
 
 ## Updating
 

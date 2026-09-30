@@ -185,14 +185,16 @@ currently missed; the path to closing the gap is documented).
 
 ## Hooking up apps
 
-Once the engine is running, apps see a new audio input device called
-`woys-mic`. Point your app's input at it:
+Once the engine is running, apps see a new audio input device: the
+PipeWire source `woys-mic`, which input pickers that show descriptions
+(Discord, pavucontrol, KDE) list as **`woys-no-cleanup`**. Point your
+app's input at it:
 
 - **Discord:** `docs/DISCORD-SETUP.md` (note: disable Discord's
   Krisp noise suppression — it eats RVC output).
 - **CS2:** `docs/CS2-SETUP.md`.
-- **Any PipeWire-aware app:** pick `woys-mic` from its input-device
-  picker.
+- **Any PipeWire-aware app:** pick `woys-no-cleanup` (or `woys-mic`,
+  if the app lists node names) from its input-device picker.
 
 If you enable the RNNoise post-processing chain (next section), apps
 show `woys-clean` (cleaned) as the one option to pick. The raw source

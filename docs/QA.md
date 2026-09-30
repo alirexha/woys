@@ -58,8 +58,10 @@ woys pitch 0
 
 1. Open Discord (closed before? launch it now so it picks up the new mic list).
 2. **User Settings → Voice & Video**:
-   - [ ] **Input Device** dropdown contains `woys-mic`
-   - [ ] Set **Input Device** to `woys-mic`
+   - [ ] **Input Device** dropdown contains `woys-no-cleanup` (the
+         `woys-mic` source's description; `woys-clean` if the RNNoise
+         chain is on)
+   - [ ] Set **Input Device** to that entry
    - [ ] Under **Voice Processing**, set **Noise Suppression: None**
    - [ ] Set **Echo Cancellation: OFF**
    - [ ] Set **Automatic Gain Control: OFF**

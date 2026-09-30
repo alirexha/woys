@@ -46,8 +46,9 @@ CS2 picks up the system's *default* recording device. The cleanest path:
 3. Make sure your real microphone (e.g. USB condenser mic) is set to a profile
    that captures audio.
 4. Hop to the **Input Devices** tab.
-5. Click the **Set as fallback** button (a gray check) on **woys-mic**.
-   That makes CS2 prefer it next time it picks an input.
+5. Click the **Set as fallback** button (a gray check) on
+   **woys-no-cleanup** (pavucontrol shows the `woys-mic` source by its
+   description). That makes CS2 prefer it next time it picks an input.
 
 Alternatively, set it from the CLI:
 
@@ -60,7 +61,8 @@ pactl set-default-source woys-mic
 1. Launch Counter-Strike 2.
 2. **Settings → Audio → Voice → Voice Input Device**.
 3. The dropdown will show what PipeWire reports as the default. With the
-   fallback set above, it should be `woys-mic`.
+   fallback set above, it should be `woys-no-cleanup` (the `woys-mic`
+   source).
 4. Hit **Open Mic Test**, speak — you should see the meter respond.
 
 If CS2 stubbornly clings to your old mic, restart Steam — Source 2 caches the
