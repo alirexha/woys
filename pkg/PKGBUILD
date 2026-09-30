@@ -1,6 +1,9 @@
 # Maintainer: Alireza Hamayeli <alireza@hamayeli.com>
 # woys: Linux-native, CachyOS-optimized real-time voice changer.
 # Fork of w-okada/voice-changer (MIT). RVC-only, ONNX Runtime CUDA, PipeWire-native, TUI.
+#
+# DRAFT - this does not build a working package yet. See README-AUR.md
+# ("Not working yet") for what is missing; use ./install.sh instead.
 
 pkgname=woys
 pkgver=0.15.0
@@ -16,7 +19,9 @@ license=('custom' 'MIT')
 # bundled `nvidia-cuda-runtime-cu12` wheels, so we don't depend on the system
 # CUDA package directly.
 depends=(
+    # pyproject.toml: requires-python = ">=3.11,<3.13" (torch / ORT pins)
     'python>=3.11'
+    'python<3.13'
     'pipewire'
     'pipewire-pulse'
     'pipewire-alsa'

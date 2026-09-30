@@ -54,3 +54,15 @@ def test_optdepends_name_real_packages_for_real_features() -> None:
 def test_makedepends_has_no_unused_pip() -> None:
     """The build uses python-build + python-installer; pip is never run."""
     assert "python-pip" not in _pkgbuild_array("makedepends")
+
+
+def test_python_constraint_matches_pyproject() -> None:
+    """requires-python is ">=3.11,<3.13"; a bare python>=3.11 let the
+    package install onto an interpreter the pinned wheels do not support."""
+    import tomllib
+
+    with open(REPO / "pyproject.toml", "rb") as f:
+        spec = tomllib.load(f)["project"]["requires-python"]
+    wanted = sorted(f"python{part.strip()}" for part in spec.split(","))
+    got = sorted(d for d in _pkgbuild_array("depends") if d.startswith("python"))
+    assert got == wanted

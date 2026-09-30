@@ -11,6 +11,7 @@ pkgbase = woys
 	makedepends = python-wheel
 	makedepends = python-hatchling
 	depends = python>=3.11
+	depends = python<3.13
 	depends = pipewire
 	depends = pipewire-pulse
 	depends = pipewire-alsa
