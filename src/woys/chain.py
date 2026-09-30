@@ -643,12 +643,16 @@ def status(check: bool = False) -> int:
         return _health_check()
     print("[woys chain] modules:")
     matched = False
+    # A status we could not read is not a healthy one: exit 2 (environment
+    # not ready) at the end so scripts don't mistake it for a clean report.
+    unreadable = False
     try:
         modules = _list_modules()
     except ChainError as exc:
         print(f"  ({exc})", file=sys.stderr)
         modules = []
         matched = True  # don't claim "chain not loaded" when we can't tell
+        unreadable = True
     for mod_id, mod_type, mod_args in modules:
         if (
             (mod_type == "module-null-sink" and f"sink_name={SINK_FINAL}" in mod_args)
@@ -721,7 +725,7 @@ def status(check: bool = False) -> int:
             "[woys chain] systemd user unit NOT installed"
             " (use 'woys chain enable' to auto-load on login)"
         )
-    return 0
+    return 2 if unreadable else 0
 
 
 def enable() -> int:
