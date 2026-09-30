@@ -356,8 +356,14 @@ def cli_profile_import(path: str, name: str | None = None, *, overwrite: bool = 
     if not in_path.exists():
         print(f"[profile import] ERROR: no such file: {in_path}", file=sys.stderr)
         return 1
+    from woys.profiles import config_lock
+
     try:
-        new_name = import_profile(in_path, name, overwrite=overwrite)
+        # Same lock the TUI and `profile save/delete/use` hold around their
+        # read-modify-write of config.toml, so a TUI save landing mid-import
+        # can't drop the imported profile.
+        with config_lock():
+            new_name = import_profile(in_path, name, overwrite=overwrite)
     except Exception as e:
         print(f"[profile import] ERROR: {type(e).__name__}: {e}", file=sys.stderr)
         return 1

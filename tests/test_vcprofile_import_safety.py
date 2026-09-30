@@ -142,3 +142,38 @@ def test_import_accepts_plain_profile_names(tmp_path: Path, name: str) -> None:
 
     vp = _vcprofile_named(tmp_path, f'"{name}"')
     assert import_profile(vp, config_path=tmp_path / "c.toml", models_dir=tmp_path) == name
+
+
+def test_cli_import_holds_the_config_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`woys profile import` rewrites the whole config.toml; it must hold the
+    same lock the TUI and the other profile commands take, or a TUI save
+    landing in between loses the imported profile (or the TUI's change)."""
+    import contextlib
+    from collections.abc import Iterator
+
+    import woys.profiles as profiles_mod
+    import woys.vcprofile as vcprofile_mod
+
+    held: list[bool] = []
+    in_lock = [False]
+
+    @contextlib.contextmanager
+    def _recording_lock() -> Iterator[None]:
+        in_lock[0] = True
+        try:
+            yield
+        finally:
+            in_lock[0] = False
+
+    real_import = vcprofile_mod.import_profile
+
+    def _spy(*a: object, **kw: object) -> str:
+        held.append(in_lock[0])
+        return real_import(*a, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(profiles_mod, "config_lock", _recording_lock)
+    monkeypatch.setattr(vcprofile_mod, "import_profile", _spy)
+    vp = tmp_path / "shared.vcprofile"
+    vp.write_text(_SHARED)
+    assert vcprofile_mod.cli_profile_import(str(vp)) == 0
+    assert held == [True]
