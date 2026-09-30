@@ -29,8 +29,8 @@ from audio.engine import (
     MODELS_DIR,
     EngineConfig,
     RealtimeEngine,
-    _interpolate_voiced_gaps_np,
-    _to_pitch_coarse,
+    interpolate_voiced_gaps_np,
+    to_pitch_coarse,
 )
 
 
@@ -89,9 +89,9 @@ def main() -> None:
             },
         )[0]
         pitchf = pitchf_raw.astype(np.float32).squeeze()
-        pitchf = _interpolate_voiced_gaps_np(pitchf)
+        pitchf = interpolate_voiced_gaps_np(pitchf)
         feats_2x = np.repeat(feats, 2, axis=1)
-        pitch_coarse, pitchf_aligned = _to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
+        pitch_coarse, pitchf_aligned = to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
         pitch_coarse = pitch_coarse[: feats_2x.shape[1]].reshape(1, -1)
         pitchf_aligned = pitchf_aligned[: feats_2x.shape[1]].reshape(1, -1).astype(np.float32)
         out = rvc.run(
@@ -141,9 +141,9 @@ def main() -> None:
         rmvpe.run_with_iobinding(rmvpe_io)
         pitchf_raw = rmvpe_io.get_outputs()[0].numpy()
         pitchf = pitchf_raw.astype(np.float32).squeeze()
-        pitchf = _interpolate_voiced_gaps_np(pitchf)
+        pitchf = interpolate_voiced_gaps_np(pitchf)
         feats_2x = np.repeat(feats, 2, axis=1)
-        pitch_coarse, pitchf_aligned = _to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
+        pitch_coarse, pitchf_aligned = to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
         pitch_coarse = pitch_coarse[: feats_2x.shape[1]].reshape(1, -1)
         pitchf_aligned = pitchf_aligned[: feats_2x.shape[1]].reshape(1, -1).astype(np.float32)
 

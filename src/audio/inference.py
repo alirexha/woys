@@ -20,7 +20,7 @@ import onnxruntime as ort
 
 from audio.engine_config import EngineConfig
 from audio.engine_stats import EngineStats
-from audio.pitch import _interpolate_voiced_gaps_np, _to_pitch_coarse
+from audio.pitch import interpolate_voiced_gaps_np, to_pitch_coarse
 from audio.resample import _StreamResampler
 from audio.sola import SOLAConfig, SOLAStream
 
@@ -94,7 +94,7 @@ class _InferenceMixin:
         when ``update_pitch_carry=True``
         AND we're on the legacy in-process path, read
         `self._pitch_carry_*` to provide a leading-edge anchor to
-        `_interpolate_voiced_gaps_np`, and update the carry from the
+        `interpolate_voiced_gaps_np`, and update the carry from the
         trailing voiced frame of this chunk's pitchf. The subprocess
         path does not carry pitch state across the IPC boundary -- the
         leading-edge dropout case (a brief unvoiced run starting a
@@ -197,7 +197,7 @@ class _InferenceMixin:
         # leading-edge unvoiced run can be bridged using the prior chunk's
         # trailing voiced anchor. Streaming wrapper sets `update_pitch_carry`.
         if update_pitch_carry:
-            pitchf = _interpolate_voiced_gaps_np(
+            pitchf = interpolate_voiced_gaps_np(
                 pitchf,
                 prior_voiced_f0=self._pitch_carry_f0,
                 prior_voiced_age_frames=self._pitch_carry_age_frames,
@@ -220,7 +220,7 @@ class _InferenceMixin:
                 # `have_prior` in interpolate_voiced_gaps_np rejects it.
                 self._pitch_carry_age_frames += len(pitchf)
         else:
-            pitchf = _interpolate_voiced_gaps_np(pitchf)
+            pitchf = interpolate_voiced_gaps_np(pitchf)
         t_rmvpe1 = time.perf_counter()
 
         # v0.10.0-rc2 - split RVC stage into pre / run / post so the
@@ -238,7 +238,7 @@ class _InferenceMixin:
         # A/B'ing pitch shifts against the upstream reference path.
         if self.cfg.f0_up_key != 0:
             pitchf = pitchf * (2.0 ** (self.cfg.f0_up_key / 12.0))
-        pitch_coarse, pitchf_aligned = _to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
+        pitch_coarse, pitchf_aligned = to_pitch_coarse(pitchf, target_len=feats_2x.shape[1])
         pitch_coarse = pitch_coarse[: feats_2x.shape[1]].reshape(1, -1)
         pitchf_aligned = pitchf_aligned[: feats_2x.shape[1]].reshape(1, -1).astype(np.float32)
 

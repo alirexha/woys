@@ -83,8 +83,6 @@ from audio.inference import _InferenceMixin
 from audio.model_swap import _ModelSwapMixin
 from audio.model_swap import _SwapRequest as _SwapRequest
 from audio.pitch import _VOICED_GAP_MAX_FRAMES as _VOICED_GAP_MAX_FRAMES
-from audio.pitch import _interpolate_voiced_gaps_np as _interpolate_voiced_gaps_np
-from audio.pitch import _to_pitch_coarse as _to_pitch_coarse
 from audio.pitch import interpolate_voiced_gaps_np as interpolate_voiced_gaps_np
 from audio.pitch import to_pitch_coarse as to_pitch_coarse
 from audio.playback import _PlaybackMixin
@@ -251,7 +249,7 @@ class RealtimeEngine(_ModelSwapMixin, _InferenceMixin, _PlaybackMixin, _GpuTunin
             dtype=np.float32,
         )
         # cross-chunk pitch carry.
-        # `_interpolate_voiced_gaps_np` bridges short unvoiced runs (≤8
+        # `interpolate_voiced_gaps_np` bridges short unvoiced runs (≤8
         # frames ≈80 ms at RMVPE 100 fps) between two voiced anchors
         # within a single pitchf vector. A voiced-run that is followed
         # by a short unvoiced run that straddles the chunk boundary

@@ -136,11 +136,6 @@ def interpolate_voiced_gaps_np(
     return out
 
 
-# Backwards-compat alias for the rare external caller. New code uses the
-# public name. (B23: encapsulation cleanup; old-style _ prefix retained.)
-_interpolate_voiced_gaps_np = interpolate_voiced_gaps_np
-
-
 def to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, NDArrayF32]:
     """B24 / quality-020: now a public name (drop leading underscore) so the
     smoke test can `from audio.engine import to_pitch_coarse` instead of
@@ -190,7 +185,3 @@ def to_pitch_coarse(pitchf: NDArrayF32, target_len: int) -> tuple[NDArrayI64, ND
     f0_mel[mask] = (f0_mel[mask] - f0_mel_min) * 254 / (f0_mel_max - f0_mel_min) + 1
     f0_mel = np.clip(f0_mel, 1.0, 255.0)
     return np.rint(f0_mel).astype(np.int64), pitch
-
-
-# Backwards-compat alias.
-_to_pitch_coarse = to_pitch_coarse

@@ -243,7 +243,7 @@ class EngineStats:
     _recent_rvc_ms: deque[float] = field(default_factory=lambda: deque(maxlen=128))
     # v0.10.0-rc2 - RVC stage further split into pre / run / post so we
     # can attribute the rvc tail to GPU work vs Python pre-/post-process
-    # (np.repeat, _to_pitch_coarse, astype, isnan/isinf scan). Populated
+    # (np.repeat, to_pitch_coarse, astype, isnan/isinf scan). Populated
     # only by the legacy in-process path; the IPC child reports an
     # aggregate `rvc_ms` over the wire (rc3 will plumb the split through
     # the protocol if rvc-pre/post turns out to be load-bearing).
@@ -425,7 +425,7 @@ class EngineStats:
 
     def rvc_pre_samples_ms(self) -> list[float]:
         """Time spent in numpy pre-processing between RMVPE done and
-        `self._rvc.run` invocation: feats_2x = np.repeat, _to_pitch_coarse,
+        `self._rvc.run` invocation: feats_2x = np.repeat, to_pitch_coarse,
         slice/reshape/astype on coarse + aligned pitch tensors."""
         with self._internal_lock:
             return list(self._recent_rvc_pre_ms)
