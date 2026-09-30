@@ -276,6 +276,42 @@ def _validate_appconfig(cfg: AppConfig, *, source: str = "config") -> None:
         setattr(cfg, name, default)
 
 
+def _validate_profiles(cfg: AppConfig, *, source: str = "config") -> None:
+    """Validate the values inside every `[profiles.<name>]` table the same
+    way `_validate_appconfig` does the top level: warn and reset a bad
+    value to the AppConfig default.
+
+    apply_profile copies a profile's values straight onto the running
+    config, so an unchecked profile would bypass the top-level gate. An
+    entry that is not a table at all cannot be applied and is dropped.
+    Unknown keys pass through, as they do at top level.
+    """
+    bag = cfg._extras.get("profiles")
+    if not isinstance(bag, dict):
+        return
+    defaults = AppConfig()
+    for pname, pdata in list(bag.items()):
+        if not isinstance(pdata, dict):
+            print(
+                f"[woys] {source}: [profiles.{pname}] is not a table "
+                f"(got {type(pdata).__name__}); dropping it.",
+                file=sys.stderr,
+            )
+            del bag[pname]
+            continue
+        for name, value in pdata.items():
+            err = validate_field(name, value)
+            if err is None:
+                continue
+            default = getattr(defaults, name)
+            print(
+                f"[woys] {source}: [profiles.{pname}] invalid {err}; "
+                f"resetting to default {default!r}",
+                file=sys.stderr,
+            )
+            pdata[name] = default
+
+
 def mark_override(cfg: AppConfig, *keys: str) -> None:
     """Record that the user has explicitly touched these AppConfig fields.
 
@@ -554,6 +590,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     # and would later crash deep in `_run_loop`. The validator names
     # the field, warns to stderr, and resets to the AppConfig default.
     _validate_appconfig(cfg, source=str(path))
+    _validate_profiles(cfg, source=str(path))
     if migrated:
         # announce the migration so a user who set
         # a value and then sees it change has a paper trail. The notice
