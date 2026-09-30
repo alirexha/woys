@@ -144,14 +144,17 @@ def test_watchdog_loop_caps_respawn_failures(monkeypatch: pytest.MonkeyPatch) ->
         raise RuntimeError("helper permanently broken")
 
     monkeypatch.setattr(eng, "_open_pacat", _always_fails)
-    # Spin the loop fast: no real waiting. `engine.time` IS the global time
-    # module, so patching its `sleep` would turn time.sleep into a no-op for
-    # every thread in the process; swap the engine module's `time` name for
-    # a stand-in instead.
+    # Spin the loop fast: no real waiting. The watchdog's module `time` IS
+    # the global time module, so patching its `sleep` would turn time.sleep
+    # into a no-op for every thread in the process; swap that module's
+    # `time` name for a stand-in instead (the watchdog lives in
+    # audio.playback since the engine split).
+    import audio.playback as playback
+
     real_sleep = time.sleep
     monkeypatch.setattr(eng._pacat_dead_event, "wait", lambda timeout=None: None)
     fast_time = _NoSleepTime()
-    monkeypatch.setattr(engine, "time", fast_time)
+    monkeypatch.setattr(playback, "time", fast_time)
     assert time.sleep is real_sleep, "the patch must not leak into other threads"
 
     t = threading.Thread(target=eng._watchdog_loop, daemon=True)
