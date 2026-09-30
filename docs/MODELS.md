@@ -79,7 +79,7 @@ As of v0.2.0, `woys convert` is the one-liner path:
 
 ```
 woys convert /path/to/your-voice.pth
-# → writes /path/to/your-voice.onnx (and your-voice_simple.onnx)
+# → writes /path/to/your-voice.onnx
 # → validates the result loads in the engine before exiting
 ```
 
@@ -136,7 +136,10 @@ from voice_changer.RVC.onnxExporter.SynthesizerTrnMs768NSFsid_ONNX import (
 PTH = "your-voice.pth"          # input
 OUT = "your-voice.onnx"         # output
 
-state = torch.load(PTH, map_location="cpu")
+# A .pth is a pickle: weights_only=True refuses to run code embedded in
+# it. If that fails for your file, switch to weights_only=False only for
+# a .pth you trust -- it executes whatever the file contains.
+state = torch.load(PTH, map_location="cpu", weights_only=True)
 hps = state.get("config")
 if hps is None:
     raise SystemExit("model file has no embedded config — use Option A instead")
